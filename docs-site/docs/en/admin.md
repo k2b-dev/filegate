@@ -1,17 +1,17 @@
 ---
-title: Admin app
-navTitle: Admin app
-section: Use Filegate
-order: 65
-description: Run the standalone Filegate admin app for browser-based operations.
+title: Admin UI
+navTitle: Admin UI
+section: Operate
+order: 105
+description: Use the Filegate admin UI for browser-based file operations and service inspection.
 tags: [admin, ui]
 ---
 
-# Admin app
+# Admin UI
 
-The admin app is a standalone SSR web app for operators who need browser access to Filegate resources and service state.
+The admin UI is for operators who need browser access to Filegate files, metadata, activity, and runtime state.
 
-Filegate itself serves REST and optional S3 APIs. The admin app runs as a separate process and talks to Filegate through the TypeScript client.
+It runs as a separate SSR app next to Filegate. File bytes still move through Filegate; the UI keeps the Filegate bearer token on the admin server.
 
 ## Runtime model
 
@@ -21,6 +21,15 @@ browser <-> Filegate direct upload/download URLs
 ```
 
 The Filegate bearer token stays on the admin server. Browser uploads and downloads use scoped direct URLs.
+
+## Use it for
+
+| Page | Scope | Use for |
+|---|---:|---|
+| Overview | Service | Mount and storage summary. |
+| Files | Mount and node | Browse, upload, download, create folders, transfer, rename, edit POSIX metadata, and delete. |
+| Search | Service index | Glob search over indexed paths. |
+| System | Service | Metrics, index state, cache pressure, activity, and index rescan. |
 
 ## Environment
 
@@ -46,15 +55,6 @@ bun run dev
 ```
 
 Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
-
-## Admin surfaces
-
-| Page | Scope | Use for |
-|---|---:|---|
-| Overview | Service | Mount and storage summary. |
-| Files | Mount and node | Browse, upload, download, create folders, transfer, rename, edit metadata, delete. |
-| Search | Service index | Glob search over indexed paths. |
-| System | Service | Metrics, index state, cache pressure, activity log, and index rescan. |
 
 ## Browser transfer behavior
 
