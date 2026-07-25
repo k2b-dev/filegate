@@ -5,6 +5,11 @@ export function formatBytes(value: number): string {
   return text.pprintBytes(value);
 }
 
+export function formatRetryAfter(seconds: number): string | undefined {
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return text.pprintDurationMs(seconds * 1000);
+}
+
 export function formatUnix(value: number): string {
   if (!value) return "-";
   const millis = value > 100_000_000_000 ? value : value * 1000;

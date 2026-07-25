@@ -7,12 +7,15 @@
     "dev": "bun run build && bun dist/server.js",
     "build": "bun run build:sdk && bun run src/build.ts",
     "build:sdk": "bunx tsc -p ../sdk/ts/tsconfig.json && rm -rf node_modules/@valentinkolb/filegate/dist && cp -R ../sdk/ts/dist node_modules/@valentinkolb/filegate/dist",
-    "start": "bun dist/server.js"
+    "start": "bun dist/server.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@valentinkolb/filegate": "file:../sdk/ts",
-    "@valentinkolb/ssr": "^0.10.0",
-    "@valentinkolb/stdlib": "^0.13.0",
+    "@valentinkolb/ssr": "^0.11.2",
+    "@valentinkolb/stdlib": "^0.16.0",
+    "@valentinkolb/sync": "^5.6.0",
     "hono": "^4.12.25",
     "solid-js": "^1.9.13"
   },

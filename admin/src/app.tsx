@@ -20,7 +20,7 @@ import { Hono } from "hono";
 import { login, logout, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
 import { env } from "./lib/env";
-import { errorMessage, redirectFiles, selectedFiles } from "./lib/format";
+import { errorMessage, formatRetryAfter, redirectFiles, selectedFiles } from "./lib/format";
 import { config, routes, ssr } from "./config";
 import { LoginPage } from "./components/Layout";
 import { readThemeFromCookieHeader, type AdminTheme } from "./lib/theme";
@@ -64,8 +64,8 @@ export const app = new Hono()
     "/login",
     ...ssr(async (c) => {
       setPage(c, "Sign in");
-      const hasError = c.req.query("error") === "invalid";
-      return () => <LoginPage error={hasError ? "Invalid admin token" : undefined} />;
+      const error = loginError(c.req.query("error"), c.req.query("retry"));
+      return () => <LoginPage error={error} />;
     }),
   )
   .post("/login", login)
@@ -207,6 +207,15 @@ export const app = new Hono()
       .catch((err) => console.error("index rescan failed:", errorMessage(err)));
     return c.redirect("/system?notice=rescan+started", 303);
   });
+
+function loginError(code: string | undefined, retry: string | undefined): string | undefined {
+  if (code === "invalid") return "Invalid admin token";
+  if (code === "throttled") {
+    const wait = formatRetryAfter(Number(retry));
+    return wait ? `Too many sign-in attempts. Try again in ${wait}.` : "Too many sign-in attempts. Try again later.";
+  }
+  return undefined;
+}
 
 function setPage(c: { get(key: "page"): { title?: string; theme?: AdminTheme }; req: { header(name: string): string | undefined } }, title: string) {
   const page = c.get("page");

@@ -37,9 +37,31 @@ The Filegate bearer token stays on the admin server. Browser uploads and downloa
 |---|---:|---:|---|
 | `FILEGATE_URL` | Admin server process | Yes | REST API URL reachable from the admin app. |
 | `FILEGATE_TOKEN` | Admin server process | Yes | Filegate bearer token kept server-side. |
-| `ADMIN_TOKEN` | Browser login | No | Separate admin login token. Defaults to `FILEGATE_TOKEN`. |
-| `ADMIN_SESSION_SECRET` | Browser session cookie | No | Session signing secret. Defaults to `FILEGATE_TOKEN`. |
+| `ADMIN_TOKEN` | Browser login | Yes | Admin login token. Must differ from `FILEGATE_TOKEN`. |
+| `ADMIN_SESSION_SECRET` | Browser session cookie | No | Session signing secret. Generated at boot when unset; sessions then survive neither a restart nor a second replica. |
 | `PORT` | Admin server process | No | HTTP listen port. Defaults to `3000`. |
+| `ADMIN_TRUST_PROXY` | Rate limiting | No | Set when a reverse proxy fronts the admin app, so `X-Forwarded-For` identifies the client instead of the socket address. |
+| `ADMIN_COOKIE_SECURE` | Browser session cookie | No | `auto` (default), `true` or `false`. Auto sets `Secure` unless the request host is localhost. |
+| `REDIS_URL` | Rate limiting | No | Shares the login rate limit across replicas. In-memory when unset. |
+
+`ADMIN_TOKEN` is required and must differ from `FILEGATE_TOKEN`. It previously
+defaulted to it, which meant brute-forcing the admin login yielded the Filegate
+master token; startup now refuses that configuration.
+
+## Login and sessions
+
+Sign-in issues a stateless signed session cookie holding subject, label and
+expiry, verified server-side on every request. `POST /login` is rate limited to
+10 attempts per 5 minutes per client.
+
+Behind a TLS-terminating ingress the admin process sees plain HTTP, so the
+`Secure` cookie flag is driven by `ADMIN_COOKIE_SECURE` rather than by the
+observed request protocol. The default marks the cookie `Secure` everywhere
+except localhost.
+
+For shared rate limiting across replicas, set `REDIS_URL` in the process
+environment before launch; the Redis connection is resolved at startup and not
+re-read afterwards.
 
 ## Start the admin app
 
