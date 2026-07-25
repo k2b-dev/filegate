@@ -78,7 +78,7 @@ export function Layout(props: LayoutProps) {
   );
 }
 
-export function LoginPage(props: { error?: string }) {
+export function LoginPage(props: { error?: string; methods: { token: boolean; oidc: boolean } }) {
   return (
     <main class="login">
       <div class="panel" style="view-transition-name: fg-login-panel">
@@ -87,22 +87,30 @@ export function LoginPage(props: { error?: string }) {
         </div>
         <div class="panel-body">
           {props.error && <div class="error">{props.error}</div>}
-          <form method="post" action="/login" class="form-stack">
-            <div class="field">
-              <label for="admin-token">Admin token</label>
-              <input
-                id="admin-token"
-                class="input"
-                name="token"
-                type="password"
-                autocomplete="current-password"
-                autofocus
-              />
-            </div>
-            <button class="btn primary" type="submit">
-              Sign in
-            </button>
-          </form>
+          {props.methods.oidc && (
+            <a class="btn primary login-sso" href="/auth/login">
+              Sign in with single sign-on
+            </a>
+          )}
+          {props.methods.oidc && props.methods.token && <div class="login-divider">or</div>}
+          {props.methods.token && (
+            <form method="post" action="/login" class="form-stack">
+              <div class="field">
+                <label for="admin-token">Admin token</label>
+                <input
+                  id="admin-token"
+                  class="input"
+                  name="token"
+                  type="password"
+                  autocomplete="current-password"
+                  autofocus={!props.methods.oidc}
+                />
+              </div>
+              <button class={props.methods.oidc ? "btn" : "btn primary"} type="submit">
+                Sign in
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </main>

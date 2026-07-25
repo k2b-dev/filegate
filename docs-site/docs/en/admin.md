@@ -37,16 +37,46 @@ The Filegate bearer token stays on the admin server. Browser uploads and downloa
 |---|---:|---:|---|
 | `FILEGATE_URL` | Admin server process | Yes | REST API URL reachable from the admin app. |
 | `FILEGATE_TOKEN` | Admin server process | Yes | Filegate bearer token kept server-side. |
-| `ADMIN_TOKEN` | Browser login | Yes | Admin login token. Must differ from `FILEGATE_TOKEN`. |
+| `ADMIN_TOKEN` | Browser login | See note | Admin login token. Must differ from `FILEGATE_TOKEN`. Required unless OIDC is configured. |
 | `ADMIN_SESSION_SECRET` | Browser session cookie | No | Session signing secret. Generated at boot when unset; sessions then survive neither a restart nor a second replica. |
 | `PORT` | Admin server process | No | HTTP listen port. Defaults to `3000`. |
 | `ADMIN_TRUST_PROXY` | Rate limiting | No | Set when a reverse proxy fronts the admin app, so `X-Forwarded-For` identifies the client instead of the socket address. |
 | `ADMIN_COOKIE_SECURE` | Browser session cookie | No | `auto` (default), `true` or `false`. Auto sets `Secure` unless the request host is localhost. |
 | `REDIS_URL` | Rate limiting | No | Shares the login rate limit across replicas. In-memory when unset. |
 
-`ADMIN_TOKEN` is required and must differ from `FILEGATE_TOKEN`. It previously
-defaulted to it, which meant brute-forcing the admin login yielded the Filegate
-master token; startup now refuses that configuration.
+`ADMIN_TOKEN` must differ from `FILEGATE_TOKEN`. It previously defaulted to it,
+which meant brute-forcing the admin login yielded the Filegate master token;
+startup now refuses that configuration.
+
+## Single sign-on
+
+The admin app supports OIDC single sign-on with the authorization code flow and
+PKCE. Setting these four together enables it; leave them unset for token login.
+
+| Variable | Required | Meaning |
+|---|---:|---|
+| `OIDC_ISSUER` | Yes | Issuer URL. Discovery reads `<issuer>/.well-known/openid-configuration`. Must use https outside localhost. |
+| `OIDC_CLIENT_ID` | Yes | Client id. |
+| `OIDC_CLIENT_SECRET` | Yes | Client secret, kept server-side. |
+| `OIDC_REDIRECT_URL` | Yes | Must match the client's configured redirect URI and end in `/auth/callback`. |
+| `OIDC_SCOPES` | No | Defaults to `openid profile email`. |
+| `OIDC_GROUPS_CLAIM` | No | Claim carrying group membership. Defaults to `groups`. |
+| `OIDC_ALLOWED_GROUPS` | No | Comma-separated group allowlist. |
+
+The ID token is verified against the provider's JWKS with issuer, audience and
+nonce all checked. Sessions last 12 hours and are never refreshed; the admin app
+does not talk to the provider again after login. Logout is local and does not end
+the provider session.
+
+`OIDC_ALLOWED_GROUPS` is optional on purpose. Providers such as Authentik bind a
+group policy to the application itself, so a second allowlist in the admin would
+be duplicate bookkeeping. When it is unset, any account the provider lets through
+this client becomes an admin, and the admin logs a warning at startup stating
+that access control is delegated to the identity provider.
+
+Keeping `ADMIN_TOKEN` alongside OIDC gives you a break-glass login for when the
+provider is unreachable. Omitting it makes single sign-on the only way in and
+removes the token form from the login page.
 
 ## Login and sessions
 

@@ -25,7 +25,7 @@ Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
 |---|---:|---|
 | `FILEGATE_URL` | yes | REST API base URL, reachable from the admin server. |
 | `FILEGATE_TOKEN` | yes | Filegate bearer token, kept server-side. |
-| `ADMIN_TOKEN` | yes | Admin login token. Must differ from `FILEGATE_TOKEN`. |
+| `ADMIN_TOKEN` | see note | Admin login token. Must differ from `FILEGATE_TOKEN`. Required unless OIDC is configured, where it stays useful as a break-glass login. |
 | `ADMIN_SESSION_SECRET` | no | Session signing secret. Generated at boot when unset, which means sessions survive neither a restart nor a second replica. Set it in production. |
 | `PORT` | no | Listen port, default `3000`. |
 | `ADMIN_TRUST_PROXY` | no | Set when a reverse proxy sits in front, so `X-Forwarded-For` is used for rate limiting instead of the socket address. |
@@ -35,6 +35,35 @@ Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
 `ADMIN_TOKEN` no longer falls back to `FILEGATE_TOKEN`, and startup fails when
 the two are equal: sharing them means guessing the admin login hands out the
 Filegate master credential. `ADMIN_SESSION_SECRET` must likewise differ from both.
+
+## Single sign-on (OIDC)
+
+Setting these four together enables OIDC; leave them unset for token-only login.
+
+| Variable | Required | Meaning |
+|---|---:|---|
+| `OIDC_ISSUER` | yes | Issuer URL. Discovery reads `<issuer>/.well-known/openid-configuration`. Must be https outside localhost. |
+| `OIDC_CLIENT_ID` | yes | Client id. |
+| `OIDC_CLIENT_SECRET` | yes | Client secret; stays server-side. |
+| `OIDC_REDIRECT_URL` | yes | Must match the client's redirect URI, ending in `/auth/callback`. |
+| `OIDC_SCOPES` | no | Default `openid profile email`. `openid` is added if missing. |
+| `OIDC_GROUPS_CLAIM` | no | Claim holding group membership, default `groups`. |
+| `OIDC_ALLOWED_GROUPS` | no | Comma-separated allowlist. **When unset, anyone your provider lets through this client becomes an admin.** |
+
+`OIDC_ALLOWED_GROUPS` is deliberately optional: providers such as Authentik bind
+a group policy to the application itself, so a second allowlist here would be
+duplicate bookkeeping. Leaving it unset delegates access control to the provider
+and logs a warning at startup saying so.
+
+Authorization code flow with PKCE. The ID token is verified against the
+provider's JWKS, and issuer, audience and nonce are all checked. Sessions last 12
+hours and are not refreshed; there is no call to the provider after login.
+
+When both are configured the login page offers both, and `ADMIN_TOKEN` remains a
+break-glass path. Drop `ADMIN_TOKEN` to make single sign-on the only way in; the
+token form then disappears.
+
+Logout is local to the admin app and does not end the session at the provider.
 
 ## Sessions and login
 

@@ -17,7 +17,7 @@ import {
   type UploadSessionDirectRequest,
 } from "@valentinkolb/filegate";
 import { Hono } from "hono";
-import { login, logout, requireAuth } from "./lib/auth";
+import { authMethods, login, logout, oidcBegin, oidcCallback, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
 import { env } from "./lib/env";
 import { errorMessage, formatRetryAfter, redirectFiles, selectedFiles } from "./lib/format";
@@ -64,11 +64,14 @@ export const app = new Hono()
     "/login",
     ...ssr(async (c) => {
       setPage(c, "Sign in");
-      const error = loginError(c.req.query("error"), c.req.query("retry"));
-      return () => <LoginPage error={error} />;
+      const error = loginError(c.req.query("error"), c.req.query("retry"), c.req.query("reason"));
+      const methods = authMethods();
+      return () => <LoginPage error={error} methods={methods} />;
     }),
   )
   .post("/login", login)
+  .get("/auth/login", oidcBegin)
+  .get("/auth/callback", oidcCallback)
   .use("*", requireAuth())
   .post("/logout", logout)
   .get(
@@ -208,11 +211,23 @@ export const app = new Hono()
     return c.redirect("/system?notice=rescan+started", 303);
   });
 
-function loginError(code: string | undefined, retry: string | undefined): string | undefined {
+const oidcErrors: Record<string, string> = {
+  state: "The sign-in attempt expired or was started elsewhere. Please try again.",
+  nonce: "The sign-in response did not match this attempt. Please try again.",
+  group: "Your account is not a member of a group allowed to use this admin.",
+  provider: "The identity provider declined the sign-in.",
+  discovery: "The identity provider could not be reached. Check the server logs.",
+  token: "The identity provider response could not be verified. Check the server logs.",
+};
+
+function loginError(code: string | undefined, retry: string | undefined, reason: string | undefined): string | undefined {
   if (code === "invalid") return "Invalid admin token";
   if (code === "throttled") {
     const wait = formatRetryAfter(Number(retry));
     return wait ? `Too many sign-in attempts. Try again in ${wait}.` : "Too many sign-in attempts. Try again later.";
+  }
+  if (code === "oidc") {
+    return (reason && oidcErrors[reason]) || "Single sign-on failed. Check the server logs.";
   }
   return undefined;
 }
