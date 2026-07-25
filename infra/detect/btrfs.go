@@ -38,6 +38,12 @@ type BTRFSDetector struct {
 
 	mu             sync.Mutex
 	lastGeneration map[string]uint64
+
+	// Observability, guarded by mu together with lastGeneration.
+	cycle            uint64
+	lastScanAt       time.Time
+	lastScanDuration time.Duration
+	scanErrors       uint64
 }
 
 // NewBTRFSDetector creates a btrfs-optimized change detector for the given paths.
@@ -133,6 +139,7 @@ func (d *BTRFSDetector) initialize(ctx context.Context) {
 	for _, basePath := range d.basePaths {
 		gen, err := currentGeneration(ctx, basePath)
 		if err != nil {
+			d.scanErrors++
 			log.Printf("[filegate] btrfs detector init failed for %q: %v", basePath, err)
 			continue
 		}
@@ -141,15 +148,22 @@ func (d *BTRFSDetector) initialize(ctx context.Context) {
 }
 
 func (d *BTRFSDetector) poll(ctx context.Context) []Event {
+	started := time.Now()
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer func() {
+		d.lastScanAt = time.Now()
+		d.lastScanDuration = time.Since(started)
+		d.mu.Unlock()
+	}()
 
+	d.cycle++
 	batch := make([]Event, 0, 64)
 	for _, basePath := range d.basePaths {
 		prev := d.lastGeneration[basePath]
 		if prev == 0 {
 			gen, err := currentGeneration(ctx, basePath)
 			if err != nil {
+				d.scanErrors++
 				log.Printf("[filegate] btrfs detector generation read failed for %q: %v", basePath, err)
 				continue
 			}
@@ -159,6 +173,7 @@ func (d *BTRFSDetector) poll(ctx context.Context) []Event {
 
 		current, err := currentGeneration(ctx, basePath)
 		if err != nil {
+			d.scanErrors++
 			log.Printf("[filegate] btrfs detector generation read failed for %q: %v", basePath, err)
 			continue
 		}
@@ -175,6 +190,7 @@ func (d *BTRFSDetector) poll(ctx context.Context) []Event {
 
 		events, nextGen, err := d.deltaEvents(ctx, basePath, prev, current)
 		if err != nil {
+			d.scanErrors++
 			log.Printf("[filegate] btrfs delta scan failed for %q: %v", basePath, err)
 			batch = append(batch, Event{Type: EventUnknown, Base: basePath, AbsPath: basePath, IsDir: true})
 			d.lastGeneration[basePath] = current
@@ -359,4 +375,28 @@ func inodeToPaths(ctx context.Context, basePath string, inode uint64) ([]string,
 		return nil, err
 	}
 	return paths, nil
+}
+
+// Stats reports scan progress plus the last observed generation per base path,
+// which is what makes detector lag measurable on btrfs.
+func (d *BTRFSDetector) Stats() Stats {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	generations := make(map[string]uint64, len(d.lastGeneration))
+	for path, gen := range d.lastGeneration {
+		generations[path] = gen
+	}
+
+	return Stats{
+		Backend:          d.Name(),
+		Interval:         d.interval,
+		Cycles:           d.cycle,
+		LastScanAt:       d.lastScanAt,
+		LastScanDuration: d.lastScanDuration,
+		Errors:           d.scanErrors,
+		PendingBatches:   len(d.events),
+		QueueCapacity:    cap(d.events),
+		Generations:      generations,
+	}
 }

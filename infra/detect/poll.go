@@ -51,6 +51,11 @@ type Poller struct {
 	knownDirs  map[string]int64
 	knownFiles map[string]fileTrack
 	cycle      uint64
+
+	// Observability, guarded by mu together with the tracking maps.
+	lastScanAt       time.Time
+	lastScanDuration time.Duration
+	scanErrors       uint64
 }
 
 // NewPoller creates a polling-based change detector for the given paths.
@@ -176,8 +181,13 @@ func (p *Poller) initialize() {
 }
 
 func (p *Poller) poll() []Event {
+	started := time.Now()
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer func() {
+		p.lastScanAt = time.Now()
+		p.lastScanDuration = time.Since(started)
+		p.mu.Unlock()
+	}()
 
 	p.cycle++
 	batch := make([]Event, 0, 128)
@@ -192,6 +202,10 @@ func (p *Poller) poll() []Event {
 				deletedDirs[dirPath] = struct{}{}
 				continue
 			}
+			// Anything other than "gone" is a real problem (permissions, I/O)
+			// and the directory silently stops being watched. Count it so the
+			// condition is at least visible.
+			p.scanErrors++
 			continue
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -484,4 +498,23 @@ func dedupeEvents(events []Event) []Event {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AbsPath < out[j].AbsPath })
 	return out
+}
+
+// Stats reports poll-cycle progress and tracking-set size.
+func (p *Poller) Stats() Stats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return Stats{
+		Backend:          p.Name(),
+		Interval:         p.interval,
+		Cycles:           p.cycle,
+		LastScanAt:       p.lastScanAt,
+		LastScanDuration: p.lastScanDuration,
+		Errors:           p.scanErrors,
+		PendingBatches:   len(p.events),
+		QueueCapacity:    cap(p.events),
+		TrackedDirs:      len(p.knownDirs),
+		TrackedFiles:     len(p.knownFiles),
+	}
 }

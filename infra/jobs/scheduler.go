@@ -20,6 +20,20 @@ var (
 // JobFunc is the signature for a background job executed by the Scheduler.
 type JobFunc func(context.Context) (any, error)
 
+// Stats is a point-in-time view of scheduler pressure.
+//
+// Queued against QueueCapacity is the signal that matters operationally: once
+// the queue fills, submissions are rejected with ErrQueueFull, which callers
+// surface as 503. Rejected is cumulative since process start.
+type Stats struct {
+	Workers       int
+	Queued        int
+	QueueCapacity int
+	InFlight      int
+	Rejected      uint64
+	Panics        uint64
+}
+
 // Scheduler is a bounded worker pool with keyed job deduplication.
 type Scheduler struct {
 	ctx    context.Context
@@ -37,6 +51,11 @@ type Scheduler struct {
 	// counter from reaching zero.
 	activeWorkers atomic.Int32
 	workersDone   chan struct{}
+
+	// Cumulative counters for observability. Rejected tracks ErrQueueFull,
+	// which is otherwise only visible to the caller that hit it.
+	rejected atomic.Uint64
+	panics   atomic.Uint64
 }
 
 type jobCall struct {
@@ -147,6 +166,7 @@ func (s *Scheduler) worker() {
 func (s *Scheduler) runCall(call *jobCall) {
 	defer func() {
 		if r := recover(); r != nil {
+			s.panics.Add(1)
 			call.err = fmt.Errorf("job panic: %v\n%s", r, string(debug.Stack()))
 		}
 		close(call.done)
@@ -191,10 +211,27 @@ func (s *Scheduler) getOrSubmit(key string, fn JobFunc) (*jobCall, bool, error) 
 	case s.queue <- call:
 		return call, true, nil
 	default:
+		s.rejected.Add(1)
 		call.err = ErrQueueFull
 		close(call.done)
 		s.inFlight.Delete(key)
 		return nil, false, ErrQueueFull
+	}
+}
+
+// Stats reports current pressure and cumulative rejections. Safe on a nil
+// scheduler, which reports zeroes.
+func (s *Scheduler) Stats() Stats {
+	if s == nil {
+		return Stats{}
+	}
+	return Stats{
+		Workers:       int(s.activeWorkers.Load()),
+		Queued:        len(s.queue),
+		QueueCapacity: cap(s.queue),
+		InFlight:      s.inFlight.Size(),
+		Rejected:      s.rejected.Load(),
+		Panics:        s.panics.Load(),
 	}
 }
 
