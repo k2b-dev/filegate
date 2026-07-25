@@ -305,7 +305,7 @@ document.addEventListener("click", async (event) => {
   const values = await prompts.form({
     title: "Move or copy",
     badge: trigger.dataset.transferPath,
-    message: "Choose an existing target folder and the final resource name. Conflict behavior controls the final target: Error keeps the current state, Rename writes to the next free sibling name, Overwrite replaces the target.",
+    message: "Choose an existing target folder and the final resource name. The target must be a folder inside a mount, such as files or files/archive. Conflict behavior controls the final target: Error keeps the current state, Rename writes to the next free sibling name, Overwrite replaces the target.",
     confirmText: "Apply transfer",
     fields: [
       {
@@ -327,7 +327,13 @@ document.addEventListener("click", async (event) => {
           { value: "overwrite", label: "Overwrite" },
         ],
       },
-      { name: "targetParentPath", label: "Target parent path", placeholder: "backups/archive" },
+      {
+        name: "targetParentPath",
+        label: "Target parent path",
+        placeholder: "backups/archive",
+        value: trigger.dataset.transferParent || "",
+        required: true,
+      },
       { name: "targetName", label: "Target name", value: trigger.dataset.transferName || "", required: true },
     ],
   });

@@ -26,8 +26,14 @@ export function parentPath(path: string): string {
 }
 
 export async function resolveDirectory(path: string): Promise<Node> {
-  const out = await client().paths.get(path);
-  if (isList(out)) throw new Error("folder required");
-  if (out.type !== "directory") throw new Error("folder required");
+  const clean = path.trim().replace(/^\/+|\/+$/g, "");
+  if (!clean) {
+    // The empty path addresses the list of mounts, which is not a directory
+    // anything can be written into. Say so instead of "folder required".
+    throw new Error("Target folder is required; pick a folder inside a mount, such as files or files/archive");
+  }
+  const out = await client().paths.get(clean);
+  if (isList(out)) throw new Error(`"${clean}" is not a folder`);
+  if (out.type !== "directory") throw new Error(`"${clean}" is a file, not a folder`);
   return out;
 }

@@ -58,6 +58,16 @@ export function Files(props: {
               </button>
               <form class="tb-group tb-right" data-upload-form>
                 <input type="hidden" name="parentPath" value={props.current.path} />
+                <label class="tb-label" for="upload-conflict">
+                  If it exists
+                </label>
+                <select id="upload-conflict" class="select" name="onConflict">
+                  <option value="skip-existing">Skip</option>
+                  <option value="skip-identical">Skip if identical</option>
+                  <option value="rename">Keep both</option>
+                  <option value="overwrite">Overwrite</option>
+                  <option value="error">Fail</option>
+                </select>
                 <input id="admin-file-upload" type="file" multiple data-upload-input hidden />
                 <input id="admin-folder-upload" type="file" multiple data-upload-input hidden {...folderPickerAttrs} />
                 <button class="btn primary" type="button" data-upload-trigger="file">
@@ -92,6 +102,7 @@ function UploadPanel() {
     <div id="fg-uploads" class="uploads" hidden>
       <div class="uploads-head">
         <span class="uploads-title">Uploading...</span>
+        <button type="button" class="btn uploads-cancel">Cancel</button>
         <button type="button" class="uploads-close" aria-label="Close">
           ×
         </button>
@@ -194,7 +205,7 @@ function Detail(props: { node: Node }) {
                 <strong>Move or copy</strong>
                 <span class="muted">Transfer to another folder.</span>
               </div>
-              <button class="btn" type="button" data-transfer-open data-transfer-id={node.id} data-transfer-name={node.name} data-transfer-path={node.path}>
+              <button class="btn" type="button" data-transfer-open data-transfer-id={node.id} data-transfer-name={node.name} data-transfer-path={node.path} data-transfer-parent={parentFolderOf(node.path)}>
                 Transfer
               </button>
             </div>

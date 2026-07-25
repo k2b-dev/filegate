@@ -1,4 +1,12 @@
-import { upload, type BrowserUploadAllowResponse, type BrowserUploadEvent, type CapabilitiesResponse } from "@valentinkolb/filegate";
+import {
+  directUploads,
+  upload,
+  type BrowserUploadAllowResponse,
+  type BrowserUploadConflictMode,
+  type BrowserUploadEvent,
+  type CapabilitiesResponse,
+  type UploadSessionResponse,
+} from "@valentinkolb/filegate";
 
 const FALLBACK_SEGMENT_SIZE = 8 * 1024 * 1024;
 const PREFERRED_SEGMENT_SIZE = 32 * 1024 * 1024;
@@ -108,6 +116,22 @@ function bindStats(panel: HTMLElement): UploadStats {
   };
 }
 
+type DirectGrant = NonNullable<UploadSessionResponse["direct"]>;
+
+const conflictModes: BrowserUploadConflictMode[] = ["skip-existing", "skip-identical", "overwrite", "rename", "error"];
+
+function conflictModeFrom(raw: string | undefined): BrowserUploadConflictMode {
+  const found = conflictModes.find((mode) => mode === raw);
+  // skip-existing stays the default: it is the only mode that cannot destroy
+  // data when someone re-drops a folder they already uploaded.
+  return found ?? "skip-existing";
+}
+
+/** Best-effort abort of every session created for a cancelled upload. */
+async function abortGrants(grants: { direct: DirectGrant }[]): Promise<void> {
+  await Promise.allSettled(grants.map((grant) => directUploads.abort({ direct: grant.direct })));
+}
+
 function makeRow(list: HTMLElement, name: string): UploadRow {
   const el = document.createElement("div");
   el.className = "up-item";
@@ -128,7 +152,9 @@ async function runUpload(form: HTMLFormElement, files: File[]) {
   if (!panel) throw new Error("upload panel missing");
   const list = must(panel, ".uploads-list");
   const title = must(panel, ".uploads-title");
-  const parentPath = new FormData(form).get("parentPath")?.toString() ?? "";
+  const formData = new FormData(form);
+  const parentPath = formData.get("parentPath")?.toString() ?? "";
+  const onConflict = conflictModeFrom(formData.get("onConflict")?.toString());
   const reloadURL = `/files${parentPath ? `?path=${encodeURIComponent(parentPath)}` : ""}`;
   const rows = new Map<string, UploadRow>();
   let completed = 0;
@@ -138,6 +164,23 @@ async function runUpload(form: HTMLFormElement, files: File[]) {
   list.innerHTML = "";
   panel.hidden = false;
   must(panel, ".uploads-close").addEventListener("click", () => location.assign(reloadURL), { once: true });
+
+  // Cancelling stops the client immediately and aborts the sessions the server
+  // already created, so an interrupted upload does not leave orphans holding
+  // staged bytes until the cleanup loop notices.
+  const controller = new AbortController();
+  const grants: { direct: DirectGrant }[] = [];
+  const cancelButton = panel.querySelector<HTMLButtonElement>(".uploads-cancel");
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    controller.abort(new Error("Upload cancelled"));
+    if (cancelButton) cancelButton.disabled = true;
+    title.textContent = "Cancelling...";
+    void abortGrants(grants);
+  };
+  cancelButton?.addEventListener("click", cancel);
   files.forEach((file, index) => rows.set(`u${index + 1}`, makeRow(list, file.webkitRelativePath || file.name)));
 
   const stats = bindStats(panel);
@@ -159,11 +202,19 @@ async function runUpload(form: HTMLFormElement, files: File[]) {
   const result = await upload({
     files,
     path: parentPath,
-    allow: (req) => postJSON<BrowserUploadAllowResponse>("/api/uploads/sessions", req),
+    signal: controller.signal,
+    allow: async (req) => {
+      const res = await postJSON<BrowserUploadAllowResponse>("/api/uploads/sessions", req);
+      for (const entry of res.uploads) {
+        const direct = entry.ok ? (entry.upload?.kind === "session" ? entry.upload.session.direct : undefined) : undefined;
+        if (direct) grants.push({ direct });
+      }
+      return res;
+    },
     config: {
       segmentSize: cfg.segmentSize,
       directThresholdBytes: cfg.directThresholdBytes,
-      onConflict: "skip-existing",
+      onConflict,
       chunkSize: 4 * 1024 * 1024,
       concurrency: { hash: 2, files: 6, segments: 6 },
       batch: { size: 32, flushMs: 20 },
