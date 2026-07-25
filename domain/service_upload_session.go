@@ -1,5 +1,7 @@
 package domain
 
+import "errors"
+
 func (s *Service) CreateUploadSession(session UploadSession) error {
 	return s.idx.Batch(func(b Batch) error {
 		b.PutUploadSession(session)
@@ -58,4 +60,16 @@ func (s *Service) DeleteUploadCommitRecord(sessionID string) error {
 		b.DelUploadCommitRecord(sessionID)
 		return nil
 	})
+}
+
+// PingIndex proves the index still answers, using a point lookup on an ID that
+// cannot exist. A not-found result is success; anything else means Pebble is
+// unhealthy. Cheap enough for a pollable health endpoint, unlike Stats, which
+// walks every entity.
+func (s *Service) PingIndex() error {
+	_, err := s.idx.GetEntity(FileID{})
+	if err == nil || errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }

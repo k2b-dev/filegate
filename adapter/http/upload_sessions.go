@@ -1336,3 +1336,19 @@ func (m *uploadSessionManager) handleAbort(w http.ResponseWriter, r *http.Reques
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// writeSlotsInUse reports how many concurrent segment-write slots are held. The
+// limit is already published via /v1/capabilities; this is the usage side of it.
+func (m *uploadSessionManager) writeSlotsInUse() int {
+	if m == nil {
+		return 0
+	}
+	return len(m.writeSlots)
+}
+
+func (m *uploadSessionManager) writeSlotsLimit() int {
+	if m == nil {
+		return 0
+	}
+	return cap(m.writeSlots)
+}

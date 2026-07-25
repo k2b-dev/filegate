@@ -30,6 +30,7 @@ import (
 	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/activity"
+	"github.com/valentinkolb/filegate/infra/detect"
 	"github.com/valentinkolb/filegate/infra/jobs"
 )
 
@@ -70,6 +71,26 @@ type RouterOptions struct {
 	MetricsPath    string
 	MetricsToken   string
 	ActivityLog    *activity.Ring
+
+	// Operational context for GET /v1/system/info, /v1/system/runtime and
+	// /v1/health. All optional: zero values degrade the reported detail
+	// rather than breaking the endpoints, which keeps existing router
+	// callers (including tests) working unchanged.
+	BuildVersion string
+	BuildCommit  string
+	BasePaths    []string
+	// PathCacheSize is the configured capacity, reported alongside the live
+	// occupancy the service tracks.
+	PathCacheSize int
+	// DetectorStats returns live detector state. Nil means the router reports
+	// an unknown backend instead of guessing.
+	DetectorStats func() detect.Stats
+
+	VersioningEnabled          bool
+	VersioningMode             string
+	VersioningCooldown         time.Duration
+	VersioningPrunerInterval   time.Duration
+	VersioningMaxPinnedPerFile int
 }
 
 type closeableHandler struct {
@@ -177,6 +198,12 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	handleV1 := func(pattern string, handler http.HandlerFunc) {
 		root.Handle(pattern, auth(http.HandlerFunc(handler)))
 	}
+
+	system := newSystemReporter(svc, opts, thumbs, uploadSessions)
+	handleV1("GET /v1/system/info", system.handleInfo)
+	handleV1("GET /v1/system/runtime", system.handleRuntime)
+	handleV1("GET /v1/health", system.handleHealth)
+	handleV1("GET /v1/uploads/sessions", system.handleListUploadSessions)
 
 	handleV1("GET /v1/stats", func(w http.ResponseWriter, _ *http.Request) {
 		stats, err := svc.Stats()

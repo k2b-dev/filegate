@@ -186,6 +186,18 @@ func newDaemonServeCmd() *cobra.Command {
 				MetricsPath:                cfg.Metrics.Path,
 				MetricsToken:               cfg.Metrics.Token,
 				ActivityLog:                activityLog,
+
+				BuildVersion:  buildVersion,
+				BuildCommit:   buildCommit,
+				BasePaths:     cfg.Storage.BasePaths,
+				PathCacheSize: cfg.Cache.PathCacheSize,
+				DetectorStats: detector.Stats,
+
+				VersioningEnabled:          versioningEnabled,
+				VersioningMode:             cfg.Versioning.Enabled,
+				VersioningCooldown:         cfg.Versioning.Cooldown,
+				VersioningPrunerInterval:   cfg.Versioning.PrunerInterval,
+				VersioningMaxPinnedPerFile: cfg.Versioning.MaxPinnedPerFile,
 			})
 			var routerCloser interface{ Close() error }
 			if closer, ok := router.(interface{ Close() error }); ok {

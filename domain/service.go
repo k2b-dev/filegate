@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,9 +55,14 @@ type Service struct {
 	cache         *lru.Cache[string, pathCacheEntry]
 	idPathCache   *lru.Cache[FileID, string]
 	pathCacheSize int
-	dirSync       *coalescedDirSyncer
-	mu            sync.RWMutex
-	rescanMu      sync.Mutex
+
+	// Cumulative path-cache effectiveness. Occupancy alone cannot tell an
+	// undersized cache from a cold one; the hit ratio can.
+	pathCacheHits   atomic.Uint64
+	pathCacheMisses atomic.Uint64
+	dirSync         *coalescedDirSyncer
+	mu              sync.RWMutex
+	rescanMu        sync.Mutex
 
 	// Versioning subsystem. EnableVersioning wires these from cli config
 	// after NewService; default-zero means "feature off" so existing
@@ -344,7 +350,13 @@ func normalizeVirtualPathInput(virtualPath string) (string, []string, error) {
 }
 
 func (s *Service) resolvePathID(vp string, parts []string) (FileID, error) {
-	if cached, ok := s.cache.Get(vp); ok {
+	cached, cacheHit := s.cache.Get(vp)
+	if cacheHit {
+		s.pathCacheHits.Add(1)
+	} else {
+		s.pathCacheMisses.Add(1)
+	}
+	if cacheHit {
 		s.idPathCache.Add(cached.ID, "/"+vp)
 		return cached.ID, nil
 	}
@@ -3805,4 +3817,15 @@ func (s *Service) invalidateCacheByID(id FileID) {
 	if parent != "" {
 		s.cache.Remove(parent)
 	}
+}
+
+// PathCacheStats reports occupancy and cumulative effectiveness of the virtual
+// path cache. Hits and misses are cumulative since process start, so a caller
+// wanting a rate should sample twice.
+func (s *Service) PathCacheStats() (entries, capacity int, hits, misses uint64) {
+	s.mu.RLock()
+	entries = s.cache.Len()
+	capacity = s.pathCacheSize
+	s.mu.RUnlock()
+	return entries, capacity, s.pathCacheHits.Load(), s.pathCacheMisses.Load()
 }
