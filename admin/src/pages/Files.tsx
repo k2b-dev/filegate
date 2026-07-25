@@ -1,7 +1,8 @@
-import type { Node, StatsResponse } from "@valentinkolb/filegate";
+import type { Node, StatsResponse, VersionResponse } from "@valentinkolb/filegate";
 import { Layout } from "../components/Layout";
 import { FileIcon, FolderIcon } from "../components/Icons";
 import { NodeTable } from "../components/Table";
+import { Versions } from "./Versions";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type Crumb = { name: string; path?: string };
@@ -24,6 +25,7 @@ export function Files(props: {
   error?: string;
   notice?: string;
   truncated?: boolean;
+  versions?: { items?: VersionResponse[]; unsupported?: boolean };
 }) {
   return (
     <Layout
@@ -89,6 +91,14 @@ export function Files(props: {
         </div>
         <aside class="stack">
           {props.selected ? <Detail node={props.selected} /> : <EmptyDetail />}
+          {props.selected?.type === "file" && props.versions && (
+            <Versions
+              fileId={props.selected.id}
+              parentPath={parentFolderOf(props.selected.path)}
+              versions={props.versions.items}
+              unsupported={props.versions.unsupported}
+            />
+          )}
         </aside>
       </section>
       <UploadPanel />

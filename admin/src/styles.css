@@ -68,3 +68,16 @@ html.dark .btn.danger{color:var(--red);border-color:#7f352d}html.dark .btn.dange
 html.dark .notice{border-color:#315c3f;background:#132519;color:#9be3ae}html.dark .error{border-color:#723228;background:#2b1715;color:#ffb4a8}
 html.dark .prompt-message{border-color:#315f8d;background:#10243a;color:#bcdcff}html.dark .prompt-badge{border-color:#315f8d;background:#17314e;color:#cde5ff}
 html.dark .metric-chart .stdlib-chart-subtitle,html.dark .metric-chart .stdlib-chart-label,html.dark .metric-chart .stdlib-chart-bar-gauge-label,html.dark .metric-chart .stdlib-chart-bar-gauge-value{fill:var(--muted)}html.dark .metric-chart .stdlib-chart-gauge-value{fill:var(--ink)}html.dark .metric-chart .stdlib-chart-slice{stroke:var(--panel)}
+
+.versions{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.version{padding:11px 12px;border:1px solid var(--line);border-radius:var(--radius);background:#fff}
+.version.pinned{border-color:#9ecbf4;background:var(--blue-bg)}
+.version-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.version-when{display:grid;gap:2px;min-width:0}.version-when strong{font-size:13px;font-variant-numeric:tabular-nums}.version-when .muted{font-size:12px}
+.version-tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.tag.pin{background:#dcefff;color:#193d5d;border:1px solid #9ecbf4}
+.tag.warn{background:#fdf1e3;color:#7a4a05;border:1px solid #e8c48d}
+.version-label{margin-top:6px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.version-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.version-actions .btn{height:28px;padding:0 9px;font-size:12px;font-weight:500}

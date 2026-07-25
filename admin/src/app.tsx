@@ -7,6 +7,7 @@ import {
   type BrowserUploadConflictMode,
   type CapabilitiesResponse,
   type GlobSearchResponse,
+  type VersionResponse,
   type HealthStatus,
   type DirectUploadURLResponse,
   type FileConflictMode,
@@ -18,7 +19,7 @@ import {
   type UploadSessionCreateRequest,
   type UploadSessionDirectRequest,
 } from "@valentinkolb/filegate";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { withActor } from "./lib/actor";
 import { authMethods, login, logout, oidcBegin, oidcCallback, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
@@ -165,6 +166,55 @@ export const app = new Hono()
       return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
+  .post("/files/versions/snapshot", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, () => client().versions.snapshot(field(body, "id"), field(body, "label") || undefined));
+  })
+  .post("/files/versions/pin", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, () => client().versions.pin(field(body, "id"), field(body, "versionId"), field(body, "label") || undefined));
+  })
+  .post("/files/versions/unpin", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, () => client().versions.unpin(field(body, "id"), field(body, "versionId")));
+  })
+  .post("/files/versions/delete", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, () => client().versions.delete(field(body, "id"), field(body, "versionId")));
+  })
+  .post("/files/versions/restore", async (c) => {
+    const body = await c.req.parseBody();
+    const asNewFile = field(body, "asNewFile") === "true";
+    try {
+      const out = await client().versions.restore(field(body, "id"), field(body, "versionId"), {
+        asNewFile,
+        name: field(body, "name") || undefined,
+      });
+      // An as-new restore produces a different node, so select that one.
+      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id, undefined, restoreNotice(out.asNew)), 303);
+    } catch (err) {
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
+    }
+  })
+  .get("/files/versions/download", async (c) => {
+    const id = c.req.query("id")?.trim();
+    const versionId = c.req.query("versionId")?.trim();
+    if (!id || !versionId) return c.redirect(redirectFiles("", "file and version are required"), 303);
+    try {
+      // Version bytes have no signed direct-URL endpoint, so unlike normal
+      // downloads this one streams through the admin server.
+      const upstream = await client().versions.contentRaw(id, versionId);
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
+          "Content-Disposition": upstream.headers.get("content-disposition") ?? `attachment; filename="${versionId}.bin"`,
+        },
+      });
+    } catch (err) {
+      return c.redirect(redirectFiles(c.req.query("parentPath") || "", errorMessage(err)), 303);
+    }
+  })
   .post("/files/transfer", async (c) => {
     const body = await c.req.parseBody();
     try {
@@ -243,6 +293,23 @@ const oidcErrors: Record<string, string> = {
   token: "The identity provider response could not be verified. Check the server logs.",
 };
 
+function restoreNotice(asNew: boolean): string {
+  return asNew ? "Version restored as a new file" : "Version restored in place; the previous content was snapshotted first";
+}
+
+async function versionAction(
+  c: Context,
+  body: Record<string, string | File>,
+  run: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    await run();
+    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id")), 303);
+  } catch (err) {
+    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
+  }
+}
+
 function loginError(code: string | undefined, retry: string | undefined, reason: string | undefined): string | undefined {
   if (code === "invalid") return "Invalid admin token";
   if (code === "throttled") {
@@ -300,18 +367,35 @@ async function loadFiles(path: string, selectedId: string) {
       current = await getNodeByPath(parentPath(current.path));
     }
     if (selectedId) selected = await client().nodes.get(selectedId, { computeRecursiveSizes: true });
-    const listing = await loadAllChildren(current);
+    const target = selected ?? current;
     return {
       stats: base.stats,
       health: base.health,
       crumbs: buildCrumbs(current.path),
       current,
-      selected: selected ?? current,
-      children: listing.children,
-      truncated: listing.truncated,
+      selected: target,
+      ...(await loadAllChildren(current).then((listing) => ({ children: listing.children, truncated: listing.truncated }))),
+      versions: await loadVersions(target),
     };
   } catch (err) {
     return { ...base, crumbs: buildCrumbs(""), children: base.roots, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Version history for a file.
+ *
+ * Every versions endpoint answers 404 "versioning not supported on this mount"
+ * when the mount cannot do it, which the SDK documents as the capability check,
+ * so that case is reported as unsupported rather than as an error.
+ */
+async function loadVersions(node?: Node): Promise<{ items?: VersionResponse[]; unsupported?: boolean } | undefined> {
+  if (!node || node.type !== "file") return undefined;
+  try {
+    return { items: await client().versions.listAll(node.id) };
+  } catch (err) {
+    if (err instanceof FilegateError && err.status === 404) return { unsupported: true };
+    return { items: [] };
   }
 }
 

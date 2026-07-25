@@ -342,3 +342,72 @@ document.addEventListener("click", async (event) => {
 });
 
 document.documentElement.dataset.promptsReady = "true";
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.matches("[data-confirm-version-delete]")) return;
+  event.preventDefault();
+  const confirmed = await prompts.confirm({
+    title: "Delete version",
+    badge: form.dataset.confirmVersionDelete,
+    message: "Removes this stored version permanently. The current file is not affected.",
+    confirmText: "Delete version",
+    variant: "danger",
+  });
+  if (confirmed) form.submit();
+});
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const snapshot = target.closest<HTMLElement>("[data-snapshot-open]");
+  if (snapshot) {
+    const values = await prompts.form({
+      title: "Snapshot this file",
+      message: "Captures the current bytes as a new version. A label is optional and helps you find it later.",
+      confirmText: "Take snapshot",
+      fields: [{ name: "label", label: "Label", placeholder: "before migration" }],
+    });
+    if (values) {
+      submitForm("/files/versions/snapshot", {
+        id: snapshot.dataset.snapshotId || "",
+        parentPath: snapshot.dataset.snapshotParent || "",
+        label: values.label || "",
+      });
+    }
+    return;
+  }
+
+  const restore = target.closest<HTMLElement>("[data-restore-open]");
+  if (!restore) return;
+
+  const values = await prompts.form({
+    title: "Restore version",
+    badge: restore.dataset.restoreWhen,
+    message:
+      "In place replaces the current file. Filegate snapshots the present content first, but that snapshot is subject to the versioning cooldown: if a version was captured moments ago, the current bytes are replaced without a new one. As a new file writes a sibling and leaves the original untouched.",
+    confirmText: "Restore",
+    fields: [
+      {
+        name: "asNewFile",
+        label: "Restore mode",
+        value: "false",
+        options: [
+          { value: "false", label: "In place" },
+          { value: "true", label: "As a new file" },
+        ],
+      },
+      { name: "name", label: "New file name", placeholder: "leave empty for <name>-restored" },
+    ],
+  });
+  if (!values) return;
+
+  submitForm("/files/versions/restore", {
+    id: restore.dataset.restoreId || "",
+    versionId: restore.dataset.restoreVersion || "",
+    parentPath: restore.dataset.restoreParent || "",
+    asNewFile: values.asNewFile || "false",
+    name: values.name || "",
+  });
+});

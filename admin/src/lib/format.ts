@@ -29,8 +29,9 @@ export function redirectFiles(path: string, error?: string): string {
   return `/files${suffix ? `?${suffix}` : ""}`;
 }
 
-export function selectedFiles(path: string, id: string, error?: string): string {
+export function selectedFiles(path: string, id: string, error?: string, notice?: string): string {
   const q = new URLSearchParams({ path, id });
   if (error) q.set("error", error);
+  if (notice) q.set("notice", notice);
   return `/files?${q}`;
 }
