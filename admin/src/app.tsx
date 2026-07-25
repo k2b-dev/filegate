@@ -17,6 +17,7 @@ import {
   type UploadSessionDirectRequest,
 } from "@valentinkolb/filegate";
 import { Hono } from "hono";
+import { withActor } from "./lib/actor";
 import { authMethods, login, logout, oidcBegin, oidcCallback, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
 import { env } from "./lib/env";
@@ -73,6 +74,7 @@ export const app = new Hono()
   .get("/auth/login", oidcBegin)
   .get("/auth/callback", oidcCallback)
   .use("*", requireAuth())
+  .use("*", withActor())
   .post("/logout", logout)
   .get(
     "/",
