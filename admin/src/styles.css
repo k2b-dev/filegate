@@ -81,3 +81,23 @@ html.dark .metric-chart .stdlib-chart-subtitle,html.dark .metric-chart .stdlib-c
 .version-label{margin-top:6px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 .version-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
 .version-actions .btn{height:28px;padding:0 9px;font-size:12px;font-weight:500}
+
+.head-right{display:flex;align-items:center;gap:12px}
+.view-toggle{display:inline-flex;border:1px solid var(--line-dark);border-radius:var(--radius);overflow:hidden}
+.view-toggle a{padding:4px 11px;font-size:12px;font-weight:500;color:var(--muted);background:#fff}
+.view-toggle a:hover{background:#f4f6f8;text-decoration:none}
+.view-toggle a.active{background:var(--blue);color:#fff}
+.view-toggle a+a{border-left:1px solid var(--line-dark)}
+.grid-view{list-style:none;margin:0;padding:14px 18px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:14px}
+.grid-item a{display:grid;gap:5px;padding:10px;border:1px solid var(--line);border-radius:var(--radius);background:#fff;color:var(--ink)}
+.grid-item a:hover{border-color:var(--line-dark);text-decoration:none}
+.grid-item.is-selected a{border-color:var(--blue);background:var(--blue-bg)}
+/* The image stacks on top of the icon, so a missing or rejected thumbnail
+   simply leaves the icon visible without any error handling. */
+.thumb{position:relative;display:flex;align-items:center;justify-content:center;height:104px;border-radius:var(--radius);background:#f6f8fa;overflow:hidden}
+.thumb svg{width:30px;height:30px;opacity:.55}
+/* No background: a thumbnail the server rejects (unsupported, too large, or
+   queue full) then renders as nothing and the icon underneath stays visible. */
+.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.grid-name{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid-meta{color:var(--muted);font-size:12px}

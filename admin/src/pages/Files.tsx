@@ -7,6 +7,56 @@ import { formatBytes, formatUnix } from "../lib/format";
 
 type Crumb = { name: string; path?: string };
 
+/** Thumbnails exist only for these; anything else keeps its file icon. */
+const thumbnailTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+function hasThumbnail(node: Node): boolean {
+  return node.type === "file" && !!node.mimeType && thumbnailTypes.has(node.mimeType.split(";")[0]!.trim());
+}
+
+function viewHref(props: { current?: Node }, view: "list" | "grid"): string {
+  const q = new URLSearchParams();
+  if (props.current?.path) q.set("path", props.current.path.replace(/^\/+/, ""));
+  if (view === "grid") q.set("view", "grid");
+  const suffix = q.toString();
+  return `/files${suffix ? `?${suffix}` : ""}`;
+}
+
+/**
+ * Grid layout with image previews.
+ *
+ * The thumbnail sits on top of the icon rather than replacing it, so a file
+ * whose thumbnail is unsupported, too large, or rejected because the job queue
+ * is full simply keeps showing its icon. No error handling script needed.
+ */
+function NodeGrid(props: { nodes: Node[]; selectedId?: string; currentPath: string }) {
+  if (props.nodes.length === 0) {
+    return (
+      <div class="panel-body">
+        <p class="muted">This folder is empty.</p>
+      </div>
+    );
+  }
+  return (
+    <ul class="grid-view">
+      {props.nodes.map((node) => (
+        <li class={`grid-item${node.id === props.selectedId ? " is-selected" : ""}`}>
+          <a href={node.type === "directory" ? `/files?path=${encodeURIComponent(node.path.replace(/^\/+/, ""))}&view=grid` : `/files?path=${encodeURIComponent(props.currentPath.replace(/^\/+/, ""))}&id=${node.id}&view=grid`}>
+            <span class="thumb">
+              {node.type === "directory" ? <FolderIcon /> : <FileIcon />}
+              {hasThumbnail(node) && (
+                <img src={`/files/thumbnail?id=${node.id}&size=256`} alt="" loading="lazy" decoding="async" />
+              )}
+            </span>
+            <span class="grid-name">{node.name}</span>
+            <span class="grid-meta">{node.type === "directory" ? "Folder" : formatBytes(node.size)}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Virtual path of the folder containing `path`, or "" for a mount root. */
 function parentFolderOf(path: string): string {
   const clean = path.replace(/^\/+|\/+$/g, "");
@@ -26,6 +76,7 @@ export function Files(props: {
   notice?: string;
   truncated?: boolean;
   versions?: { items?: VersionResponse[]; unsupported?: boolean };
+  view?: "list" | "grid";
 }) {
   return (
     <Layout
@@ -48,9 +99,19 @@ export function Files(props: {
                 </>
               ))}
             </nav>
-            <span class="count">
-              {props.truncated ? "first " : ""}
-              {props.children.length} item{props.children.length === 1 ? "" : "s"}
+            <span class="head-right">
+              <span class="count">
+                {props.truncated ? "first " : ""}
+                {props.children.length} item{props.children.length === 1 ? "" : "s"}
+              </span>
+              <span class="view-toggle" role="group" aria-label="Layout">
+                <a class={props.view === "grid" ? "" : "active"} href={viewHref(props, "list")} aria-current={props.view === "grid" ? undefined : "true"}>
+                  List
+                </a>
+                <a class={props.view === "grid" ? "active" : ""} href={viewHref(props, "grid")} aria-current={props.view === "grid" ? "true" : undefined}>
+                  Grid
+                </a>
+              </span>
             </span>
           </div>
           {props.current?.type === "directory" && (
@@ -81,13 +142,17 @@ export function Files(props: {
               </form>
             </div>
           )}
-          <NodeTable
-            nodes={props.children}
-            selectedId={props.selected?.id}
-            emptyTitle={props.current ? "This folder is empty" : "No mount roots"}
-            emptyText={props.current ? "Create a folder to get started." : "Configure storage base paths to browse files here."}
-            viewTransitionName="fg-files-table"
-          />
+          {props.view === "grid" ? (
+            <NodeGrid nodes={props.children} selectedId={props.selected?.id} currentPath={props.current?.path ?? ""} />
+          ) : (
+            <NodeTable
+              nodes={props.children}
+              selectedId={props.selected?.id}
+              emptyTitle={props.current ? "This folder is empty" : "No mount roots"}
+              emptyText={props.current ? "Create a folder to get started." : "Configure storage base paths to browse files here."}
+              viewTransitionName="fg-files-table"
+            />
+          )}
         </div>
         <aside class="stack">
           {props.selected ? <Detail node={props.selected} /> : <EmptyDetail />}

@@ -93,7 +93,8 @@ export const app = new Hono()
       setPage(c, "Files");
       const data = await loadFiles(c.req.query("path") || "", c.req.query("id") || "");
       const loadError = "error" in data ? data.error : undefined;
-      return () => <Files {...data} error={queryError(c.req.query("error"), loadError)} notice={c.req.query("notice")} />;
+      const view = c.req.query("view") === "grid" ? "grid" : "list";
+      return () => <Files {...data} view={view} error={queryError(c.req.query("error"), loadError)} notice={c.req.query("notice")} />;
     }),
   )
   .post("/files/mkdir", async (c) => {
@@ -133,6 +134,33 @@ export const app = new Hono()
       return c.redirect(redirectFiles(parentPath(node.path)), 303);
     } catch (err) {
       return c.redirect(redirectFiles(field(body, "parentPath"), errorMessage(err)), 303);
+    }
+  })
+  .get("/files/thumbnail", async (c) => {
+    // The browser has no Filegate token, so thumbnails proxy through here.
+    // Conditional headers pass through both ways so the browser cache still
+    // works and repeat views cost a 304 rather than a re-encode.
+    const id = c.req.query("id")?.trim();
+    if (!id) return c.notFound();
+    const size = thumbnailSize(c.req.query("size"));
+    try {
+      const upstream = await client().nodes.thumbnailRaw(id, { size, ifNoneMatch: c.req.header("if-none-match") });
+      if (upstream.status === 304) return new Response(null, { status: 304, headers: passthroughCacheHeaders(upstream) });
+      if (!upstream.ok) {
+        // 415 unsupported, 413 too large, 503 queue full. The grid falls back
+        // to the file icon, so answering 404 is enough and keeps the browser
+        // from caching a failure as an image.
+        return c.notFound();
+      }
+      return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") ?? "image/jpeg",
+          ...passthroughCacheHeaders(upstream),
+        },
+      });
+    } catch {
+      return c.notFound();
     }
   })
   .get("/files/download", async (c) => {
@@ -292,6 +320,22 @@ const oidcErrors: Record<string, string> = {
   discovery: "The identity provider could not be reached. Check the server logs.",
   token: "The identity provider response could not be verified. Check the server logs.",
 };
+
+/** Thumbnail sizes the server accepts; anything else is rejected upstream. */
+function thumbnailSize(raw: string | undefined): 128 | 256 | 512 {
+  if (raw === "128") return 128;
+  if (raw === "512") return 512;
+  return 256;
+}
+
+function passthroughCacheHeaders(upstream: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of ["etag", "cache-control", "last-modified"]) {
+    const value = upstream.headers.get(name);
+    if (value) out[name] = value;
+  }
+  return out;
+}
 
 function restoreNotice(asNew: boolean): string {
   return asNew ? "Version restored as a new file" : "Version restored in place; the previous content was snapshotted first";
