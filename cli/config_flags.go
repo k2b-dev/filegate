@@ -26,70 +26,103 @@ const (
 	configFlagRetentionBuckets
 )
 
+// configScope says whether a value can change while the server runs.
+//
+// Getting this wrong is worse than refusing a change: a key wrongly marked
+// runtime accepts an edit, answers 200, and quietly keeps using the old value.
+// The scope therefore lives on the spec table rather than in a second list that
+// could drift, and a test asserts every key carries one.
+type configScope int
+
+const (
+	// scopeStatic values are consumed once during startup -- listener binds,
+	// store paths, conditionally mounted routes -- and only a restart applies
+	// a new value.
+	scopeStatic configScope = iota
+	// scopeRuntime values are read from the live snapshot, so a change takes
+	// effect on the next request or the next loop iteration.
+	scopeRuntime
+)
+
+func (s configScope) String() string {
+	if s == scopeRuntime {
+		return "runtime"
+	}
+	return "static"
+}
+
 type configFlagSpec struct {
 	Name  string
 	Path  string
 	Kind  configFlagKind
 	Usage string
+	// Scope decides whether a change needs a restart. See configScope.
+	Scope configScope
+	// Secret marks values that must never be returned by an API. This is a
+	// deny list because the config endpoints are meant to be complete; a test
+	// fails when a secret-looking key is missing from it.
+	Secret bool
+	// Reason documents why a static key cannot move. Empty for runtime keys.
+	Reason string
 }
 
 func allConfigFlagSpecs() []configFlagSpec {
 	return []configFlagSpec{
-		{Name: "server-listen", Path: "server.listen", Kind: configFlagString, Usage: "REST listener address"},
-		{Name: "server-public-url", Path: "server.public_url", Kind: configFlagString, Usage: "public REST base URL used when minting direct upload URLs"},
-		{Name: "server-trusted-proxies", Path: "server.trusted_proxies", Kind: configFlagStringArray, Usage: "proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers"},
-		{Name: "server-cors-allowed-origins", Path: "server.cors.allowed_origins", Kind: configFlagStringArray, Usage: "CORS allowed origin; repeat for multiple origins; empty disables CORS"},
-		{Name: "server-cors-allowed-methods", Path: "server.cors.allowed_methods", Kind: configFlagStringArray, Usage: "CORS allowed method; repeat for multiple methods; empty uses REST defaults"},
-		{Name: "server-cors-allowed-headers", Path: "server.cors.allowed_headers", Kind: configFlagStringArray, Usage: "CORS allowed request header; repeat for multiple headers; empty uses REST defaults"},
-		{Name: "server-cors-exposed-headers", Path: "server.cors.exposed_headers", Kind: configFlagStringArray, Usage: "CORS response header exposed to browsers; repeat for multiple headers"},
-		{Name: "server-cors-max-age", Path: "server.cors.max_age", Kind: configFlagDuration, Usage: "CORS preflight cache duration"},
-		{Name: "server-cors-allow-credentials", Path: "server.cors.allow_credentials", Kind: configFlagBool, Usage: "allow credentials on CORS responses; cannot be used with wildcard origin"},
-		{Name: "server-write-timeout", Path: "server.write_timeout", Kind: configFlagDuration, Usage: "HTTP response write timeout"},
-		{Name: "server-access-log-enabled", Path: "server.access_log_enabled", Kind: configFlagBool, Usage: "enable REST and S3 access logs"},
-		{Name: "server-shutdown-timeout", Path: "server.shutdown_timeout", Kind: configFlagDuration, Usage: "graceful shutdown timeout"},
-		{Name: "auth-bearer-token", Path: "auth.bearer_token", Kind: configFlagString, Usage: "REST bearer token"},
-		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts"},
-		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory"},
-		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs"},
-		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used"},
-		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Kind: configFlagInt, Usage: "in-memory path cache size"},
-		{Name: "jobs-workers", Path: "jobs.workers", Kind: configFlagInt, Usage: "background worker count"},
-		{Name: "jobs-queue-size", Path: "jobs.queue_size", Kind: configFlagInt, Usage: "background job queue size"},
-		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Kind: configFlagInt, Usage: "thumbnail worker count"},
-		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Kind: configFlagInt, Usage: "thumbnail job queue size"},
-		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry"},
-		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval"},
-		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes"},
-		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes"},
-		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes"},
-		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes"},
-		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads"},
-		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Kind: configFlagInt, Usage: "thumbnail LRU cache size"},
-		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails"},
-		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails"},
-		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off"},
-		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown"},
-		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture"},
-		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets"},
-		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval"},
-		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap"},
-		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete"},
-		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Kind: configFlagInt, Usage: "maximum version label bytes"},
-		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener"},
-		{Name: "s3-listen", Path: "s3.listen", Kind: configFlagString, Usage: "S3 listener address"},
-		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region"},
-		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "legacy single-tenant S3 access key"},
-		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "legacy single-tenant S3 secret key"},
-		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes"},
-		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 key access_key=<ak>,secret_key=<sk>,buckets=<a|b|*>,requests_per_second=<n>,burst=<n>; repeat for multiple keys"},
-		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default"},
-		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default"},
-		{Name: "s3-cleanup-stuck-upload-max-age", Path: "s3.cleanup.stuck_upload_max_age", Kind: configFlagDuration, Usage: "maximum age for stuck open multipart uploads; zero uses adapter default"},
-		{Name: "s3-cleanup-interval", Path: "s3.cleanup.interval", Kind: configFlagDuration, Usage: "multipart cleanup interval; negative disables"},
-		{Name: "metrics-enabled", Path: "metrics.enabled", Kind: configFlagBool, Usage: "enable Prometheus metrics endpoint"},
-		{Name: "metrics-path", Path: "metrics.path", Kind: configFlagString, Usage: "Prometheus metrics path"},
-		{Name: "metrics-token", Path: "metrics.token", Kind: configFlagString, Usage: "optional Prometheus metrics bearer token"},
-		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Kind: configFlagInt, Usage: "number of recent activity events kept in memory"},
+		{Name: "server-listen", Path: "server.listen", Kind: configFlagString, Usage: "REST listener address", Scope: scopeStatic, Reason: "REST listener bind address, fixed once the server accepts connections"},
+		{Name: "server-public-url", Path: "server.public_url", Kind: configFlagString, Usage: "public REST base URL used when minting direct upload URLs", Scope: scopeRuntime},
+		{Name: "server-trusted-proxies", Path: "server.trusted_proxies", Kind: configFlagStringArray, Usage: "proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-origins", Path: "server.cors.allowed_origins", Kind: configFlagStringArray, Usage: "CORS allowed origin; repeat for multiple origins; empty disables CORS", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-methods", Path: "server.cors.allowed_methods", Kind: configFlagStringArray, Usage: "CORS allowed method; repeat for multiple methods; empty uses REST defaults", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-headers", Path: "server.cors.allowed_headers", Kind: configFlagStringArray, Usage: "CORS allowed request header; repeat for multiple headers; empty uses REST defaults", Scope: scopeRuntime},
+		{Name: "server-cors-exposed-headers", Path: "server.cors.exposed_headers", Kind: configFlagStringArray, Usage: "CORS response header exposed to browsers; repeat for multiple headers", Scope: scopeRuntime},
+		{Name: "server-cors-max-age", Path: "server.cors.max_age", Kind: configFlagDuration, Usage: "CORS preflight cache duration", Scope: scopeRuntime},
+		{Name: "server-cors-allow-credentials", Path: "server.cors.allow_credentials", Kind: configFlagBool, Usage: "allow credentials on CORS responses; cannot be used with wildcard origin", Scope: scopeRuntime},
+		{Name: "server-write-timeout", Path: "server.write_timeout", Kind: configFlagDuration, Usage: "HTTP response write timeout", Scope: scopeStatic, Reason: "an http.Server field, no longer read after ListenAndServe"},
+		{Name: "server-access-log-enabled", Path: "server.access_log_enabled", Kind: configFlagBool, Usage: "enable REST and S3 access logs", Scope: scopeRuntime},
+		{Name: "server-shutdown-timeout", Path: "server.shutdown_timeout", Kind: configFlagDuration, Usage: "graceful shutdown timeout", Scope: scopeRuntime},
+		{Name: "auth-bearer-token", Path: "auth.bearer_token", Kind: configFlagString, Usage: "REST bearer token", Scope: scopeStatic, Reason: "deliberately static: the break-glass credential must survive a damaged runtime store", Secret: true},
+		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts", Scope: scopeStatic, Reason: "mounts are bound into the service, seeded as index roots, and registered with the detector"},
+		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
+		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Scope: scopeStatic, Reason: "selects a different detector implementation"},
+		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeRuntime},
+		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Kind: configFlagInt, Usage: "in-memory path cache size", Scope: scopeRuntime},
+		{Name: "jobs-workers", Path: "jobs.workers", Kind: configFlagInt, Usage: "background worker count", Scope: scopeRuntime},
+		{Name: "jobs-queue-size", Path: "jobs.queue_size", Kind: configFlagInt, Usage: "background job queue size", Scope: scopeRuntime},
+		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Kind: configFlagInt, Usage: "thumbnail worker count", Scope: scopeRuntime},
+		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Kind: configFlagInt, Usage: "thumbnail job queue size", Scope: scopeRuntime},
+		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry", Scope: scopeRuntime},
+		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval", Scope: scopeRuntime},
+		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes", Scope: scopeRuntime},
+		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
+		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Kind: configFlagInt, Usage: "thumbnail LRU cache size", Scope: scopeRuntime},
+		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeRuntime},
+		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeRuntime},
+		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Scope: scopeRuntime},
+		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown", Scope: scopeRuntime},
+		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeRuntime},
+		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets", Scope: scopeRuntime},
+		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval", Scope: scopeRuntime},
+		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap", Scope: scopeRuntime},
+		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete", Scope: scopeRuntime},
+		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Kind: configFlagInt, Usage: "maximum version label bytes", Scope: scopeRuntime},
+		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener", Scope: scopeStatic, Reason: "controls whether the second listener exists"},
+		{Name: "s3-listen", Path: "s3.listen", Kind: configFlagString, Usage: "S3 listener address", Scope: scopeStatic, Reason: "S3 listener bind address"},
+		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region", Scope: scopeRuntime},
+		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "legacy single-tenant S3 access key", Scope: scopeRuntime, Secret: true},
+		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "legacy single-tenant S3 secret key", Scope: scopeRuntime, Secret: true},
+		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes", Scope: scopeRuntime},
+		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 key access_key=<ak>,secret_key=<sk>,buckets=<a|b|*>,requests_per_second=<n>,burst=<n>; repeat for multiple keys", Scope: scopeRuntime, Secret: true},
+		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default", Scope: scopeRuntime},
+		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default", Scope: scopeRuntime},
+		{Name: "s3-cleanup-stuck-upload-max-age", Path: "s3.cleanup.stuck_upload_max_age", Kind: configFlagDuration, Usage: "maximum age for stuck open multipart uploads; zero uses adapter default", Scope: scopeRuntime},
+		{Name: "s3-cleanup-interval", Path: "s3.cleanup.interval", Kind: configFlagDuration, Usage: "multipart cleanup interval; negative disables", Scope: scopeRuntime},
+		{Name: "metrics-enabled", Path: "metrics.enabled", Kind: configFlagBool, Usage: "enable Prometheus metrics endpoint", Scope: scopeStatic, Reason: "the metrics route is mounted conditionally during router construction"},
+		{Name: "metrics-path", Path: "metrics.path", Kind: configFlagString, Usage: "Prometheus metrics path", Scope: scopeStatic, Reason: "the metrics route pattern is fixed at router construction"},
+		{Name: "metrics-token", Path: "metrics.token", Kind: configFlagString, Usage: "optional Prometheus metrics bearer token", Scope: scopeRuntime, Secret: true},
+		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Kind: configFlagInt, Usage: "number of recent activity events kept in memory", Scope: scopeRuntime},
 	}
 }
 
