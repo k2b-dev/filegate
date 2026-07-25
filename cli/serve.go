@@ -115,9 +115,21 @@ func newDaemonServeCmd() *cobra.Command {
 			// /metrics endpoint and the per-request middleware are
 			// gated on metrics.enabled. Pass it to the adapters and
 			// loops below.
+			// The detector is created further down, so the provider reads it
+			// through this holder rather than capturing a nil value.
+			var detectorRef detect.Runner
 			metricsReg := metrics.New(
 				metrics.BuildInfo{Version: buildVersion, Commit: buildCommit},
-				metricsStatsProvider{svc: svc, indexPath: cfg.Storage.IndexPath},
+				metricsStatsProvider{
+					svc:       svc,
+					indexPath: cfg.Storage.IndexPath,
+					detectorStats: func() detect.Stats {
+						if detectorRef == nil {
+							return detect.Stats{}
+						}
+						return detectorRef.Stats()
+					},
+				},
 			)
 			activityLog := activity.NewRing(cfg.Activity.RingBufferSize)
 
@@ -129,6 +141,7 @@ func newDaemonServeCmd() *cobra.Command {
 				_ = idx.Close()
 				return err
 			}
+			detectorRef = detector
 			log.Printf("[filegate] detection backend: %s", detector.Name())
 			detector.Start(ctx)
 			detectorDone := make(chan struct{})

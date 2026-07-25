@@ -292,6 +292,36 @@ time and stream the current directory contents when used.
     - `id`
     - `ids[]`
 
+## Operations
+
+These endpoints exist for operators and dashboards. All require the bearer token.
+
+- `GET /v1/system/info`
+  - Build version/commit, uptime, detector backend, effective versioning mode,
+    per-mount health (`exists`, `writable`, `xattrSupported`, free/total bytes),
+    and a curated set of effective limits.
+  - Probes the mounts, so it touches the filesystem. Read it occasionally; do
+    not poll it.
+- `GET /v1/system/runtime`
+  - Live counters only: detector cycles/staleness/errors (plus per-path btrfs
+    generations), worker-pool queue depth and rejections, path and thumbnail
+    cache hit ratios, upload sessions by phase, and segment write-slot usage.
+  - Everything is read from memory, so this is the endpoint to poll.
+- `GET /v1/health`
+  - Dependency checks: index, detector staleness, mount reachability.
+  - `200` with `status: ok|degraded`, `503` with `status: fail`.
+  - Distinct from `GET /health`, which stays a plain unauthenticated `OK`
+    liveness probe and checks nothing.
+- `GET /v1/uploads/sessions`
+  - Lists resumable upload sessions; optional `phase` filter
+    (`in_progress|committing|committed|aborted`).
+  - This is how an orphan left by an interrupted upload is found, since
+    `DELETE /v1/uploads/sessions/{id}` needs an ID that is otherwise unknown.
+
+Config exposure on `/v1/system/info` is an explicit allowlist of non-secret
+operational values, not a dump of the config file. Anything not listed in
+`LimitsInfo` stays server-side.
+
 ## Node Shape
 
 `Node` returns a discriminated union style via `type` (`file|directory`) with shared metadata:

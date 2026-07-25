@@ -272,6 +272,11 @@ func TestDomainCollectorEmitsGauges(t *testing.T) {
 		Mounts: []MountSnapshot{
 			{Name: "photos", UsedBytes: 1000, FreeBytes: 9000},
 		},
+		PathCacheHits:        900,
+		PathCacheMisses:      100,
+		DetectorStaleSeconds: 2.5,
+		DetectorCycles:       17,
+		DetectorErrors:       1,
 	}}
 	c := newDomainCollector(p)
 	want := `
@@ -291,6 +296,19 @@ filegate_mount_used_bytes{mount="photos"} 1000
 # HELP filegate_mount_free_bytes Free bytes on the filesystem backing a mount.
 # TYPE filegate_mount_free_bytes gauge
 filegate_mount_free_bytes{mount="photos"} 9000
+# HELP filegate_path_cache_lookups_total Path cache lookups by result since process start.
+# TYPE filegate_path_cache_lookups_total counter
+filegate_path_cache_lookups_total{result="hit"} 900
+filegate_path_cache_lookups_total{result="miss"} 100
+# HELP filegate_detector_stale_seconds Seconds since the detector last completed a scan round.
+# TYPE filegate_detector_stale_seconds gauge
+filegate_detector_stale_seconds 2.5
+# HELP filegate_detector_cycles_total Detection scan rounds completed since process start.
+# TYPE filegate_detector_cycles_total counter
+filegate_detector_cycles_total 17
+# HELP filegate_detector_errors_total Detection scan errors since process start.
+# TYPE filegate_detector_errors_total counter
+filegate_detector_errors_total 1
 `
 	if err := testutil.CollectAndCompare(c, strings.NewReader(want)); err != nil {
 		t.Errorf("domain collector mismatch: %v", err)

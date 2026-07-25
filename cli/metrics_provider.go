@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/valentinkolb/filegate/domain"
+	"github.com/valentinkolb/filegate/infra/detect"
 	"github.com/valentinkolb/filegate/infra/metrics"
 )
 
@@ -18,6 +20,10 @@ import (
 type metricsStatsProvider struct {
 	svc       *domain.Service
 	indexPath string
+	// detectorStats is set after the detector exists, which happens later in
+	// startup than the metrics registry. Nil means the detector gauges report
+	// zero rather than the provider failing the whole scrape.
+	detectorStats func() detect.Stats
 }
 
 func (p metricsStatsProvider) MetricsSnapshot() (metrics.Snapshot, error) {
@@ -25,11 +31,22 @@ func (p metricsStatsProvider) MetricsSnapshot() (metrics.Snapshot, error) {
 	if err != nil {
 		return metrics.Snapshot{}, err
 	}
+	_, _, cacheHits, cacheMisses := p.svc.PathCacheStats()
 	snap := metrics.Snapshot{
 		Files:            stats.TotalFiles,
 		Dirs:             stats.TotalDirs,
 		PathCacheEntries: stats.PathCacheEntries,
 		IndexDBBytes:     dirSizeBytesBestEffort(p.indexPath),
+		PathCacheHits:    cacheHits,
+		PathCacheMisses:  cacheMisses,
+	}
+	if p.detectorStats != nil {
+		d := p.detectorStats()
+		snap.DetectorCycles = d.Cycles
+		snap.DetectorErrors = d.Errors
+		if !d.LastScanAt.IsZero() {
+			snap.DetectorStaleSeconds = time.Since(d.LastScanAt).Seconds()
+		}
 	}
 	for _, m := range stats.Mounts {
 		abs, rerr := p.svc.ResolveAbsPath(m.ID)

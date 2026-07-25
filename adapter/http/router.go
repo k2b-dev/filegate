@@ -194,7 +194,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	root.HandleFunc("POST /v1/uploads/sessions/{sessionId}/commit", uploadSessions.handleCommit)
 	root.HandleFunc("DELETE /v1/uploads/sessions/{sessionId}", uploadSessions.handleAbort)
 
-	auth := authMiddleware(opts.BearerToken)
+	auth := authMiddleware(opts.BearerToken, opts.ActivityLog)
 	handleV1 := func(pattern string, handler http.HandlerFunc) {
 		root.Handle(pattern, auth(http.HandlerFunc(handler)))
 	}
@@ -1880,20 +1880,43 @@ func metricsAuthMiddleware(metricsToken, bearerToken string) func(http.Handler) 
 	}
 }
 
-func authMiddleware(token string) func(http.Handler) http.Handler {
+// recordAuthFailure logs a rejected request to the activity ring.
+//
+// The activity middleware only records requests whose actor could be
+// determined, so authentication failures previously left no trace at all --
+// exactly the events an operator investigating an intrusion wants to see. The
+// actor is "system" because there is, by definition, no authenticated identity.
+func recordAuthFailure(ring *activity.Ring, r *http.Request, reason string) {
+	if ring == nil {
+		return
+	}
+	ring.Record(activity.Event{
+		Actor:     activity.Actor{Kind: activity.ActorSystem, ID: "anonymous"},
+		Operation: "auth.denied",
+		Outcome:   activity.OutcomeFailed,
+		Target:    &activity.Target{Kind: "path", Path: r.URL.Path},
+		RequestID: requestID(r),
+		Error:     reason,
+	})
+}
+
+func authMiddleware(token string, ring *activity.Ring) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := strings.TrimSpace(r.Header.Get("Authorization"))
 			if token == "" {
+				recordAuthFailure(ring, r, "bearer token not configured")
 				writeErr(w, http.StatusUnauthorized, "bearer token not configured")
 				return
 			}
 			if !strings.HasPrefix(auth, "Bearer ") {
+				recordAuthFailure(ring, r, "missing bearer token")
 				writeErr(w, http.StatusUnauthorized, "missing bearer token")
 				return
 			}
 			provided := strings.TrimPrefix(auth, "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				recordAuthFailure(ring, r, "invalid bearer token")
 				writeErr(w, http.StatusUnauthorized, "invalid bearer token")
 				return
 			}

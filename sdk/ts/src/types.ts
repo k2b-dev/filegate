@@ -347,3 +347,157 @@ export interface IndexResolveManyResponse {
   items: (Node | null)[];
   total: number;
 }
+
+/** Phase of a resumable upload session. */
+export type UploadSessionPhase = "in_progress" | "committing" | "committed" | "aborted";
+
+export interface BuildInfo {
+  version: string;
+  commit: string;
+  go: string;
+}
+
+/**
+ * A configured mount and the result of its health probe. `writable` and
+ * `xattrSupported` are the two properties whose absence breaks Filegate
+ * silently: no writes, and no stable file IDs.
+ */
+export interface MountInfo {
+  name: string;
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  xattrSupported: boolean;
+  freeBytes: number;
+  totalBytes: number;
+  errors?: string[];
+}
+
+export interface VersioningInfo {
+  enabled: boolean;
+  mode: string;
+  cooldownMs: number;
+  prunerIntervalMs: number;
+  maxPinnedPerFile: number;
+}
+
+/** Curated, non-secret configuration needed to interpret server rejections. */
+export interface LimitsInfo {
+  maxChunkBytes: number;
+  maxUploadBytes: number;
+  maxSessionUploadBytes: number;
+  maxConcurrentSegmentWrites: number;
+  uploadMinFreeBytes: number;
+  uploadExpiryMs: number;
+  uploadCleanupIntervalMs: number;
+  thumbnailMaxSourceBytes: number;
+  thumbnailMaxPixels: number;
+  pathCacheCapacity: number;
+  activityRingCapacity: number;
+}
+
+export interface DetectorInfo {
+  backend: string;
+  intervalMs: number;
+}
+
+export interface SystemInfoResponse {
+  generatedAt: number;
+  build: BuildInfo;
+  startedAt: number;
+  uptimeMs: number;
+  detector: DetectorInfo;
+  versioning: VersioningInfo;
+  limits: LimitsInfo;
+  mounts: MountInfo[];
+  indexPath: string;
+}
+
+/**
+ * Live detector state. `staleForMs` growing far past `intervalMs` means
+ * detection stopped, which causes silent index drift rather than an outage.
+ */
+export interface DetectorRuntime {
+  backend: string;
+  intervalMs: number;
+  cycles: number;
+  lastScanAt: number;
+  lastScanDurationMs: number;
+  staleForMs: number;
+  errors: number;
+  pendingBatches: number;
+  queueCapacity: number;
+  trackedDirs?: number;
+  trackedFiles?: number;
+  generations?: Record<string, number>;
+}
+
+/** Worker pool pressure. `queued` nearing `queueCapacity` precedes 503s. */
+export interface JobsRuntime {
+  workers: number;
+  queued: number;
+  queueCapacity: number;
+  inFlight: number;
+  rejected: number;
+  panics: number;
+}
+
+export interface CacheRuntime {
+  entries: number;
+  capacity: number;
+  hits: number;
+  misses: number;
+  hitRatio: number;
+}
+
+export interface UploadSessionsRuntime {
+  inProgress: number;
+  committing: number;
+  committed: number;
+  aborted: number;
+  writeSlotsInUse: number;
+  writeSlotsLimit: number;
+}
+
+export interface SystemRuntimeResponse {
+  generatedAt: number;
+  detector: DetectorRuntime;
+  jobs: JobsRuntime;
+  pathCache: CacheRuntime;
+  thumbnailCache: CacheRuntime;
+  uploadSessions: UploadSessionsRuntime;
+}
+
+export type HealthStatus = "ok" | "degraded" | "fail";
+
+export interface HealthCheck {
+  name: string;
+  status: HealthStatus;
+  detail?: string;
+}
+
+export interface HealthResponse {
+  status: HealthStatus;
+  generatedAt: number;
+  checks: HealthCheck[];
+}
+
+export interface UploadSessionSummary {
+  id: string;
+  path: string;
+  size: number;
+  segmentSize: number;
+  totalSegments: number;
+  uploadedSegments: number;
+  uploadedBytes: number;
+  phase: UploadSessionPhase;
+  createdAt: number;
+  updatedAt: number;
+  ageMs: number;
+  contentType?: string;
+}
+
+export interface UploadSessionListResponse {
+  items: UploadSessionSummary[];
+  total: number;
+}
