@@ -1,3 +1,4 @@
+import { writeCookie } from "@valentinkolb/stdlib/browser";
 import { themeCookieName, type AdminTheme } from "./lib/theme";
 
 const maxAge = 60 * 60 * 24 * 365;
@@ -31,3 +32,16 @@ document.addEventListener("click", (event) => {
 });
 
 setTheme(currentTheme());
+
+// The files layout toggle navigates with ?view=, and the server reads the
+// preference back from this cookie. It is written here because the SSR handler
+// builds its own Response and drops cookies set on the Hono context.
+const viewCookieName = "filegate_admin_view";
+
+function rememberViewFromURL(): void {
+  const requested = new URLSearchParams(location.search).get("view");
+  if (requested !== "list" && requested !== "grid") return;
+  writeCookie(viewCookieName, requested, 365 * 24 * 60 * 60);
+}
+
+rememberViewFromURL();

@@ -21,6 +21,7 @@ import {
 } from "@valentinkolb/filegate";
 import { Hono, type Context } from "hono";
 import { withActor } from "./lib/actor";
+import { resolveFileView } from "./lib/view";
 import { authMethods, login, logout, oidcBegin, oidcCallback, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
 import { env } from "./lib/env";
@@ -93,7 +94,7 @@ export const app = new Hono()
       setPage(c, "Files");
       const data = await loadFiles(c.req.query("path") || "", c.req.query("id") || "");
       const loadError = "error" in data ? data.error : undefined;
-      const view = c.req.query("view") === "grid" ? "grid" : "list";
+      const view = resolveFileView(c);
       return () => <Files {...data} view={view} error={queryError(c.req.query("error"), loadError)} notice={c.req.query("notice")} />;
     }),
   )

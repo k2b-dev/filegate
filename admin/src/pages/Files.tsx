@@ -17,9 +17,10 @@ function hasThumbnail(node: Node): boolean {
 function viewHref(props: { current?: Node }, view: "list" | "grid"): string {
   const q = new URLSearchParams();
   if (props.current?.path) q.set("path", props.current.path.replace(/^\/+/, ""));
-  if (view === "grid") q.set("view", "grid");
-  const suffix = q.toString();
-  return `/files${suffix ? `?${suffix}` : ""}`;
+  // Always explicit: omitting it would mean "keep the stored preference", so
+  // the List link would never get you out of grid.
+  q.set("view", view);
+  return `/files?${q}`;
 }
 
 /**
@@ -41,7 +42,7 @@ function NodeGrid(props: { nodes: Node[]; selectedId?: string; currentPath: stri
     <ul class="grid-view">
       {props.nodes.map((node) => (
         <li class={`grid-item${node.id === props.selectedId ? " is-selected" : ""}`}>
-          <a href={node.type === "directory" ? `/files?path=${encodeURIComponent(node.path.replace(/^\/+/, ""))}&view=grid` : `/files?path=${encodeURIComponent(props.currentPath.replace(/^\/+/, ""))}&id=${node.id}&view=grid`}>
+          <a href={node.type === "directory" ? `/files?path=${encodeURIComponent(node.path.replace(/^\/+/, ""))}` : `/files?path=${encodeURIComponent(props.currentPath.replace(/^\/+/, ""))}&id=${node.id}`}>
             <span class="thumb">
               {node.type === "directory" ? <FolderIcon /> : <FileIcon />}
               {hasThumbnail(node) && (
@@ -63,7 +64,6 @@ function parentFolderOf(path: string): string {
   const cut = clean.lastIndexOf("/");
   return cut < 0 ? "" : clean.slice(0, cut);
 }
-const folderPickerAttrs = { webkitdirectory: "", directory: "" } as Record<string, string>;
 
 export function Files(props: {
   stats: StatsResponse;
@@ -119,27 +119,11 @@ export function Files(props: {
               <button class="btn" type="button" data-mkdir-open data-mkdir-parent={props.current.path}>
                 Create folder
               </button>
-              <form class="tb-group tb-right" data-upload-form>
-                <input type="hidden" name="parentPath" value={props.current.path} />
-                <label class="tb-label" for="upload-conflict">
-                  If it exists
-                </label>
-                <select id="upload-conflict" class="select" name="onConflict">
-                  <option value="skip-existing">Skip</option>
-                  <option value="skip-identical">Skip if identical</option>
-                  <option value="rename">Keep both</option>
-                  <option value="overwrite">Overwrite</option>
-                  <option value="error">Fail</option>
-                </select>
-                <input id="admin-file-upload" type="file" multiple data-upload-input hidden />
-                <input id="admin-folder-upload" type="file" multiple data-upload-input hidden {...folderPickerAttrs} />
-                <button class="btn primary" type="button" data-upload-trigger="file">
-                  Upload file
+              <div class="tb-group tb-right">
+                <button class="btn primary" type="button" data-upload-open={props.current.path.replace(/^\/+/, "")}>
+                  Upload
                 </button>
-                <button class="btn" type="button" data-upload-trigger="folder">
-                  Upload folder
-                </button>
-              </form>
+              </div>
             </div>
           )}
           {props.view === "grid" ? (
