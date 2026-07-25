@@ -176,6 +176,11 @@ const prompts = {
   },
 };
 
+/** The folder currently being viewed, taken from the URL. */
+function currentFolderPath(): string {
+  return new URLSearchParams(location.search).get("path") ?? "";
+}
+
 function submitForm(action: string, values: Record<string, string>) {
   const form = document.createElement("form");
   form.method = "post";
@@ -256,7 +261,7 @@ document.addEventListener("click", async (event) => {
       confirmText: "Rename",
       fields: [{ name: "name", label: "New name", value: rename.dataset.renameName || "", required: true }],
     });
-    if (values) submitForm("/files/rename", { id: rename.dataset.renameId || "", name: values.name || "" });
+    if (values) submitForm("/files/rename", { id: rename.dataset.renameId || "", parentPath: currentFolderPath(), name: values.name || "" });
     return;
   }
 
@@ -290,7 +295,7 @@ document.addEventListener("click", async (event) => {
           : []),
       ],
     });
-    if (values) submitForm("/files/metadata", { id: metadata.dataset.metadataId || "", ...values });
+    if (values) submitForm("/files/metadata", { id: metadata.dataset.metadataId || "", parentPath: currentFolderPath(), ...values });
     return;
   }
 
@@ -327,7 +332,7 @@ document.addEventListener("click", async (event) => {
     ],
   });
   if (!values) return;
-  submitForm("/files/transfer", { id: trigger.dataset.transferId || "", ...values });
+  submitForm("/files/transfer", { id: trigger.dataset.transferId || "", parentPath: currentFolderPath(), ...values });
 });
 
 document.documentElement.dataset.promptsReady = "true";

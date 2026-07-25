@@ -8,6 +8,7 @@ type ActivityQuery = { q: string; operation: string; outcome: string; page: numb
 
 export function System(props: {
   stats: StatsResponse;
+  health?: "ok" | "degraded" | "fail";
   activity?: ActivityListResponse;
   activityQuery: ActivityQuery;
   error?: string;
@@ -31,6 +32,7 @@ export function System(props: {
       title="System"
       description="Runtime health, index state, storage pressure, and recent activity."
       mounts={props.stats.mounts.length}
+      health={props.health}
       error={props.error}
       notice={props.notice}
     >

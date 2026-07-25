@@ -2,13 +2,14 @@ import type { GlobSearchResponse, StatsResponse } from "@valentinkolb/filegate";
 import { Layout } from "../components/Layout";
 import { NodeTable } from "../components/Table";
 
-export function Search(props: { stats: StatsResponse; pattern: string; hidden: boolean; results?: GlobSearchResponse; error?: string }) {
+export function Search(props: { stats: StatsResponse; health?: "ok" | "degraded" | "fail"; pattern: string; hidden: boolean; results?: GlobSearchResponse; error?: string }) {
   return (
     <Layout
       active="search"
       title="Search"
       description="Find indexed files and directories by glob pattern."
       mounts={props.stats.mounts.length}
+      health={props.health}
       error={props.error}
     >
       <section class="panel" style="view-transition-name: fg-search-panel">

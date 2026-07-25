@@ -5,16 +5,25 @@ import { NodeTable } from "../components/Table";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type Crumb = { name: string; path?: string };
+
+/** Virtual path of the folder containing `path`, or "" for a mount root. */
+function parentFolderOf(path: string): string {
+  const clean = path.replace(/^\/+|\/+$/g, "");
+  const cut = clean.lastIndexOf("/");
+  return cut < 0 ? "" : clean.slice(0, cut);
+}
 const folderPickerAttrs = { webkitdirectory: "", directory: "" } as Record<string, string>;
 
 export function Files(props: {
   stats: StatsResponse;
+  health?: "ok" | "degraded" | "fail";
   crumbs: Crumb[];
   current?: Node;
   children: Node[];
   selected?: Node;
   error?: string;
   notice?: string;
+  truncated?: boolean;
 }) {
   return (
     <Layout
@@ -22,6 +31,7 @@ export function Files(props: {
       title="Files"
       description="Browse mounts, manage files, and inspect node metadata."
       mounts={props.stats.mounts.length}
+      health={props.health}
       error={props.error}
       notice={props.notice}
     >
@@ -37,6 +47,7 @@ export function Files(props: {
               ))}
             </nav>
             <span class="count">
+              {props.truncated ? "first " : ""}
               {props.children.length} item{props.children.length === 1 ? "" : "s"}
             </span>
           </div>
@@ -218,6 +229,8 @@ function Detail(props: { node: Node }) {
               </div>
               <form method="post" action="/files/delete" data-confirm-delete={node.path}>
                 <input type="hidden" name="id" value={node.id} />
+                {/* Lets a failed delete return the user to this folder. */}
+                <input type="hidden" name="parentPath" value={parentFolderOf(node.path)} />
                 <button class="btn danger">Delete</button>
               </form>
             </div>

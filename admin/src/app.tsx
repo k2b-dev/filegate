@@ -6,6 +6,8 @@ import {
   type BrowserUploadAllowResult,
   type BrowserUploadConflictMode,
   type CapabilitiesResponse,
+  type GlobSearchResponse,
+  type HealthStatus,
   type DirectUploadURLResponse,
   type FileConflictMode,
   type MkdirConflictMode,
@@ -81,7 +83,7 @@ export const app = new Hono()
     ...ssr(async (c) => {
       setPage(c, "Overview");
       const data = await loadBase();
-      return () => <Overview stats={data.stats} roots={data.roots} error={queryError(c.req.query("error"), data.error)} />;
+      return () => <Overview stats={data.stats} health={data.health} roots={data.roots} error={queryError(c.req.query("error"), data.error)} />;
     }),
   )
   .get(
@@ -129,7 +131,7 @@ export const app = new Hono()
       await client().nodes.delete(node.id);
       return c.redirect(redirectFiles(parentPath(node.path)), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(redirectFiles(field(body, "parentPath"), errorMessage(err)), 303);
     }
   })
   .get("/files/download", async (c) => {
@@ -142,7 +144,7 @@ export const app = new Hono()
       });
       return c.redirect(out.downloadUrl, 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(redirectFiles(c.req.query("parentPath") || "", errorMessage(err)), 303);
     }
   })
   .post("/files/rename", async (c) => {
@@ -151,7 +153,7 @@ export const app = new Hono()
       const updated = await client().nodes.patch(field(body, "id"), { name: field(body, "name") });
       return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .post("/files/metadata", async (c) => {
@@ -160,7 +162,7 @@ export const app = new Hono()
       const updated = await client().nodes.patch(field(body, "id"), { ownership: ownershipFromForm(body) }, field(body, "recursiveOwnership") === "true");
       return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .post("/files/transfer", async (c) => {
@@ -176,20 +178,28 @@ export const app = new Hono()
       });
       return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .get(
     "/search",
     ...ssr(async (c) => {
       setPage(c, "Search");
-      const stats = await loadStats();
+      const base = await loadBase();
       const pattern = c.req.query("pattern") || "";
       const hidden = c.req.query("hidden") === "true";
-      const results = pattern
-        ? await client().search.glob({ pattern, limit: 100, showHidden: hidden, files: true, directories: true })
-        : undefined;
-      return () => <Search stats={stats} pattern={pattern} hidden={hidden} results={results} />;
+      let results: GlobSearchResponse | undefined;
+      let error = base.error;
+      try {
+        results = pattern
+          ? await client().search.glob({ pattern, limit: 100, showHidden: hidden, files: true, directories: true })
+          : undefined;
+      } catch (err) {
+        // A bad glob pattern is user error, not an outage; either way it must
+        // not escape as a raw 500.
+        error = errorMessage(err);
+      }
+      return () => <Search stats={base.stats} health={base.health} pattern={pattern} hidden={hidden} results={results} error={error} />;
     }),
   )
   .get(
@@ -202,15 +212,26 @@ export const app = new Hono()
         outcome: c.req.query("outcome"),
         page: c.req.query("page"),
       });
-      const [stats, activity] = await Promise.all([loadStats(), loadActivity(activityQuery)]);
-      return () => <System stats={stats} activity={activity} activityQuery={activityQuery} error={c.req.query("error")} notice={c.req.query("notice")} />;
+      const [base, activity] = await Promise.all([loadBase(), loadActivity(activityQuery)]);
+      return () => (
+        <System
+          stats={base.stats}
+          health={base.health}
+          activity={activity}
+          activityQuery={activityQuery}
+          error={queryError(c.req.query("error"), base.error)}
+          notice={c.req.query("notice")}
+        />
+      );
     }),
   )
   .post("/system/rescan", async (c) => {
-    void client()
-      .index.rescan()
-      .catch((err) => console.error("index rescan failed:", errorMessage(err)));
-    return c.redirect("/system?notice=rescan+started", 303);
+    try {
+      await client().index.rescan();
+      return c.redirect("/system?notice=" + encodeURIComponent("Index rescan started"), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
+    }
   });
 
 const oidcErrors: Record<string, string> = {
@@ -240,12 +261,27 @@ function setPage(c: { get(key: "page"): { title?: string; theme?: AdminTheme }; 
   page.theme = readThemeFromCookieHeader(c.req.header("cookie"));
 }
 
-async function loadBase(): Promise<{ stats: StatsResponse; roots: Node[]; error?: string }> {
+async function loadBase(): Promise<{ stats: StatsResponse; roots: Node[]; health: HealthStatus; error?: string }> {
+  const health = await loadHealth();
   try {
     const [stats, roots] = await Promise.all([loadStats(), loadRoots()]);
-    return { stats, roots };
+    return { stats, roots, health };
   } catch (err) {
-    return { stats: emptyStats, roots: [], error: errorMessage(err) };
+    return { stats: emptyStats, roots: [], health: health === "ok" ? "fail" : health, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Real service health for the topbar indicator, which used to be a hardcoded
+ * green dot that stayed green through a total outage. Filegate answers 503 with
+ * a body when a check fails, so a thrown error here means unreachable, not
+ * merely degraded.
+ */
+async function loadHealth(): Promise<HealthStatus> {
+  try {
+    return (await client().system.health()).status;
+  } catch {
+    return "fail";
   }
 }
 
@@ -254,7 +290,7 @@ async function loadFiles(path: string, selectedId: string) {
   if (base.error) return { ...base, crumbs: buildCrumbs(""), children: [] as Node[] };
   try {
     if (!path.trim()) {
-      return { stats: base.stats, crumbs: buildCrumbs(""), children: base.roots };
+      return { stats: base.stats, health: base.health, crumbs: buildCrumbs(""), children: base.roots };
     }
 
     let current = await getNodeByPath(path);
@@ -264,12 +300,15 @@ async function loadFiles(path: string, selectedId: string) {
       current = await getNodeByPath(parentPath(current.path));
     }
     if (selectedId) selected = await client().nodes.get(selectedId, { computeRecursiveSizes: true });
+    const listing = await loadAllChildren(current);
     return {
       stats: base.stats,
+      health: base.health,
       crumbs: buildCrumbs(current.path),
       current,
       selected: selected ?? current,
-      children: current.children ?? [],
+      children: listing.children,
+      truncated: listing.truncated,
     };
   } catch (err) {
     return { ...base, crumbs: buildCrumbs(""), children: base.roots, error: errorMessage(err) };
@@ -310,10 +349,42 @@ async function loadRoots(): Promise<Node[]> {
   return isList(roots) ? roots.items : [];
 }
 
+const listingPageSize = 200;
+/**
+ * Upper bound on children fetched for one directory view.
+ *
+ * The previous code took only the first page and rendered it as if it were the
+ * whole directory, so anything past 100 entries silently vanished and the item
+ * count lied about it. Following the cursor fixes that; this cap keeps a
+ * directory with a million entries from stalling the page, and the caller
+ * reports when it bites instead of quietly truncating again.
+ */
+const listingMaxChildren = 5000;
+
 async function getNodeByPath(path: string): Promise<Node> {
-  const out: Node | NodeListResponse = await client().paths.get(path, { pageSize: 100, computeRecursiveSizes: true });
+  const out: Node | NodeListResponse = await client().paths.get(path, { pageSize: listingPageSize, computeRecursiveSizes: true });
   if (isList(out)) throw new Error("path required");
   return out;
+}
+
+/** Walks the child cursor so the view reflects the whole directory. */
+async function loadAllChildren(node: Node): Promise<{ children: Node[]; truncated: boolean }> {
+  const children = [...(node.children ?? [])];
+  let cursor = node.nextCursor;
+
+  while (cursor && children.length < listingMaxChildren) {
+    const page: Node | NodeListResponse = await client().paths.get(node.path, {
+      pageSize: listingPageSize,
+      cursor,
+      computeRecursiveSizes: true,
+    });
+    if (isList(page)) break;
+    children.push(...(page.children ?? []));
+    if (!page.nextCursor || page.nextCursor === cursor) break;
+    cursor = page.nextCursor;
+  }
+
+  return { children, truncated: !!cursor && children.length >= listingMaxChildren };
 }
 
 function buildCrumbs(path: string): Crumb[] {

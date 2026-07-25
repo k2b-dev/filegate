@@ -11,6 +11,7 @@ button,input,select{font:inherit}form{margin:0}
 .service{font-weight:700;letter-spacing:.2px}
 .top-meta{margin-left:auto;display:flex;align-items:center;gap:18px;color:#c2cad4;font-size:13px;white-space:nowrap}
 .status{display:inline-flex;align-items:center;gap:7px}.status .dot{width:8px;height:8px;border-radius:50%;background:#2bb24c;box-shadow:0 0 0 3px rgba(43,178,76,.18)}
+.status.warn .dot{background:#d9880a;box-shadow:0 0 0 3px rgba(217,136,10,.2)}.status.bad .dot{background:#d64b32;box-shadow:0 0 0 3px rgba(214,75,50,.2)}
 .topbar .btn{height:32px;padding:0 12px;background:transparent;color:#fff;border-color:rgba(255,255,255,.35)}.topbar .btn:hover{background:rgba(255,255,255,.1)}
 .theme-toggle{min-width:58px}
 .shell{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:calc(100vh - 48px)}

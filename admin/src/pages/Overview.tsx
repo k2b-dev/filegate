@@ -3,13 +3,14 @@ import { Layout } from "../components/Layout";
 import { NodeTable } from "../components/Table";
 import { formatBytes, formatUnix } from "../lib/format";
 
-export function Overview(props: { stats: StatsResponse; roots: Node[]; error?: string; notice?: string }) {
+export function Overview(props: { stats: StatsResponse; health?: "ok" | "degraded" | "fail"; roots: Node[]; error?: string; notice?: string }) {
   return (
     <Layout
       active="overview"
       title="Overview"
       description="Runtime health, storage totals, and the fastest system actions."
       mounts={props.stats.mounts.length}
+      health={props.health}
       error={props.error}
       notice={props.notice}
     >

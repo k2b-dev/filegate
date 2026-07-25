@@ -5,10 +5,34 @@ type LayoutProps = {
   title: string;
   description: string;
   mounts: number;
+  /** Real service health. Absent means unknown, shown as such rather than green. */
+  health?: "ok" | "degraded" | "fail";
   notice?: string;
   error?: string;
   children: JSX.Element;
 };
+
+// The indicator used to be a hardcoded green dot that stayed green through a
+// total outage, which is worse than showing nothing.
+function healthLabel(status?: string): string {
+  if (status === "ok") return "Healthy";
+  if (status === "degraded") return "Degraded";
+  if (status === "fail") return "Unreachable";
+  return "Unknown";
+}
+
+function healthClass(status?: string): string {
+  if (status === "ok") return "ok";
+  if (status === "degraded") return "warn";
+  return "bad";
+}
+
+function healthTitle(status?: string): string {
+  if (status === "degraded") return "A dependency check is failing; see the System page";
+  if (status === "fail") return "Filegate is unreachable or a dependency failed";
+  if (status === "ok") return "All dependency checks pass";
+  return "Health could not be determined";
+}
 
 const nav = [
   ["overview", "Overview", "/"],
@@ -23,9 +47,9 @@ export function Layout(props: LayoutProps) {
       <header class="topbar" style="view-transition-name: fg-topbar">
         <div class="service">Filegate Admin</div>
         <div class="top-meta">
-          <span class="status">
+          <span class={`status ${healthClass(props.health)}`} title={healthTitle(props.health)}>
             <span class="dot" />
-            Healthy
+            {healthLabel(props.health)}
           </span>
           <span>
             {props.mounts} mount{props.mounts === 1 ? "" : "s"}
