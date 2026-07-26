@@ -219,6 +219,7 @@ func newDaemonServeCmd() *cobra.Command {
 				MetricsToken:               cfg.Metrics.Token,
 				ActivityLog:                activityLog,
 				Config:                     configManager.Holder(),
+				ConfigService:              configManager,
 
 				BuildVersion:  buildVersion,
 				BuildCommit:   buildCommit,

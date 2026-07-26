@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/runtimecfg"
 )
@@ -221,4 +223,126 @@ func specByPath(path string) (configFlagSpec, bool) {
 		}
 	}
 	return configFlagSpec{}, false
+}
+
+// kindName maps a spec kind to the type name clients use to pick an input
+// control. Keeping this next to the resolver means a new kind shows up as an
+// unknown type in the API rather than silently rendering as a text field.
+func kindName(kind configFlagKind) string {
+	switch kind {
+	case configFlagBool:
+		return "bool"
+	case configFlagInt, configFlagInt64:
+		return "int"
+	case configFlagDuration:
+		return "duration"
+	case configFlagStringArray:
+		return "stringList"
+	case configFlagS3Keys:
+		return "s3Keys"
+	case configFlagRetentionBuckets:
+		return "retentionBuckets"
+	default:
+		return "string"
+	}
+}
+
+// Schema describes every configuration key so a client can render controls
+// without hardcoding the list.
+func (m *ConfigManager) Schema() []apiv1.ConfigKeySchema {
+	defaults := defaultConfigValues()
+	specs := allConfigFlagSpecs()
+
+	out := make([]apiv1.ConfigKeySchema, 0, len(specs))
+	for _, spec := range specs {
+		entry := apiv1.ConfigKeySchema{
+			Path:   spec.Path,
+			Type:   kindName(spec.Kind),
+			Scope:  spec.Scope.String(),
+			Usage:  spec.Usage,
+			Reason: spec.Reason,
+			Secret: spec.Secret,
+		}
+		// A secret's default is either empty or a placeholder; publishing it
+		// would defeat the deny list.
+		if !spec.Secret {
+			entry.Default = defaults[spec.Path]
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// Values reports the effective value and provenance of every key.
+func (m *ConfigManager) Values() apiv1.ConfigValuesResponse {
+	cfg := m.holder.Get()
+	sources := m.Sources()
+	specs := allConfigFlagSpecs()
+
+	values := make([]apiv1.ConfigValue, 0, len(specs))
+	for _, spec := range specs {
+		source := sources[spec.Path]
+		if source == "" {
+			source = SourceDefault
+		}
+		values = append(values, apiv1.ConfigValue{
+			Path:   spec.Path,
+			Value:  configValueForAPI(&cfg, spec),
+			Source: string(source),
+			Scope:  spec.Scope.String(),
+		})
+	}
+
+	return apiv1.ConfigValuesResponse{
+		GeneratedAt:     time.Now().UnixMilli(),
+		Values:          values,
+		RestartRequired: toAPIRestarts(m.pendingRestarts(cfg)),
+	}
+}
+
+func toAPIRestarts(in []domain.RestartRequired) []apiv1.ConfigRestartRequired {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]apiv1.ConfigRestartRequired, 0, len(in))
+	for _, entry := range in {
+		out = append(out, apiv1.ConfigRestartRequired{Path: entry.Path, Running: entry.Running, Desired: entry.Desired})
+	}
+	return out
+}
+
+// ApplyChanges adapts Apply to the shape the HTTP adapter consumes.
+func (m *ConfigManager) ApplyChanges(changes map[string]any) ([]apiv1.ConfigRestartRequired, error) {
+	restarts, err := m.Apply(changes)
+	if err != nil {
+		return nil, err
+	}
+	return toAPIRestarts(restarts), nil
+}
+
+// ValidateChanges checks a batch without applying it.
+func (m *ConfigManager) ValidateChanges(changes map[string]any) error {
+	return m.Validate(changes)
+}
+
+// ReloadConfig re-reads every source and republishes.
+func (m *ConfigManager) ReloadConfig() ([]apiv1.ConfigRestartRequired, error) {
+	restarts, err := m.Reload()
+	if err != nil {
+		return nil, err
+	}
+	return toAPIRestarts(restarts), nil
+}
+
+// defaultConfigValues resolves the built-in defaults on their own, with no file
+// and no environment, so the schema can show what a key falls back to.
+func defaultConfigValues() map[string]any {
+	v := viper.New()
+	registerConfigDefaults(v)
+
+	out := make(map[string]any)
+	for _, spec := range allConfigFlagSpecs() {
+		out[spec.Path] = v.Get(spec.Path)
+	}
+	return out
 }

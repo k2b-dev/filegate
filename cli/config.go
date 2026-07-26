@@ -25,9 +25,10 @@ func loadConfig(configFile string) (domain.Config, error) {
 // newConfigViper registers every default and reads the static sources (config
 // file and environment). Runtime overrides are layered on top by the caller via
 // viper's explicit Set, which outranks both.
-func newConfigViper(configFile string) (*viper.Viper, error) {
-	v := viper.New()
-
+// registerConfigDefaults declares the built-in value of every key. It is a
+// named function rather than an inline block so the schema endpoint can resolve
+// the same defaults without reading any file or environment.
+func registerConfigDefaults(v *viper.Viper) {
 	v.SetDefault("server.listen", ":8080")
 	v.SetDefault("server.public_url", "")
 	v.SetDefault("server.trusted_proxies", []string{})
@@ -106,6 +107,12 @@ func newConfigViper(configFile string) (*viper.Viper, error) {
 	v.SetDefault("metrics.path", "/metrics")
 	v.SetDefault("metrics.token", "")
 	v.SetDefault("activity.ring_buffer_size", 500)
+}
+
+func newConfigViper(configFile string) (*viper.Viper, error) {
+	v := viper.New()
+
+	registerConfigDefaults(v)
 
 	configFile = strings.TrimSpace(configFile)
 	if configFile == "" {

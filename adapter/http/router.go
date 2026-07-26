@@ -76,6 +76,9 @@ type RouterOptions struct {
 	// request so a change applies without a restart; nil falls back to the
 	// values captured in this struct, which keeps existing callers working.
 	Config *domain.ConfigHolder
+	// ConfigService backs the /v1/config endpoints. Nil leaves them unmounted,
+	// which is how every existing router caller and test keeps working.
+	ConfigService ConfigService
 
 	// Operational context for GET /v1/system/info, /v1/system/runtime and
 	// /v1/health. All optional: zero values degrade the reported detail
@@ -209,6 +212,15 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	handleV1("GET /v1/system/runtime", system.handleRuntime)
 	handleV1("GET /v1/health", system.handleHealth)
 	handleV1("GET /v1/uploads/sessions", system.handleListUploadSessions)
+
+	if opts.ConfigService != nil {
+		cfgAPI := configHandlers{svc: opts.ConfigService}
+		handleV1("GET /v1/config/schema", cfgAPI.handleSchema)
+		handleV1("GET /v1/config", cfgAPI.handleValues)
+		handleV1("PATCH /v1/config", cfgAPI.handlePatch)
+		handleV1("POST /v1/config/validate", cfgAPI.handleValidate)
+		handleV1("POST /v1/config/reload", cfgAPI.handleReload)
+	}
 
 	handleV1("GET /v1/stats", func(w http.ResponseWriter, _ *http.Request) {
 		stats, err := svc.Stats()
