@@ -150,6 +150,7 @@ func (h *closeableHandler) Close() error {
 // NewRouter constructs the HTTP handler tree with all routes, middleware, and background workers.
 func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	root := http.NewServeMux()
+	live := newLiveConfig(opts)
 
 	thumbnailWorkers := resolveThumbnailJobWorkers(opts)
 	thumbnailQueueSize := resolveThumbnailQueueSize(opts)
@@ -291,7 +292,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			Uploads: apiv1.UploadCapabilities{
 				MaxChunkBytes:              uploadSessions.maxSegmentBytes,
-				MaxUploadBytes:             opts.MaxUploadBytes,
+				MaxUploadBytes:             live.maxUploadBytes(),
 				MaxSessionUploadBytes:      uploadSessions.maxUploadBytes,
 				MaxConcurrentSegmentWrites: uploadSessions.maxWrites,
 			},
@@ -349,7 +350,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 			statusFromErr(w, err)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, opts.MaxUploadBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, live.maxUploadBytes())
 		meta, created, err := svc.WriteContentByVirtualPath(vp, r.Body, mode)
 		if err != nil {
 			if errors.Is(err, domain.ErrConflict) {
@@ -434,7 +435,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, opts.MaxUploadBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, live.maxUploadBytes())
 		if err := svc.WriteContent(id, r.Body); err != nil {
 			statusFromErr(w, err)
 			return
@@ -672,16 +673,10 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		writeJSON(w, http.StatusOK, apiv1.IndexResolveManyResponse{Items: items, Total: len(items)})
 	})
 	chain := []middlewareFunc{recoverMiddleware, requestIDMiddleware, activityMiddleware(opts.ActivityLog)}
-	if realIP := realIPMiddleware(opts.TrustedProxies); realIP != nil {
-		chain = append(chain, realIP)
-	}
+	chain = append(chain, liveRealIPMiddleware(live))
 	chain = append(chain, secureHeadersMiddleware)
-	if cors := corsMiddleware(opts.CORS); cors != nil {
-		chain = append(chain, cors)
-	}
-	if opts.AccessLogEnabled {
-		chain = append(chain, accessLogMiddleware)
-	}
+	chain = append(chain, liveCORSMiddleware(live))
+	chain = append(chain, liveAccessLogMiddleware(live))
 	handler := chainMiddleware(root, chain...)
 	return &closeableHandler{
 		handler: handler,
@@ -2128,6 +2123,16 @@ func nodeResponseForFingerprint(meta *domain.FileMeta, mode fingerprintMode) api
 }
 
 func statusFromErr(w http.ResponseWriter, err error) {
+	// A body that exceeded upload.max_upload_bytes is the client's problem,
+	// not a server fault. Only the direct-upload handler used to translate
+	// this, so path and node writes answered 500 and told the caller nothing
+	// actionable.
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) {
+		writeErr(w, http.StatusRequestEntityTooLarge, "upload exceeds upload.max_upload_bytes")
+		return
+	}
+
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")

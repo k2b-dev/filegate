@@ -4,8 +4,10 @@ package httpadapter
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -327,5 +329,27 @@ func TestSystemEndpointsRequireAuth(t *testing.T) {
 		if w.Result().StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s without a token: status=%d, want 401", target, w.Result().StatusCode)
 		}
+	}
+}
+
+// An oversized body is a client error. Before this mapping only the
+// direct-upload path translated it, so a plain PUT answered 500 and gave the
+// caller nothing to act on.
+func TestOversizedUploadAnswers413(t *testing.T) {
+	base := t.TempDir()
+	r, svc, cleanup := newTestRouterWithBasePathsAndOptions(t, []string{base}, RouterOptions{MaxUploadBytes: 16})
+	defer cleanup()
+
+	root := svc.ListRoot()[0]
+	body := strings.Repeat("x", 1024)
+
+	req := authedRequest(http.MethodPut, "/v1/paths/"+root.Name+"/big.txt")
+	req.Body = io.NopCloser(strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", got)
 	}
 }
