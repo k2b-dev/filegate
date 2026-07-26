@@ -1,7 +1,7 @@
 import type { JSX } from "solid-js";
 
 type LayoutProps = {
-  active: "overview" | "files" | "search" | "system";
+  active: "overview" | "files" | "search" | "system" | "settings";
   title: string;
   description: string;
   mounts: number;
@@ -39,6 +39,7 @@ const nav = [
   ["files", "Files", "/files"],
   ["search", "Search", "/search"],
   ["system", "System", "/system"],
+  ["settings", "Settings", "/settings"],
 ] as const;
 
 export function Layout(props: LayoutProps) {

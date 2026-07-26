@@ -32,6 +32,7 @@ import { readThemeFromCookieHeader, type AdminTheme } from "./lib/theme";
 import { Files } from "./pages/Files";
 import { Overview } from "./pages/Overview";
 import { Search } from "./pages/Search";
+import { Settings } from "./pages/Settings";
 import { System } from "./pages/System";
 
 type Crumb = { name: string; path?: string };
@@ -59,6 +60,10 @@ export const app = new Hono()
   .get("/prompts.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./prompts.js", import.meta.url)));
+  })
+  .get("/settings.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./settings.js", import.meta.url)));
   })
   .get("/theme.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
@@ -304,6 +309,88 @@ export const app = new Hono()
       );
     }),
   )
+  .get(
+    "/settings",
+    ...ssr(async (c) => {
+      setPage(c, "Settings");
+      const data = await loadSettings();
+      return () => (
+        <Settings
+          {...data}
+          mounts={data.mounts}
+          error={queryError(c.req.query("error"), data.error)}
+          notice={c.req.query("notice")}
+        />
+      );
+    }),
+  )
+  .post("/settings/apply", async (c) => {
+    const body = await c.req.parseBody();
+    const path = field(body, "path");
+    try {
+      const value = parseSettingValue(field(body, "type"), field(body, "value"));
+      const out = await client().config.patch({ [path]: value });
+      const pending = out.restartRequired?.length ? " A restart is required for it to take effect." : "";
+      return c.redirect(settingsURL(undefined, `${path} updated.${pending}`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/settings/reset", async (c) => {
+    const body = await c.req.parseBody();
+    const path = field(body, "path");
+    try {
+      // null clears the override so the key falls back to the file or default.
+      await client().config.patch({ [path]: null });
+      return c.redirect(settingsURL(undefined, `${path} reset to its configured value.`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/settings/s3keys/create", async (c) => {
+    const body = await c.req.parseBody();
+    try {
+      const rate = Number.parseInt(field(body, "requestsPerSecond"), 10);
+      const created = await client().s3Keys.create({
+        buckets: splitCSV(field(body, "buckets")),
+        ...(Number.isFinite(rate) && rate > 0 ? { requestsPerSecond: rate } : {}),
+      });
+      // The secret cannot be read again, so it goes in the notice verbatim.
+      return c.redirect(settingsURL(undefined, `Key ${created.accessKey} created. Secret (shown once): ${created.secretKey}`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/settings/s3keys/rotate", async (c) => {
+    const body = await c.req.parseBody();
+    try {
+      const rotated = await client().s3Keys.rotate(field(body, "accessKey"));
+      return c.redirect(settingsURL(undefined, `Key ${rotated.accessKey} rotated. New secret (shown once): ${rotated.secretKey}`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/settings/s3keys/toggle", async (c) => {
+    const body = await c.req.parseBody();
+    const accessKey = field(body, "accessKey");
+    try {
+      const disabled = field(body, "disabled") === "true";
+      await client().s3Keys.update(accessKey, { disabled });
+      return c.redirect(settingsURL(undefined, `${accessKey} ${disabled ? "disabled" : "enabled"}.`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/settings/s3keys/delete", async (c) => {
+    const body = await c.req.parseBody();
+    const accessKey = field(body, "accessKey");
+    try {
+      await client().s3Keys.delete(accessKey);
+      return c.redirect(settingsURL(undefined, `${accessKey} deleted.`), 303);
+    } catch (err) {
+      return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
   .post("/system/rescan", async (c) => {
     try {
       await client().index.rescan();
@@ -336,6 +423,56 @@ function passthroughCacheHeaders(upstream: Response): Record<string, string> {
     if (value) out[name] = value;
   }
   return out;
+}
+
+function settingsURL(error?: string, notice?: string): string {
+  const q = new URLSearchParams();
+  if (error) q.set("error", error);
+  if (notice) q.set("notice", notice);
+  const suffix = q.toString();
+  return `/settings${suffix ? `?${suffix}` : ""}`;
+}
+
+function splitCSV(raw: string): string[] {
+  return raw.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+/**
+ * Turns a form string into the JSON type the config API expects.
+ *
+ * The server validates regardless; this only makes sure a number arrives as a
+ * number rather than as a string that would fail a type check downstream.
+ */
+function parseSettingValue(type: string, raw: string): unknown {
+  if (type === "bool") return raw === "true";
+  if (type === "int") {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) throw new Error(`${raw} is not a number`);
+    return parsed;
+  }
+  if (type === "stringList") return splitCSV(raw);
+  return raw;
+}
+
+async function loadSettings() {
+  const fg = client();
+  try {
+    const [schema, values, stats] = await Promise.all([fg.config.schema(), fg.config.values(), loadStats()]);
+    const s3Enabled = values.values.find((entry) => entry.path === "s3.enabled")?.value === true;
+    // Listing keys fails when the S3 listener is off; that is expected, not an error.
+    const keys = s3Enabled ? await fg.s3Keys.list().then((out) => out.items).catch(() => []) : [];
+    return { schema: schema.keys, values, keys, s3Enabled, mounts: stats.mounts.length, health: await loadHealth() };
+  } catch (err) {
+    return {
+      schema: [],
+      values: { generatedAt: 0, values: [] },
+      keys: [],
+      s3Enabled: false,
+      mounts: 0,
+      health: "fail" as const,
+      error: errorMessage(err),
+    };
+  }
 }
 
 function restoreNotice(asNew: boolean): string {

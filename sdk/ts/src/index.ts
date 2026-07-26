@@ -47,6 +47,22 @@ export type {
 export type { FileConflictMode, FingerprintMode, MkdirConflictMode, UploadSessionConflictMode } from "./types.js";
 
 export type {
+  ConfigKeySchema,
+  ConfigRestartRequired,
+  ConfigSchemaResponse,
+  ConfigScope,
+  ConfigSource,
+  ConfigValue,
+  ConfigValuesResponse,
+  ConfigChangeResponse,
+  S3Key,
+  S3KeyCreated,
+  S3KeyCreateRequest,
+  S3KeyListResponse,
+  S3KeyUpdateRequest,
+} from "./types.js";
+
+export type {
   BuildInfo,
   CacheRuntime,
   DetectorInfo,

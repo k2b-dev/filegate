@@ -322,6 +322,44 @@ Config exposure on `/v1/system/info` is an explicit allowlist of non-secret
 operational values, not a dump of the config file. Anything not listed in
 `LimitsInfo` stays server-side.
 
+## Configuration
+
+All require the bearer token. Secrets are never returned; they report
+`{"configured": true|false}`.
+
+- `GET /v1/config/schema`
+  - Every key with its type, scope (`static` or `runtime`), default and usage.
+  - Clients render controls from this instead of hardcoding the key list, so a
+    key added in a later release appears on its own.
+- `GET /v1/config`
+  - Effective values, the source of each (`default`, `file`, `env`, `runtime`),
+    and any static setting waiting on a restart.
+- `PATCH /v1/config`
+  - Body `{"changes": {"<path>": <value>}}`. A `null` value clears the runtime
+    override so the key falls back to the file or its default.
+  - Batched because some settings are only valid together.
+  - Three outcomes: applied and live, applied with `restartRequired` naming the
+    running and desired values, or `400`.
+- `POST /v1/config/validate`
+  - Same validation without persisting, for checking input as it is typed.
+- `POST /v1/config/reload`
+  - Re-reads every source, for a config file edited by hand.
+
+## S3 access keys
+
+Access keys are runtime resources, not configuration. Changes take effect on the
+next request. Secrets are returned only by create and rotate.
+
+- `GET /v1/s3/keys`
+- `POST /v1/s3/keys` — `buckets` required; `["*"]` grants every mount
+- `PATCH /v1/s3/keys/{accessKey}` — grants, rate limit, disabled flag
+- `POST /v1/s3/keys/{accessKey}/rotate`
+- `DELETE /v1/s3/keys/{accessKey}`
+
+Keys configured in the static file are imported once, into a store that has
+never held them, and ignored afterwards. A deleted key therefore stays deleted
+across restarts even when the configuration that seeded it is still present.
+
 ## Node Shape
 
 `Node` returns a discriminated union style via `type` (`file|directory`) with shared metadata:

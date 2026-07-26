@@ -501,3 +501,83 @@ export interface UploadSessionListResponse {
   items: UploadSessionSummary[];
   total: number;
 }
+
+export type ConfigScope = "static" | "runtime";
+export type ConfigSource = "default" | "file" | "env" | "runtime";
+
+export interface ConfigKeySchema {
+  path: string;
+  /** string, bool, int, duration, stringList, s3Keys or retentionBuckets. */
+  type: string;
+  scope: ConfigScope;
+  usage: string;
+  /** Why a static key cannot change while the server runs. */
+  reason?: string;
+  /** Secret values report presence only, never their content. */
+  secret: boolean;
+  default?: unknown;
+}
+
+export interface ConfigSchemaResponse {
+  keys: ConfigKeySchema[];
+}
+
+export interface ConfigValue {
+  path: string;
+  /** The effective value, or {configured: boolean} for secrets. */
+  value: unknown;
+  source: ConfigSource;
+  scope: ConfigScope;
+}
+
+export interface ConfigRestartRequired {
+  path: string;
+  running: string;
+  desired: string;
+}
+
+export interface ConfigValuesResponse {
+  generatedAt: number;
+  values: ConfigValue[];
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface ConfigChangeResponse {
+  applied: boolean;
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface S3Key {
+  accessKey: string;
+  buckets: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+  disabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Carries the one-time secret; it cannot be read again afterwards. */
+export interface S3KeyCreated extends S3Key {
+  secretKey: string;
+}
+
+export interface S3KeyListResponse {
+  items: S3Key[];
+  total: number;
+}
+
+export interface S3KeyCreateRequest {
+  accessKey?: string;
+  /** Required. Use ["*"] to grant every mount. */
+  buckets: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+}
+
+export interface S3KeyUpdateRequest {
+  buckets?: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+  disabled?: boolean;
+}

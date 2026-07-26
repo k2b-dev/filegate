@@ -122,7 +122,7 @@ function openPrompt<T>(root: HTMLElement, resolveValue: (value: string | undefin
   });
 }
 
-const prompts = {
+export const prompts = {
   confirm(options: ConfirmOptions): Promise<boolean> {
     const { root, footer } = frame(options.title, options.message, options.badge);
     footer.append(button(options.cancelText ?? "Cancel", "cancel"), button(options.confirmText ?? "Confirm", "ok", options.variant));
@@ -181,7 +181,7 @@ function currentFolderPath(): string {
   return new URLSearchParams(location.search).get("path") ?? "";
 }
 
-function submitForm(action: string, values: Record<string, string>) {
+export function submitForm(action: string, values: Record<string, string>) {
   const form = document.createElement("form");
   form.method = "post";
   form.action = action;

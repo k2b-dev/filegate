@@ -111,3 +111,13 @@ html.dark .metric-chart .stdlib-chart-subtitle,html.dark .metric-chart .stdlib-c
 .staged-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .staged-remove{appearance:none;border:0;background:transparent;color:var(--muted);font-size:17px;line-height:1;cursor:pointer;padding:0 4px}.staged-remove:hover{color:var(--red)}
 .upload-footer{justify-content:space-between}
+.restart-banner{border-color:#e8c48d;background:#fdf9f3}
+.restart-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.restart-list li{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;font-size:13px}
+.setting-usage{margin-top:3px;font-size:12px;max-width:520px;white-space:normal}
+.row-actions{display:flex;gap:6px;justify-content:flex-end}
+.row-actions .btn{height:28px;padding:0 9px;font-size:12px;font-weight:500}
+.tag.source-runtime{background:#dcefff;color:#193d5d;border:1px solid #9ecbf4}
+.tag.source-env,.tag.source-file{background:#eef1f4;color:#3a4654;border:1px solid var(--line-dark)}
+.tag.source-default{background:transparent;color:var(--muted);border:1px solid var(--line)}
+td code{font-size:12px}
