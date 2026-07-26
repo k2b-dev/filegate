@@ -120,6 +120,21 @@ if [[ "$PRESET" == "full" || "$PRESET" == "levers" ]]; then
   bench session-c64-batch100 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport session --tree-files 64 --tree-segments 64 --tree-batch 100
 fi
 
+# 4b. Commit cost on its own.
+#
+# The narrow set for "did commit stop dominating", small enough to run twice in
+# one sitting -- once per build under comparison. Host drift on this machine
+# reaches 2.4x over tens of minutes, so a before/after claim is only worth
+# making when both arms ran back to back, and that rules out the full preset.
+# The two put rows are the large-file regression check.
+if [[ "$PRESET" == "commit" ]]; then
+  bench session-c32-batch100 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport session --tree-files 32 --tree-segments 32 --tree-batch 100
+  bench nm-session-c32-batch100 "${direct_url[@]}" --tree-shape node-modules --tree-scale "$NM_SCALE" --tree-transport session --tree-files 32 --tree-segments 32 --tree-batch 100
+  bench photos-session-c8-seg32 "${direct_url[@]}" --tree-shape photos --tree-scale "$PHOTOS_SCALE" --tree-transport session --tree-files 8 --tree-hash 4 --tree-segments 16 --tree-segment-size 33554432 --tree-batch 32
+  bench put-c32 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport put --tree-files 32
+  bench photos-put-c8 "${direct_url[@]}" --tree-shape photos --tree-scale "$PHOTOS_SCALE" --tree-transport put --tree-files 8
+fi
+
 # 5. HTTP/1.1 versus HTTP/2, both through the same TLS edge.
 if [[ "$PRESET" == "full" || "$PRESET" == "http2" ]]; then
   bench edge-h1-put-c32 "${edge_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport put --tree-files 32

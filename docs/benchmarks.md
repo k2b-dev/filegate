@@ -112,6 +112,12 @@ its own volumes) including a TLS edge, because HTTP/2 needs TLS and the Filegate
 listener serves cleartext HTTP/1.1 only. It recreates the stack between
 configurations, since a corpus left behind changes what later runs measure.
 
+Presets (`FILEGATE_BENCH_PRESET`): `full` (everything, the default), `levers`,
+`http2`, `shapes`, and `commit`. Use `commit` for before/after work on the
+commit path — it is the narrow set of session runs plus a large-file regression
+check, small enough to run once per build in a single sitting, which matters
+because this comparison is only meaningful when both arms ran back to back.
+
 Results and interpretation: `bench/results/`.
 
 ## Notes
