@@ -48,6 +48,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
       error={props.error}
       notice={props.notice}
     >
+      <div class="page-stack">
       {restarts.length > 0 && (
         <div class="panel restart-banner">
           <div class="panel-head">
@@ -107,6 +108,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                       <td>{key.requestsPerSecond ? `${key.requestsPerSecond}/s` : "-"}</td>
                       <td>{key.disabled ? <span class="tag warn">Disabled</span> : <span class="tag pin">Active</span>}</td>
                       <td class="row-actions">
+                        <span class="actions">
                         <form method="post" action="/settings/s3keys/toggle">
                           <input type="hidden" name="accessKey" value={key.accessKey} />
                           <input type="hidden" name="disabled" value={key.disabled ? "false" : "true"} />
@@ -123,6 +125,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                             Delete
                           </button>
                         </form>
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -173,6 +176,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                           )}
                         </td>
                         <td class="row-actions">
+                          <span class="actions">
                           {editable(key) && (
                             <button
                               class="btn"
@@ -192,6 +196,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               </button>
                             </form>
                           )}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -202,6 +207,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
           </div>
         </div>
       ))}
+      </div>
       <script src="/settings.js" defer />
     </Layout>
   );
