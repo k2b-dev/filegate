@@ -15,6 +15,17 @@ import (
 )
 
 func loadConfig(configFile string) (domain.Config, error) {
+	v, err := newConfigViper(configFile)
+	if err != nil {
+		return domain.Config{}, err
+	}
+	return finishConfig(v)
+}
+
+// newConfigViper registers every default and reads the static sources (config
+// file and environment). Runtime overrides are layered on top by the caller via
+// viper's explicit Set, which outranks both.
+func newConfigViper(configFile string) (*viper.Viper, error) {
 	v := viper.New()
 
 	v.SetDefault("server.listen", ":8080")
@@ -103,7 +114,7 @@ func loadConfig(configFile string) (domain.Config, error) {
 	if configFile != "" {
 		v.SetConfigFile(configFile)
 		if err := v.ReadInConfig(); err != nil {
-			return domain.Config{}, err
+			return nil, err
 		}
 	} else {
 		for _, candidate := range defaultConfigCandidates() {
@@ -111,11 +122,11 @@ func loadConfig(configFile string) (domain.Config, error) {
 				if os.IsNotExist(err) {
 					continue
 				}
-				return domain.Config{}, err
+				return nil, err
 			}
 			v.SetConfigFile(candidate)
 			if err := v.ReadInConfig(); err != nil {
-				return domain.Config{}, err
+				return nil, err
 			}
 			break
 		}
@@ -125,6 +136,12 @@ func loadConfig(configFile string) (domain.Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	return v, nil
+}
+
+// finishConfig unmarshals and applies the post-processing that cannot be
+// expressed as viper defaults.
+func finishConfig(v *viper.Viper) (domain.Config, error) {
 	var cfg domain.Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return cfg, err
