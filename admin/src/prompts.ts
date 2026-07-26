@@ -411,3 +411,107 @@ document.addEventListener("click", async (event) => {
     name: values.name || "",
   });
 });
+
+/**
+ * Bulk selection in the file listing.
+ *
+ * Selection lives only in the DOM: it is deliberately not persisted across
+ * navigation, because acting on files you can no longer see is how accidental
+ * mass deletions happen.
+ */
+function bulkSelection(): { ids: string[]; names: string[] } {
+  const checked = [...document.querySelectorAll<HTMLInputElement>("[data-bulk-item]:checked")];
+  return {
+    ids: checked.map((box) => box.dataset.bulkItem ?? ""),
+    names: checked.map((box) => box.dataset.bulkName ?? ""),
+  };
+}
+
+function refreshBulkBar(): void {
+  const bar = document.querySelector<HTMLElement>("[data-bulk-bar]");
+  if (!bar) return;
+  const { ids } = bulkSelection();
+  bar.hidden = ids.length === 0;
+  const label = bar.querySelector<HTMLElement>("[data-bulk-count]");
+  if (label) label.textContent = `${ids.length} selected`;
+
+  const all = document.querySelector<HTMLInputElement>("[data-bulk-all]");
+  const boxes = document.querySelectorAll<HTMLInputElement>("[data-bulk-item]");
+  if (all) {
+    all.checked = boxes.length > 0 && ids.length === boxes.length;
+    all.indeterminate = ids.length > 0 && ids.length < boxes.length;
+  }
+}
+
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+
+  if (target.matches("[data-bulk-all]")) {
+    for (const box of document.querySelectorAll<HTMLInputElement>("[data-bulk-item]")) {
+      box.checked = target.checked;
+    }
+  }
+  if (target.matches("[data-bulk-item]") || target.matches("[data-bulk-all]")) refreshBulkBar();
+});
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  if (target.closest("[data-bulk-clear]")) {
+    for (const box of document.querySelectorAll<HTMLInputElement>("[data-bulk-item]")) box.checked = false;
+    refreshBulkBar();
+    return;
+  }
+
+  const parentPath = new URLSearchParams(location.search).get("path") ?? "";
+
+  if (target.closest("[data-bulk-delete]")) {
+    const { ids, names } = bulkSelection();
+    if (ids.length === 0) return;
+    const confirmed = await prompts.confirm({
+      title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}`,
+      badge: names.slice(0, 4).join(", ") + (names.length > 4 ? `, +${names.length - 4} more` : ""),
+      message: "Each item is deleted on its own. Any that fail are reported individually and the rest still go through.",
+      confirmText: `Delete ${ids.length}`,
+      variant: "danger",
+    });
+    if (confirmed) submitForm("/files/bulk/delete", { parentPath, ids: ids.join(",") });
+    return;
+  }
+
+  if (target.closest("[data-bulk-move]")) {
+    const { ids, names } = bulkSelection();
+    if (ids.length === 0) return;
+    const values = await prompts.form({
+      title: `Move ${ids.length} item${ids.length === 1 ? "" : "s"}`,
+      badge: names.slice(0, 4).join(", ") + (names.length > 4 ? `, +${names.length - 4} more` : ""),
+      message: "Names are kept. The target must be an existing folder inside a mount, such as files or files/archive.",
+      confirmText: `Move ${ids.length}`,
+      fields: [
+        { name: "targetParentPath", label: "Target folder", placeholder: "files/archive", value: parentPath, required: true },
+        {
+          name: "onConflict",
+          label: "On conflict",
+          value: "error",
+          options: [
+            { value: "error", label: "Error" },
+            { value: "rename", label: "Rename" },
+            { value: "overwrite", label: "Overwrite" },
+          ],
+        },
+      ],
+    });
+    if (values) {
+      submitForm("/files/bulk/move", {
+        parentPath,
+        ids: ids.join(","),
+        targetParentPath: values.targetParentPath ?? "",
+        onConflict: values.onConflict ?? "error",
+      });
+    }
+  }
+});
+
+refreshBulkBar();

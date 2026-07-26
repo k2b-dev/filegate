@@ -30,6 +30,7 @@ import { config, routes, ssr } from "./config";
 import { LoginPage } from "./components/Layout";
 import { readThemeFromCookieHeader, type AdminTheme } from "./lib/theme";
 import { Files } from "./pages/Files";
+import { filterNodes, sortNodes, type Sort, type SortField } from "./components/Table";
 import { Overview } from "./pages/Overview";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
@@ -100,7 +101,25 @@ export const app = new Hono()
       const data = await loadFiles(c.req.query("path") || "", c.req.query("id") || "");
       const loadError = "error" in data ? data.error : undefined;
       const view = resolveFileView(c);
-      return () => <Files {...data} view={view} error={queryError(c.req.query("error"), loadError)} notice={c.req.query("notice")} />;
+      const sort = parseSort(c.req.query("sort"), c.req.query("dir"));
+      const filter = c.req.query("filter")?.trim() ?? "";
+      // Sorting and filtering happen here rather than in the server: the whole
+      // directory is already loaded for the listing, so a round trip per sort
+      // click would buy nothing.
+      const totalBeforeFilter = data.children.length;
+      const children = sortNodes(filterNodes(data.children, filter), sort);
+      return () => (
+        <Files
+          {...data}
+          children={children}
+          totalBeforeFilter={totalBeforeFilter}
+          sort={sort}
+          filter={filter}
+          view={view}
+          error={queryError(c.req.query("error"), loadError)}
+          notice={c.req.query("notice")}
+        />
+      );
     }),
   )
   .post("/files/mkdir", async (c) => {
@@ -247,6 +266,38 @@ export const app = new Hono()
       });
     } catch (err) {
       return c.redirect(redirectFiles(c.req.query("parentPath") || "", errorMessage(err)), 303);
+    }
+  })
+  .post("/files/bulk/delete", async (c) => {
+    const body = await c.req.parseBody();
+    const parentPath = field(body, "parentPath");
+    const ids = splitCSV(field(body, "ids"));
+    if (ids.length === 0) return c.redirect(redirectFiles(parentPath, "no items selected"), 303);
+
+    const outcome = await runBulk(ids, (id) => client().nodes.delete(id));
+    return c.redirect(redirectFiles(parentPath) + bulkQuery(parentPath, "Deleted", outcome), 303);
+  })
+  .post("/files/bulk/move", async (c) => {
+    const body = await c.req.parseBody();
+    const parentPath = field(body, "parentPath");
+    const ids = splitCSV(field(body, "ids"));
+    if (ids.length === 0) return c.redirect(redirectFiles(parentPath, "no items selected"), 303);
+
+    try {
+      const target = await resolveDirectory(field(body, "targetParentPath"));
+      const outcome = await runBulk(ids, async (id) => {
+        const node = await client().nodes.get(id);
+        await client().transfers.create({
+          op: "move",
+          sourceId: id,
+          targetParentId: target.id,
+          targetName: node.name,
+          onConflict: conflictMode(field(body, "onConflict")),
+        });
+      });
+      return c.redirect(redirectFiles(parentPath) + bulkQuery(parentPath, "Moved", outcome), 303);
+    } catch (err) {
+      return c.redirect(redirectFiles(parentPath, errorMessage(err)), 303);
     }
   })
   .post("/files/transfer", async (c) => {
@@ -423,6 +474,49 @@ function passthroughCacheHeaders(upstream: Response): Record<string, string> {
     if (value) out[name] = value;
   }
   return out;
+}
+
+type BulkOutcome = { done: number; failures: string[] };
+
+/**
+ * Applies an operation to each selected node independently.
+ *
+ * Per-item results matter here: reporting one aggregate success or failure for
+ * twenty files tells an operator nothing about which ones need attention. Items
+ * run sequentially so a bulk delete cannot saturate the server.
+ */
+async function runBulk(ids: string[], op: (id: string) => Promise<unknown>): Promise<BulkOutcome> {
+  const outcome: BulkOutcome = { done: 0, failures: [] };
+  for (const id of ids) {
+    try {
+      await op(id);
+      outcome.done++;
+    } catch (err) {
+      outcome.failures.push(`${id.slice(0, 8)}: ${errorMessage(err)}`);
+    }
+  }
+  return outcome;
+}
+
+function bulkQuery(parentPath: string, verb: string, outcome: BulkOutcome): string {
+  const q = new URLSearchParams();
+  if (parentPath) q.set("path", parentPath);
+  if (outcome.failures.length === 0) {
+    q.set("notice", `${verb} ${outcome.done} item${outcome.done === 1 ? "" : "s"}.`);
+  } else {
+    q.set("notice", `${verb} ${outcome.done}, ${outcome.failures.length} failed.`);
+    // Only the first failures; a long list would not survive a URL anyway.
+    q.set("error", outcome.failures.slice(0, 3).join("; "));
+  }
+  return `?${q}`;
+}
+
+function parseSort(field?: string, dir?: string): Sort {
+  const allowed: SortField[] = ["name", "size", "modified"];
+  return {
+    field: allowed.find((candidate) => candidate === field) ?? "name",
+    direction: dir === "desc" ? "desc" : "asc",
+  };
 }
 
 function settingsURL(error?: string, notice?: string): string {

@@ -121,3 +121,15 @@ html.dark .metric-chart .stdlib-chart-subtitle,html.dark .metric-chart .stdlib-c
 .tag.source-env,.tag.source-file{background:#eef1f4;color:#3a4654;border:1px solid var(--line-dark)}
 .tag.source-default{background:transparent;color:var(--muted);border:1px solid var(--line)}
 td code{font-size:12px}
+.bulk-bar{display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--line);background:var(--blue-bg)}
+.bulk-count{font-weight:600;font-size:13px}
+.bulk-bar .btn{height:30px;padding:0 11px;font-size:12px}
+th.pick,td.pick{width:1%;padding-right:0}
+th.pick input,td.pick input{margin:0;cursor:pointer}
+.sort-link{display:inline-flex;align-items:center;gap:5px;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit}
+.sort-link:hover{color:var(--ink);text-decoration:none}
+.sort-mark{font-size:9px;color:var(--blue)}
+.filter-form{display:flex}
+.filter-input{height:30px;width:170px;font-size:13px}
+/* The name column still absorbs the free space when a checkbox precedes it. */
+th.pick+th,td.pick+td{width:100%}

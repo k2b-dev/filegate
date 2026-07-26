@@ -1,11 +1,20 @@
 import type { Node, StatsResponse, VersionResponse } from "@valentinkolb/filegate";
 import { Layout } from "../components/Layout";
 import { FileIcon, FolderIcon } from "../components/Icons";
-import { NodeTable } from "../components/Table";
+import { NodeTable, type Sort } from "../components/Table";
 import { Versions } from "./Versions";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type Crumb = { name: string; path?: string };
+
+/** Query string a sort link must preserve: the folder, layout and filter. */
+function tableQuery(props: { current?: Node; view?: "list" | "grid"; filter?: string }): string {
+  const q = new URLSearchParams();
+  if (props.current?.path) q.set("path", props.current.path.replace(/^\/+/, ""));
+  if (props.view === "grid") q.set("view", "grid");
+  if (props.filter) q.set("filter", props.filter);
+  return q.toString();
+}
 
 /** Thumbnails exist only for these; anything else keeps its file icon. */
 const thumbnailTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
@@ -77,6 +86,10 @@ export function Files(props: {
   truncated?: boolean;
   versions?: { items?: VersionResponse[]; unsupported?: boolean };
   view?: "list" | "grid";
+  sort?: Sort;
+  filter?: string;
+  /** Count before filtering, so the header can say how much is hidden. */
+  totalBeforeFilter?: number;
 }) {
   return (
     <Layout
@@ -100,9 +113,27 @@ export function Files(props: {
               ))}
             </nav>
             <span class="head-right">
+              {props.current?.type === "directory" && (
+                <form class="filter-form" method="get" action="/files">
+                  <input type="hidden" name="path" value={props.current.path.replace(/^\/+/, "")} />
+                  {props.view === "grid" && <input type="hidden" name="view" value="grid" />}
+                  <input
+                    class="input filter-input"
+                    type="search"
+                    name="filter"
+                    value={props.filter ?? ""}
+                    placeholder="Filter by name"
+                    aria-label="Filter this folder by name"
+                  />
+                </form>
+              )}
               <span class="count">
                 {props.truncated ? "first " : ""}
-                {props.children.length} item{props.children.length === 1 ? "" : "s"}
+                {props.children.length}
+                {props.filter && props.totalBeforeFilter !== undefined && props.totalBeforeFilter !== props.children.length
+                  ? ` of ${props.totalBeforeFilter}`
+                  : ""}{" "}
+                item{props.children.length === 1 ? "" : "s"}
               </span>
               <span class="view-toggle" role="group" aria-label="Layout">
                 <a class={props.view === "grid" ? "" : "active"} href={viewHref(props, "list")} aria-current={props.view === "grid" ? undefined : "true"}>
@@ -129,13 +160,32 @@ export function Files(props: {
           {props.view === "grid" ? (
             <NodeGrid nodes={props.children} selectedId={props.selected?.id} currentPath={props.current?.path ?? ""} />
           ) : (
-            <NodeTable
-              nodes={props.children}
-              selectedId={props.selected?.id}
-              emptyTitle={props.current ? "This folder is empty" : "No mount roots"}
-              emptyText={props.current ? "Create a folder to get started." : "Configure storage base paths to browse files here."}
-              viewTransitionName="fg-files-table"
-            />
+            <>
+              <div class="bulk-bar" data-bulk-bar hidden>
+                <span class="bulk-count" data-bulk-count />
+                <span class="tb-group tb-right">
+                  <button class="btn" type="button" data-bulk-move>
+                    Move
+                  </button>
+                  <button class="btn danger" type="button" data-bulk-delete>
+                    Delete
+                  </button>
+                  <button class="btn" type="button" data-bulk-clear>
+                    Clear
+                  </button>
+                </span>
+              </div>
+              <NodeTable
+                nodes={props.children}
+                selectedId={props.selected?.id}
+                emptyTitle={props.current ? "This folder is empty" : "No mount roots"}
+                emptyText={props.current ? "Create a folder to get started." : "Configure storage base paths to browse files here."}
+                viewTransitionName="fg-files-table"
+                sort={props.sort}
+                baseQuery={tableQuery(props)}
+                selectable={props.current?.type === "directory"}
+              />
+            </>
           )}
         </div>
         <aside class="stack">
