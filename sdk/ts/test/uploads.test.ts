@@ -309,6 +309,9 @@ describe("upload", () => {
     await upload({
       files: [new File(["a"], "a.txt")],
       path: "data",
+      // The segment size is only observable on a session request, and a
+      // one-byte file now goes direct by default.
+      config: { directThresholdBytes: 0 },
       allow: async ({ uploads: requested }) => {
         seenSegmentSize = requested[0].segmentSize;
         return {
@@ -416,5 +419,88 @@ describe("uploads utilities", () => {
       { index: 1, offset: 4, size: 4 },
       { index: 2, offset: 8, size: 2 },
     ]);
+  });
+});
+
+describe("upload direct threshold", () => {
+  // Files at or below the segment size take one PUT instead of a session:
+  // three requests and a resumability guarantee that amounts to retrying the
+  // same lone segment buys nothing for a 16 KiB file.
+  test("routes small files direct by default", async () => {
+    const kinds: string[] = [];
+    await upload({
+      files: [new File(["a"], "a.txt")],
+      path: "data",
+      allow: async ({ uploads: requested }) => {
+        for (const item of requested) kinds.push(item.kind);
+        return {
+          uploads: requested.map((item) => ({
+            id: item.id,
+            ok: true as const,
+            upload: {
+              kind: "direct" as const,
+              direct: {
+                uploadUrl: "https://files.example.test/v1/uploads/direct/tok",
+                method: "PUT" as const,
+                path: item.path,
+                expiresAt: 1,
+                maxBytes: 1024,
+              },
+            },
+          })),
+        };
+      },
+      fetchImpl: async () =>
+        new Response(JSON.stringify(node), { status: 201, headers: { "Content-Type": "application/json" } }),
+    });
+    expect(kinds).toEqual(["direct"]);
+  });
+
+  // Zero is the opt-out. It reads as "no file is small enough", which is
+  // exactly the old behaviour for callers that want every upload resumable.
+  test("directThresholdBytes 0 forces sessions", async () => {
+    const kinds: string[] = [];
+    await upload({
+      files: [new File(["a"], "a.txt")],
+      path: "data",
+      config: { directThresholdBytes: 0 },
+      allow: async ({ uploads: requested }) => {
+        for (const item of requested) kinds.push(item.kind);
+        return {
+          uploads: requested.map((item) => ({
+            id: item.id,
+            ok: true as const,
+            session: {
+              id: `upl_${item.id}`,
+              path: item.path,
+              size: item.size,
+              checksum: item.checksum!,
+              segmentSize: item.segmentSize!,
+              totalSegments: item.segments!.length,
+              segments: item.segments!.map(({ index, offset, size }) => ({ index, offset, size })),
+              uploadedSegments: [],
+              phase: "in_progress" as const,
+              direct: {
+                baseUrl: `https://files.example.test/v1/uploads/sessions/upl_${item.id}`,
+                token: "session-token",
+                expiresAt: 1,
+                allow: ["putSegment", "commit"],
+              },
+            },
+          })),
+        };
+      },
+      fetchImpl: async (input) =>
+        String(input).endsWith("/commit")
+          ? new Response(JSON.stringify({ node, checksum: "sha256:" + "b".repeat(64) }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response(JSON.stringify({ sessionId: "upl", index: 0, uploadedSegments: [0] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    expect(kinds).toEqual(["session"]);
   });
 });

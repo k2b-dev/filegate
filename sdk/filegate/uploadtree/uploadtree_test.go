@@ -329,6 +329,9 @@ func TestUploadCreatesSessionsInBatchesAndCommits(t *testing.T) {
 	res, err := Upload(context.Background(), client, sources, Options{
 		Batch:       Batch{Size: 2, FlushInterval: 5 * time.Millisecond},
 		Concurrency: Concurrency{Hash: 1, Create: 1, Files: 2, Segments: 2},
+		// Fixtures are small, and small files now go direct by default. This
+		// test is about the session machinery, so opt out of the shortcut.
+		DirectThresholdBytes: -1,
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -436,6 +439,9 @@ func TestUploadRetriesRetryableSegmentFailures(t *testing.T) {
 	sources, _ := sourcesFromBytes(2, 512)
 	res, err := Upload(context.Background(), client, sources, Options{
 		Retry: Retry{Attempts: 3, Base: time.Millisecond, Max: 5 * time.Millisecond},
+		// Fixtures are small, and small files now go direct by default. This
+		// test is about the session machinery, so opt out of the shortcut.
+		DirectThresholdBytes: -1,
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -457,6 +463,9 @@ func TestUploadDoesNotRetryClientErrors(t *testing.T) {
 	sources, _ := sourcesFromBytes(1, 512)
 	res, err := Upload(context.Background(), client, sources, Options{
 		Retry: Retry{Attempts: 4, Base: time.Millisecond, Max: 5 * time.Millisecond},
+		// Fixtures are small, and small files now go direct by default. This
+		// test is about the session machinery, so opt out of the shortcut.
+		DirectThresholdBytes: -1,
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -615,6 +624,9 @@ func TestUploadReportsGlobalProgress(t *testing.T) {
 				t.Errorf("progress totals=%d/%d", e.Progress.Files, e.Progress.TotalBytes)
 			}
 		},
+		// The event sequence under test is the session pipeline, which small
+		// files now bypass by default.
+		DirectThresholdBytes: -1,
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -707,5 +719,89 @@ func TestUploadRejectsInvalidSources(t *testing.T) {
 	}
 	if _, err := Upload(context.Background(), nil, nil, Options{}); err == nil {
 		t.Fatalf("expected an error for a nil client")
+	}
+}
+
+// The shortcut is on by default, bounded by the segment size.
+//
+// A file that would have been a single segment gains nothing from a session:
+// three requests instead of one, and resumability that amounts to retrying the
+// same lone segment. The benchmark measured one-shot PUT at 2.5 to 3x the
+// throughput of sessions for small files, so leaving the fast path opt-in made
+// the slow path the default for the shape that dominates real trees.
+func TestUploadDefaultsToWholeFilePutBelowSegmentSize(t *testing.T) {
+	t.Parallel()
+	server := newFakeServer()
+	client := server.start(t)
+
+	const segmentSize = 1024
+	sources := []Source{
+		FromBytes("data/tree/at-limit.bin", payload(segmentSize, 1)),
+		FromBytes("data/tree/over-limit.bin", payload(segmentSize+1, 2)),
+	}
+	res, err := Upload(context.Background(), client, sources, Options{
+		SegmentSize: segmentSize,
+		Concurrency: Concurrency{Hash: 1},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if res.Done != 2 || res.Failed != 0 {
+		t.Fatalf("done=%d failed=%d", res.Done, res.Failed)
+	}
+	if len(server.pathPuts) != 1 || !strings.HasSuffix(server.pathPuts[0], "at-limit.bin") {
+		t.Fatalf("whole-file puts=%v, want just the file at the segment size", server.pathPuts)
+	}
+	// Exactly one segment over the limit still earns a session, so the default
+	// tracks the segment size rather than some unrelated constant.
+	if len(server.committed) != 1 {
+		t.Fatalf("sessions committed=%d want 1", len(server.committed))
+	}
+}
+
+// A negative threshold is the opt-out, because the zero value has to keep
+// meaning "use the defaults".
+func TestUploadNegativeDirectThresholdForcesSessions(t *testing.T) {
+	t.Parallel()
+	server := newFakeServer()
+	client := server.start(t)
+
+	sources, _ := sourcesFromBytes(3, 512)
+	res, err := Upload(context.Background(), client, sources, Options{
+		DirectThresholdBytes: -1,
+		Concurrency:          Concurrency{Hash: 1},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if res.Done != 3 || res.Failed != 0 {
+		t.Fatalf("done=%d failed=%d", res.Done, res.Failed)
+	}
+	if len(server.pathPuts) != 0 {
+		t.Fatalf("whole-file puts=%v, want none", server.pathPuts)
+	}
+	if len(server.committed) != 3 {
+		t.Fatalf("sessions committed=%d want 3", len(server.committed))
+	}
+}
+
+// An empty file has no session to take: creating one requires size > 0. This
+// stays true whatever the threshold is set to.
+func TestUploadEmptyFileBypassesSessionsEvenWhenOptedOut(t *testing.T) {
+	t.Parallel()
+	server := newFakeServer()
+	client := server.start(t)
+
+	res, err := Upload(context.Background(), client, []Source{FromBytes("data/tree/empty.bin", nil)}, Options{
+		DirectThresholdBytes: -1,
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if res.Done != 1 {
+		t.Fatalf("done=%d failed=%d", res.Done, res.Failed)
+	}
+	if len(server.pathPuts) != 1 {
+		t.Fatalf("whole-file puts=%v want the empty file", server.pathPuts)
 	}
 }

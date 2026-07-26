@@ -73,6 +73,24 @@ await upload({
 
 The browser helper does not need the Filegate bearer token. The `allow` callback is implemented by your application server.
 
+### Small files skip the session protocol
+
+Files at or below `config.directThresholdBytes` are announced to `allow` with
+`kind: "direct"` and uploaded with a single scoped PUT instead of create, segment
+and commit. It defaults to `segmentSize`, so a file that would have been one
+segment goes direct with no configuration.
+
+Your `allow` endpoint has to handle both kinds. A direct item carries no
+`checksum` and no `segments`, and it expects a `{ kind: "direct", direct }`
+directive minted from `POST /v1/uploads/direct`; a session item expects a
+`session`. Measurements in `bench/results/2026-07-26-commit-cost.md` put the
+one-shot path at 2.4x the throughput of sessions for small files, which is why
+this is the default rather than an opt-in.
+
+Pass `directThresholdBytes: 0` to send everything through sessions. The shortcut
+is also skipped when `onConflict` is `skip-identical`, which needs the checksum
+only the session path computes.
+
 ## Conflict defaults
 
 | API | Default conflict behavior | Meaning |

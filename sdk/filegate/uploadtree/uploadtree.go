@@ -93,8 +93,13 @@ type Options struct {
 
 	// DirectThresholdBytes routes files at or below this size to a
 	// one-shot PUT /v1/paths upload, skipping session creation entirely.
-	// 0 disables the shortcut. Empty files always take this path because
-	// a session requires size > 0.
+	// Empty files always take this path because a session requires size > 0.
+	//
+	// 0 means the default: SegmentSize, so any file that would have been a
+	// single segment goes direct. A session buys nothing there -- it costs
+	// three requests instead of one, and its resumability amounts to retrying
+	// the same lone segment. Set a negative value to send everything through
+	// sessions.
 	DirectThresholdBytes int64
 
 	// SkipExisting resolves every destination path up front and skips the
@@ -361,6 +366,12 @@ func Upload(ctx context.Context, fg *filegate.Filegate, sources []Source, opts O
 func withDefaults(o Options) Options {
 	if o.SegmentSize <= 0 {
 		o.SegmentSize = defaultSegmentSize
+	}
+	// Resolved after SegmentSize so an explicit segment size carries into the
+	// threshold. Negative stays negative: that is how a caller opts out, and
+	// the send path treats any non-positive value as "no shortcut".
+	if o.DirectThresholdBytes == 0 {
+		o.DirectThresholdBytes = o.SegmentSize
 	}
 	if o.Concurrency.Hash <= 0 {
 		o.Concurrency.Hash = defaultHashWorkers
