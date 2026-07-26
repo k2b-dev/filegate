@@ -7,6 +7,7 @@ Filegate CLI is intentionally local-ops focused. The installed binary is `filega
 ```bash
 fg serve [--config /etc/filegate/conf.yaml]
 fg config show [--config /etc/filegate/conf.yaml] [--format yaml|json] [--show-secrets]
+fg config schema [--format table|json|markdown]
 fg config validate [--config /etc/filegate/conf.yaml]
 fg config set --config /etc/filegate/conf.yaml [config flags...]
 fg config s3 key generate
@@ -33,6 +34,10 @@ fg index rescan --new [--skip-backup] [--config /etc/filegate/conf.yaml]
 - `config show`:
   - Prints the resolved config after defaults and environment overrides.
   - Redacts bearer tokens, S3 secrets, and metrics tokens unless `--show-secrets` is set.
+- `config schema`:
+  - Lists every config key with its type, scope, default and usage.
+  - Needs no config file; the catalog comes from the binary.
+  - `--format markdown` renders the published config reference. `make docs-config` writes it, and a test fails when the committed page drifts.
 - `config validate`:
   - Loads the config with the same resolver as `serve`.
   - Exits non-zero on invalid values, missing required mounts, invalid S3 key references, or duplicate S3 access keys.

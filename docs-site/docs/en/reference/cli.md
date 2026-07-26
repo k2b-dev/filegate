@@ -17,6 +17,7 @@ This reference catalogs Filegate CLI commands for operators using `filegate` or 
 |---|---:|---|
 | `fg serve` | Service process | Start the Filegate REST listener and optional S3 listener. |
 | `fg config show` | Config file | Print the resolved config as YAML or JSON. |
+| `fg config schema` | Local CLI | List every config key with type, scope and default. Needs no config file. |
 | `fg config validate` | Config file | Validate resolved config. |
 | `fg config set` | Config file | Set one or more config values offline. |
 | `fg config mount add` | Config file | Add a storage mount. |
@@ -46,6 +47,14 @@ This reference catalogs Filegate CLI commands for operators using `filegate` or 
 |---|---|---:|---|
 | `--format` | enum | `yaml` | Output format: `yaml` or `json`. |
 | `--show-secrets` | boolean | `false` | Print secret values instead of redacting them. |
+
+## `fg config schema`
+
+| Flag | Type | Default | Meaning |
+|---|---|---:|---|
+| `--format` | enum | `table` | Output format: `table`, `json` or `markdown`. |
+
+`markdown` renders the published [Config reference](config); `make docs-config` regenerates it.
 
 ## `fg config set`
 

@@ -62,6 +62,9 @@ sudo rpm -Uvh /tmp/filegate.rpm
 | Config file | `/etc/filegate/conf.yaml` | Service | Main configuration file. |
 | systemd unit | `/lib/systemd/system/filegate.service` | Service | Filegate service unit. |
 | Data directory | `/var/lib/filegate` | Service | Default service data path. |
+| Default mount | `/var/lib/filegate/data` | Storage | Served when no mount is configured. |
+| Index | `/var/lib/filegate/index` | Service | Rebuildable metadata index. |
+| Runtime config store | `/var/lib/filegate/config` | Service | Settings changed at runtime, S3 access keys, and the generated API token. Not rebuildable — back it up. |
 | Log directory | `/var/log/filegate` | Service | Default service log path. |
 
 The package creates or preserves `/etc/filegate/conf.yaml`. Existing config files are not overwritten during upgrades.
@@ -141,6 +144,8 @@ docker run --rm -d \
   ghcr.io/valentinkolb/filegate:latest \
   serve
 ```
+
+Beyond evaluation, mount `/var/lib/filegate/config` as a volume too. It holds the S3 access keys and every setting changed through the admin UI, and a container that recreates it starts over with none of them.
 
 ## Development build
 

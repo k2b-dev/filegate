@@ -63,6 +63,39 @@ Request and response type fields are documented in [HTTP JSON types reference](h
 | `POST` | `/v1/nodes/{id}/versions/{vid}/restore` | Bearer | `VersionRestoreRequest` | `VersionRestoreResponse` | Restore version in place or as new file. |
 | `DELETE` | `/v1/nodes/{id}/versions/{vid}` | Bearer | None | `204` | Delete one version. |
 
+## Operations
+
+Read-only service state, plus the two operator actions that are safe to trigger on demand. These back the admin System page.
+
+| Method | Path | Auth | Request | Response | Meaning |
+|---|---|---|---|---|---|
+| `GET` | `/v1/system/info` | Bearer | None | `SystemInfoResponse` | Build, mounts, and effective limits. Probes the filesystem, so not for polling. |
+| `GET` | `/v1/system/runtime` | Bearer | None | `SystemRuntimeResponse` | Live counters: detector, worker pool, caches, upload sessions, retention. Safe to poll. |
+| `GET` | `/v1/health` | Bearer | None | `HealthResponse` | Dependency health. Answers `503` when a check fails, with the body still present. |
+| `GET` | `/v1/uploads/sessions` | Bearer | `phase` query | `UploadSessionListResponse` | List upload sessions, optionally by phase. |
+| `POST` | `/v1/versions/prune` | Bearer | None | `PruneResponse` | Run a retention round now. Answers `409` while a round is in flight. |
+
+`/health` is the unauthenticated liveness probe and only reports that the process is up. `/v1/health` is the authenticated dependency check.
+
+## Administration
+
+These change service behavior and credentials. They exist only when the server was started with a config manager and an S3 key service, which `fg serve` always does.
+
+| Method | Path | Auth | Request | Response | Meaning |
+|---|---|---|---|---|---|
+| `GET` | `/v1/config/schema` | Bearer | None | `ConfigSchemaResponse` | Every key with type, scope, unit, default, and why a static key needs a restart. |
+| `GET` | `/v1/config` | Bearer | None | `ConfigValuesResponse` | Effective values and provenance. Secrets report only whether they are configured. |
+| `PATCH` | `/v1/config` | Bearer | `ConfigChangeRequest` | `ConfigChangeResponse` | Apply changes. `null` clears an override. Returns keys still needing a restart. |
+| `POST` | `/v1/config/validate` | Bearer | `ConfigChangeRequest` | `ConfigChangeResponse` | Check a change without applying it. |
+| `POST` | `/v1/config/reload` | Bearer | None | `ConfigChangeResponse` | Re-read file and environment. Same effect as `SIGHUP`. |
+| `GET` | `/v1/s3/keys` | Bearer | None | `S3KeyListResponse` | List S3 access keys. Secrets are never included. |
+| `POST` | `/v1/s3/keys` | Bearer | `S3KeyCreateRequest` | `S3KeyCreated` | Create a key. The secret is returned once and never again. |
+| `PATCH` | `/v1/s3/keys/{accessKey}` | Bearer | `S3KeyUpdateRequest` | `S3Key` | Change buckets, rate limits, or label. |
+| `POST` | `/v1/s3/keys/{accessKey}/rotate` | Bearer | None | `S3KeyCreated` | Issue a new secret for an existing key. |
+| `DELETE` | `/v1/s3/keys/{accessKey}` | Bearer | None | `204` | Delete a key. Deleting the last key leaves nothing able to authenticate against S3. |
+
+The bearer token is the only credential here, so it grants configuration authority as well as data access. See [Security model](../security).
+
 ## Listing query
 
 | Name | Type | Default | Scope | Meaning |

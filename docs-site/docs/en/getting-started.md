@@ -20,6 +20,8 @@ This guide is for technical users who want a short first run before installing F
 | Writable index directory | Service metadata | `/tmp/filegate/index` |
 | Bearer token | REST API | `dev-token` |
 
+None of these are strictly required — `fg serve` with no configuration at all starts, serves `/var/lib/filegate/data`, and prints a generated API token once. This guide sets them explicitly so the commands below are copy-pasteable.
+
 ## Start a disposable instance
 
 Docker keeps the first run self-contained. For production Linux hosts, install the `.deb` or `.rpm` package and run Filegate through systemd; see [Installation](installation).

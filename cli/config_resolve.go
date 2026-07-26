@@ -250,6 +250,13 @@ func kindName(kind configFlagKind) string {
 // Schema describes every configuration key so a client can render controls
 // without hardcoding the list.
 func (m *ConfigManager) Schema() []apiv1.ConfigKeySchema {
+	return configSchema()
+}
+
+// configSchema describes every key. It reads only the spec table and the
+// defaults, so the CLI can render it without a running server -- which is what
+// keeps the published reference generated rather than hand-maintained.
+func configSchema() []apiv1.ConfigKeySchema {
 	defaults := defaultConfigValues()
 	specs := allConfigFlagSpecs()
 

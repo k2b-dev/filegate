@@ -27,6 +27,7 @@ func newDaemonConfigCmd() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(&configFile, "config", "", "path to config file")
 	cmd.AddCommand(newConfigShowCmd(&configFile))
+	cmd.AddCommand(newConfigSchemaCmd())
 	cmd.AddCommand(newConfigValidateCmd(&configFile))
 	cmd.AddCommand(newConfigSetCmd(&configFile))
 	cmd.AddCommand(newConfigS3Cmd(&configFile))
