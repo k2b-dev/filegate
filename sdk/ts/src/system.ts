@@ -1,6 +1,7 @@
 import { ClientCore } from "./core.js";
 import type {
   HealthResponse,
+  PruneResponse,
   SystemInfoResponse,
   SystemRuntimeResponse,
   UploadSessionListResponse,
@@ -33,6 +34,16 @@ export class SystemClient {
    */
   async health(): Promise<HealthResponse> {
     return this.core.doJSON<HealthResponse>("GET", "/v1/health");
+  }
+
+  /**
+   * Runs a version-retention round on demand.
+   *
+   * Deletes data, so it is recorded in the activity log. Answers 409 while a
+   * round is already in flight rather than starting a second scan.
+   */
+  async prune(): Promise<PruneResponse> {
+    return this.core.doJSON<PruneResponse>("POST", "/v1/versions/prune");
   }
 
   /** Resumable upload sessions, optionally filtered by phase. */

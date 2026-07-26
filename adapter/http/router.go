@@ -78,6 +78,9 @@ type RouterOptions struct {
 	Config *domain.ConfigHolder
 	// Lifecycle reports the last background maintenance run. Nil reports zeroes.
 	Lifecycle func() apiv1.LifecycleRuntime
+	// PruneNow runs a retention round on demand. Nil leaves the route
+	// answering 501, which is the honest response when versioning is off.
+	PruneNow func() (domain.PruneStats, error)
 	// ConfigService backs the /v1/config endpoints. Nil leaves them unmounted,
 	// which is how every existing router caller and test keeps working.
 	ConfigService ConfigService
@@ -217,6 +220,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	handleV1("GET /v1/system/runtime", system.handleRuntime)
 	handleV1("GET /v1/health", system.handleHealth)
 	handleV1("GET /v1/uploads/sessions", system.handleListUploadSessions)
+	handleV1("POST /v1/versions/prune", system.handlePrune)
 
 	if opts.ConfigService != nil {
 		cfgAPI := configHandlers{svc: opts.ConfigService}
@@ -1493,6 +1497,8 @@ func restOperationName(method, path string) string {
 	switch {
 	case method == http.MethodPost && path == "/v1/index/rescan":
 		return "index.rescan"
+	case method == http.MethodPost && path == "/v1/versions/prune":
+		return "versions.prune"
 	case method == http.MethodPost && path == "/v1/uploads/direct":
 		return "direct_upload.create_url"
 	case method == http.MethodPost && path == "/v1/downloads/direct":

@@ -152,6 +152,8 @@ type LifecycleRuntime struct {
 	PruneErrors         int    `json:"pruneErrors"`
 	// PruneError carries the message when the last run failed outright.
 	PruneError string `json:"pruneError,omitempty"`
+	// PruneRunning reports whether a round is in flight right now.
+	PruneRunning bool `json:"pruneRunning"`
 }
 
 // SystemRuntimeResponse is the body of GET /v1/system/runtime. Every field is an
@@ -187,6 +189,17 @@ type HealthResponse struct {
 	Status      string        `json:"status"`
 	GeneratedAt int64         `json:"generatedAt"`
 	Checks      []HealthCheck `json:"checks"`
+}
+
+// PruneResponse is the body of POST /v1/versions/prune.
+type PruneResponse struct {
+	FilesScanned    int   `json:"filesScanned"`
+	VersionsKept    int   `json:"versionsKept"`
+	VersionsDeleted int   `json:"versionsDeleted"`
+	OrphansPurged   int   `json:"orphansPurged"`
+	BlobsDeleted    int   `json:"blobsDeleted"`
+	Errors          int   `json:"errors"`
+	DurationMs      int64 `json:"durationMs"`
 }
 
 // UploadSessionSummary is one row of GET /v1/uploads/sessions. It omits the

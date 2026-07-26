@@ -153,14 +153,23 @@ export function CachePanel(props: { runtime?: SystemRuntimeResponse }) {
   );
 }
 
-export function LifecyclePanel(props: { runtime?: SystemRuntimeResponse }) {
+export function LifecyclePanel(props: { runtime?: SystemRuntimeResponse; canPrune?: boolean }) {
   const l = props.runtime?.lifecycle;
   const ran = !!l && l.lastPruneAt > 0;
   return (
     <div class="panel">
       <div class="panel-head">
         <h2>Version retention</h2>
-        {l?.pruneError && <span class="tag warn">last run failed</span>}
+        <span class="tb-group">
+          {l?.pruneError && <span class="tag warn">last run failed</span>}
+          {props.canPrune && (
+            <form method="post" action="/system/prune" data-confirm-prune>
+              <button class="btn" type="submit">
+                <IconLabel icon="trash-x">Prune now</IconLabel>
+              </button>
+            </form>
+          )}
+        </span>
       </div>
       <div class="panel-body">
         {!ran ? (

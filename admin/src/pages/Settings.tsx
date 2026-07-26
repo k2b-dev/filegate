@@ -274,6 +274,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               data-setting-edit={key.path}
                               data-setting-type={key.type}
                               data-setting-unit={key.unit}
+                              data-setting-usage={key.usage}
                               data-setting-value={key.type === "retentionBuckets" ? retentionAsText(current?.value) : rawValue(current?.value)}
                               data-setting-json={key.type === "retentionBuckets" ? JSON.stringify(current?.value ?? []) : undefined}
                             >

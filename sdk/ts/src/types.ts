@@ -473,6 +473,19 @@ export interface LifecycleRuntime {
   blobsDeleted: number;
   pruneErrors: number;
   pruneError?: string;
+  /** Whether a round is in flight right now. */
+  pruneRunning: boolean;
+}
+
+/** Result of a manual retention round. */
+export interface PruneResponse {
+  filesScanned: number;
+  versionsKept: number;
+  versionsDeleted: number;
+  orphansPurged: number;
+  blobsDeleted: number;
+  errors: number;
+  durationMs: number;
 }
 
 export interface SystemRuntimeResponse {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	apiv1 "github.com/valentinkolb/filegate/api/v1"
@@ -251,6 +252,43 @@ func (r *systemReporter) detectorHealth(degrade *func(string)) apiv1.HealthCheck
 		}
 	}
 	return apiv1.HealthCheck{Name: "detector", Status: apiv1.HealthOK}
+}
+
+// handlePrune serves POST /v1/versions/prune.
+//
+// A manual trigger exists because the background loop runs on an interval an
+// operator cannot see the effect of: after tightening a retention policy, the
+// obvious next question is whether it did anything.
+//
+// This deletes data, so it is a POST, it is recorded in the activity log by the
+// middleware, and it refuses to start while a round is already in flight rather
+// than doubling the work.
+func (r *systemReporter) handlePrune(w http.ResponseWriter, _ *http.Request) {
+	if r.opts.PruneNow == nil {
+		writeErr(w, http.StatusNotImplemented, "manual pruning is not available")
+		return
+	}
+
+	started := time.Now()
+	stats, err := r.opts.PruneNow()
+	if err != nil {
+		if strings.Contains(err.Error(), "already in progress") {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, apiv1.PruneResponse{
+		FilesScanned:    stats.FilesScanned,
+		VersionsKept:    stats.VersionsKept,
+		VersionsDeleted: stats.VersionsDeleted,
+		OrphansPurged:   stats.OrphansPurged,
+		BlobsDeleted:    stats.BlobsDeleted,
+		Errors:          stats.Errors,
+		DurationMs:      time.Since(started).Milliseconds(),
+	})
 }
 
 // handleListUploadSessions serves GET /v1/uploads/sessions. Without it an

@@ -367,6 +367,7 @@ export const app = new Hono()
           runtime={live.runtime}
           healthDetail={live.health}
           sessions={live.sessions}
+          canPrune={live.canPrune}
           error={queryError(c.req.query("error"), base.error)}
           notice={c.req.query("notice")}
         />
@@ -409,6 +410,17 @@ export const app = new Hono()
       return c.redirect(settingsURL(undefined, `${path} reset to its configured value.`), 303);
     } catch (err) {
       return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .post("/api/config/validate", async (c) => {
+    // Used by the editors to check a value before closing, so a cross-field
+    // rule does not surface only after a redirect has discarded the input.
+    try {
+      const body = await c.req.json();
+      await client().config.validate({ [String(body.path)]: body.value });
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 400);
     }
   })
   .post("/api/s3keys/create", async (c) => {
@@ -491,6 +503,15 @@ export const app = new Hono()
       return c.json({ runtime, health, sessions: sessions?.items ?? [] });
     } catch (err) {
       return c.json({ error: errorMessage(err) }, 502);
+    }
+  })
+  .post("/system/prune", async (c) => {
+    try {
+      const out = await client().system.prune();
+      const summary = `Pruned in ${out.durationMs} ms: scanned ${out.filesScanned} files, deleted ${out.versionsDeleted} versions, purged ${out.orphansPurged} orphans, removed ${out.blobsDeleted} blobs.`;
+      return c.redirect("/system?notice=" + encodeURIComponent(summary), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
     }
   })
   .post("/system/sessions/abort", async (c) => {
@@ -669,7 +690,10 @@ async function loadLive() {
     fg.system.health().catch(() => undefined),
     fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
   ]);
-  return { runtime, health, sessions: sessions?.items ?? [] };
+  // Only offer the button where a round can actually happen; with versioning
+  // off the endpoint answers 501 and a button would be a dead end.
+  const canPrune = (runtime?.lifecycle?.prunerIntervalMs ?? 0) > 0;
+  return { runtime, health, sessions: sessions?.items ?? [], canPrune };
 }
 
 async function loadSettings() {

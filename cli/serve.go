@@ -248,6 +248,12 @@ func newDaemonServeCmd() *cobra.Command {
 				Lifecycle: func() apiv1.LifecycleRuntime {
 					return lifecycle.Snapshot(cfg.Versioning.PrunerInterval)
 				},
+				PruneNow: func() (domain.PruneStats, error) {
+					if !versioningEnabled {
+						return domain.PruneStats{}, fmt.Errorf("versioning is disabled, so there is nothing to prune")
+					}
+					return lifecycle.Run(svc.PruneVersions)
+				},
 
 				VersioningEnabled:          versioningEnabled,
 				VersioningMode:             cfg.Versioning.Enabled,

@@ -2,6 +2,7 @@ import { prompts, submitForm } from "./prompts";
 import { openRetentionEditor, type Bucket } from "./retention";
 import { showCredential } from "./credential";
 import { openQuantityEditor, unitKindFor } from "./quantity";
+import { openChipsEditor } from "./chips";
 
 /**
  * Settings page interactions.
@@ -33,6 +34,13 @@ document.addEventListener("click", async (event) => {
     const path = edit.dataset.settingEdit ?? "";
     const type = edit.dataset.settingType ?? "string";
     const current = edit.dataset.settingValue ?? "";
+
+    if (type === "stringList") {
+      const current = (edit.dataset.settingValue ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+      const entries = await openChipsEditor({ path, current, usage: edit.dataset.settingUsage ?? "" });
+      if (entries !== null) submitForm("/settings/apply", { path, type, value: entries.join(",") });
+      return;
+    }
 
     const quantity = unitKindFor(type, edit.dataset.settingUnit);
     if (quantity) {

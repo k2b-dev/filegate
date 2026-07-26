@@ -209,3 +209,10 @@ html{scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-dar
 /* A dashboard that silently stops updating is worse than one that says so. */
 [data-live-state="stale"]{opacity:.55}
 [data-live-state="stale"]::before{content:"Live updates interrupted — values may be out of date";display:block;grid-column:1/-1;padding:8px 12px;border:1px solid #e8c48d;border-radius:var(--radius);background:#fdf9f3;color:#7a4a05;font-size:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;padding:6px;border:1px solid var(--line);border-radius:var(--radius);background:#fafbfc}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 9px;border:1px solid #9ecbf4;border-radius:999px;background:#dcefff;color:#193d5d;font-size:12px}
+.chip-text{overflow-wrap:anywhere}
+.chip-remove{appearance:none;display:inline-flex;align-items:center;border:0;background:transparent;color:inherit;cursor:pointer;padding:1px;border-radius:50%}
+.chip-remove:hover{background:rgba(25,61,93,.14)}
+.chip-remove .ti{font-size:12px}
+.chip-add{display:flex;gap:8px}.chip-add .input{flex:1}

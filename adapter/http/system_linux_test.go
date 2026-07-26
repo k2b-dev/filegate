@@ -4,6 +4,7 @@ package httpadapter
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -351,5 +352,69 @@ func TestOversizedUploadAnswers413(t *testing.T) {
 
 	if got := w.Result().StatusCode; got != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", got)
+	}
+}
+
+func TestManualPruneReportsWhatItDid(t *testing.T) {
+	var calls int
+	opts := RouterOptions{
+		PruneNow: func() (domain.PruneStats, error) {
+			calls++
+			return domain.PruneStats{FilesScanned: 12, VersionsKept: 30, VersionsDeleted: 4, OrphansPurged: 1, BlobsDeleted: 5}, nil
+		},
+	}
+	base := t.TempDir()
+	r, _, cleanup := newTestRouterWithBasePathsAndOptions(t, []string{base}, opts)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authedRequest(http.MethodPost, "/v1/versions/prune"))
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+
+	var out apiv1.PruneResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// All six fields, not the three that reach Prometheus: orphans and blobs
+	// are what say whether space was actually reclaimed.
+	if out.FilesScanned != 12 || out.VersionsDeleted != 4 || out.OrphansPurged != 1 || out.BlobsDeleted != 5 {
+		t.Errorf("stats = %+v, want the full result", out)
+	}
+	if calls != 1 {
+		t.Errorf("prune called %d times, want 1", calls)
+	}
+}
+
+// A round already in flight must be refused, not queued behind the first: two
+// overlapping scans duplicate the work and report halves of it separately.
+func TestManualPruneRefusesWhenAlreadyRunning(t *testing.T) {
+	opts := RouterOptions{
+		PruneNow: func() (domain.PruneStats, error) {
+			return domain.PruneStats{}, errors.New("a pruning round is already in progress")
+		},
+	}
+	base := t.TempDir()
+	r, _, cleanup := newTestRouterWithBasePathsAndOptions(t, []string{base}, opts)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authedRequest(http.MethodPost, "/v1/versions/prune"))
+	if w.Result().StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Result().StatusCode)
+	}
+}
+
+// Without versioning there is nothing to prune, and saying so beats pretending
+// a round ran and found nothing.
+func TestManualPruneUnavailableWithoutTheHook(t *testing.T) {
+	r, _, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authedRequest(http.MethodPost, "/v1/versions/prune"))
+	if w.Result().StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", w.Result().StatusCode)
 	}
 }

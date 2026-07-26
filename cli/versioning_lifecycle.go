@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -76,11 +77,14 @@ func runVersioningPruner(ctx context.Context, svc *domain.Service, interval time
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			started := time.Now()
-			stats, err := svc.PruneVersions()
-			// Recorded either way: a failing pruner is exactly what an operator
-			// needs to see, and it used to leave only a log line.
-			state.recordPrune(stats, time.Since(started), err)
+			// Routed through the shared guard so a manual trigger and the
+			// ticker cannot run at the same time. Recorded either way: a
+			// failing pruner is exactly what an operator needs to see, and it
+			// used to leave only a log line.
+			stats, err := state.Run(svc.PruneVersions)
+			if errors.Is(err, ErrPruneInProgress) {
+				continue
+			}
 			if err != nil {
 				log.Printf("[filegate] versioning pruner: %v", err)
 				continue

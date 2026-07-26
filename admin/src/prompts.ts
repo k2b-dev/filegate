@@ -527,3 +527,17 @@ document.addEventListener("click", async (event) => {
 });
 
 refreshBulkBar();
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.matches("[data-confirm-prune]")) return;
+  event.preventDefault();
+  const confirmed = await prompts.confirm({
+    title: "Prune versions now",
+    message:
+      "Applies the retention policy immediately and deletes the versions it no longer keeps. Pinned versions are never removed. The result is recorded in the activity log.",
+    confirmText: "Prune now",
+    variant: "danger",
+  });
+  if (confirmed) form.submit();
+});

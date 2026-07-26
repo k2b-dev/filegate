@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -16,11 +17,43 @@ import (
 type lifecycleState struct {
 	mu sync.RWMutex
 
+	// running guards against overlapping prune rounds. The per-file locks in
+	// the pruner already keep concurrent runs from corrupting anything, but two
+	// rounds would duplicate the scan and report halves of the same work as if
+	// they were separate results.
+	running bool
+
 	pruneAt       time.Time
 	pruneDuration time.Duration
 	pruneStats    domain.PruneStats
 	pruneErr      string
 	pruneRuns     uint64
+}
+
+// ErrPruneInProgress is returned when a round is already running.
+var ErrPruneInProgress = errors.New("a pruning round is already in progress")
+
+// Run executes a pruning round unless one is already in flight, and records the
+// outcome either way. Both the background ticker and the manual trigger go
+// through here, so they cannot overlap.
+func (s *lifecycleState) Run(prune func() (domain.PruneStats, error)) (domain.PruneStats, error) {
+	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		return domain.PruneStats{}, ErrPruneInProgress
+	}
+	s.running = true
+	s.mu.Unlock()
+
+	started := time.Now()
+	stats, err := prune()
+
+	s.mu.Lock()
+	s.running = false
+	s.mu.Unlock()
+
+	s.recordPrune(stats, time.Since(started), err)
+	return stats, err
 }
 
 func (s *lifecycleState) recordPrune(stats domain.PruneStats, took time.Duration, err error) {
@@ -46,6 +79,7 @@ func (s *lifecycleState) Snapshot(interval time.Duration) apiv1.LifecycleRuntime
 
 	out := apiv1.LifecycleRuntime{
 		PrunerIntervalMs: interval.Milliseconds(),
+		PruneRunning:     s.running,
 		PruneRuns:        s.pruneRuns,
 		PruneError:       s.pruneErr,
 	}

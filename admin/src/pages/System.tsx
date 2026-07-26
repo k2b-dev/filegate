@@ -23,6 +23,7 @@ export function System(props: {
   runtime?: SystemRuntimeResponse;
   healthDetail?: HealthResponse;
   sessions: UploadSessionSummary[];
+  canPrune?: boolean;
   error?: string;
   notice?: string;
 }) {
@@ -87,7 +88,7 @@ export function System(props: {
         <DetectorPanel runtime={props.runtime} />
         <QueuePanel runtime={props.runtime} />
         <CachePanel runtime={props.runtime} />
-        <LifecyclePanel runtime={props.runtime} />
+        <LifecyclePanel runtime={props.runtime} canPrune={props.canPrune} />
         <UploadSessionPanel runtime={props.runtime} sessions={props.sessions} />
       </section>
 
