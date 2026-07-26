@@ -135,6 +135,20 @@ if [[ "$PRESET" == "commit" ]]; then
   bench photos-put-c8 "${direct_url[@]}" --tree-shape photos --tree-scale "$PHOTOS_SCALE" --tree-transport put --tree-files 8
 fi
 
+# 4c. h2c on the plain listener, against HTTP/1.1 on the same port.
+#
+# The earlier protocol comparison had to run through a TLS edge because the
+# listener spoke HTTP/1.1 only. These pairs isolate the protocol: same listener,
+# same port, no proxy. The photos rows are the large-file regression check.
+if [[ "$PRESET" == "h2c" ]]; then
+  bench h2c-off-put-c32 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport put --tree-files 32
+  bench h2c-on-put-c32 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport put --tree-files 32 --http2
+  bench h2c-off-session-c32 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport session --tree-files 32 --tree-segments 32 --tree-batch 100
+  bench h2c-on-session-c32 "${direct_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport session --tree-files 32 --tree-segments 32 --tree-batch 100 --http2
+  bench h2c-off-photos-c8 "${direct_url[@]}" --tree-shape photos --tree-scale "$PHOTOS_SCALE" --tree-transport put --tree-files 8
+  bench h2c-on-photos-c8 "${direct_url[@]}" --tree-shape photos --tree-scale "$PHOTOS_SCALE" --tree-transport put --tree-files 8 --http2
+fi
+
 # 5. HTTP/1.1 versus HTTP/2, both through the same TLS edge.
 if [[ "$PRESET" == "full" || "$PRESET" == "http2" ]]; then
   bench edge-h1-put-c32 "${edge_url[@]}" --tree-shape logs --tree-scale "$LOGS_SCALE" --tree-transport put --tree-files 32

@@ -41,6 +41,7 @@ func registerConfigDefaults(v *viper.Viper) {
 	v.SetDefault("server.write_timeout", "5m")
 	v.SetDefault("server.access_log_enabled", true)
 	v.SetDefault("server.shutdown_timeout", "60s")
+	v.SetDefault("server.http2_cleartext", false)
 	// Empty means "generate one on first boot"; see bootstrapBearerToken.
 	v.SetDefault("auth.bearer_token", "")
 	// A default mount means a fresh install starts and can be configured from

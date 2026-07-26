@@ -21,7 +21,7 @@ Every key is either static or runtime. The distinction is not cosmetic: a runtim
 
 | Scope | Keys | Changing it |
 |---|---:|---|
-| `static` | 11 | Edit the YAML file or environment, then restart. Rejected by the config API. |
+| `static` | 12 | Edit the YAML file or environment, then restart. Rejected by the config API. |
 | `runtime` | 45 | Admin UI, `PATCH /v1/config`, or the YAML file. Stored in the runtime config store and outlives a restart. |
 
 Secret keys are never returned by the config API or printed by `fg config show`; they report only whether a value is configured. They are `auth.bearer_token`, `metrics.token`, `s3.access_key`, `s3.keys` and `s3.secret_key`.
@@ -42,6 +42,7 @@ Secret keys are never returned by the config API or printed by `fg config show`;
 | `server.write_timeout` | duration | static | `5m` | HTTP response write timeout. Needs a restart: an http.Server field, no longer read after ListenAndServe. |
 | `server.access_log_enabled` | bool | runtime | `true` | Enable REST and S3 access logs. |
 | `server.shutdown_timeout` | duration | runtime | `60s` | Graceful shutdown timeout. |
+| `server.http2_cleartext` | bool | static | `false` | Accept unencrypted HTTP/2 (h2c) on the REST listener, alongside HTTP/1.1 on the same port. Needs a restart: the protocol set is fixed when the listener starts accepting connections. |
 
 ## Auth
 

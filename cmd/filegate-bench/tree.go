@@ -264,6 +264,15 @@ func treeHTTPClient(cfg treeConfig) *http.Client {
 		// A non-nil (even empty) TLSNextProto map is the documented way to
 		// keep net/http from negotiating h2 over TLS.
 		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	} else if !strings.HasPrefix(strings.TrimSpace(cfg.BaseURL), "https://") {
+		// Cleartext endpoint: ALPN cannot negotiate anything, so HTTP/2 has to
+		// be requested outright. HTTP/1 is deliberately left out -- net/http
+		// only uses h2c for an http:// URL when HTTP/1 is absent, and a
+		// benchmark that silently measured HTTP/1.1 would be worse than one
+		// that fails.
+		protocols := new(http.Protocols)
+		protocols.SetUnencryptedHTTP2(true)
+		transport.Protocols = protocols
 	}
 	return &http.Client{Transport: transport, Timeout: cfg.Timeout}
 }

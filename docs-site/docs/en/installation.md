@@ -108,6 +108,37 @@ Verify the REST listener:
 curl -fsS http://127.0.0.1:8080/health
 ```
 
+## Behind a reverse proxy
+
+Filegate never terminates TLS. HTTPS, and browser-facing HTTP/2, belong at a
+reverse proxy in front of it; there is no TLS configuration to enable.
+
+The listener serves cleartext HTTP/1.1. That is what every mainstream proxy speaks
+to its backends — nginx does not support HTTP/2 upstreams at all, and Caddy,
+Traefik and Envoy default to HTTP/1.1 — so no configuration is needed for the
+usual setup.
+
+Set `server.http2_cleartext` when your proxy or service mesh is configured to
+speak h2 to its backends. HTTP/1.1 and h2c then share the same port: the server
+switches only for a connection that opens with the HTTP/2 preface, so nothing else
+changes. It is a static setting, so it needs a restart, and it is not a
+performance setting — measurements put the two protocols within a few percent at
+the median, well inside the noise of a single configuration.
+
+```sh
+sudo fg config set --config /etc/filegate/conf.yaml --server-http2-cleartext
+sudo systemctl restart filegate
+```
+
+The startup log states what the listener accepted:
+
+```txt
+[filegate] listening on :8080 (HTTP/1.1, h2c)
+```
+
+The S3 listener is HTTP/1.1 only. S3 clients sign and stream over HTTP/1.1 in
+practice.
+
 ## Upgrade Filegate
 
 Stop Filegate before installing a newer package:

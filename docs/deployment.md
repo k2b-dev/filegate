@@ -80,6 +80,54 @@ sudo systemctl start filegate
 sudo systemctl status filegate
 ```
 
+## HTTP Protocols
+
+The REST listener serves cleartext. It speaks HTTP/1.1 by default, and HTTP/2
+over cleartext (h2c) when `server.http2_cleartext` is on. Both then share one
+port: the server switches only for a connection that opens with the HTTP/2
+preface, so HTTP/1.1 clients are unaffected and no endpoint changes.
+
+Filegate never terminates TLS, so HTTPS and browser-facing HTTP/2 belong at a
+reverse proxy in front of it. There is no TLS configuration to enable.
+
+| Situation | Setting |
+|---|---|
+| Proxy speaks HTTP/1.1 to its backends (nginx, ingress-nginx, and the default for Caddy, Traefik and Envoy) | Leave it off. |
+| Proxy or service mesh is configured to speak h2 to its backends | Turn it on. |
+| Chasing throughput | Leave it off; it is not a performance setting. |
+
+`server.http2_cleartext` is static — the protocol set is fixed once the listener
+accepts connections, so changing it needs a restart. It applies to the REST
+listener only. The S3 listener stays HTTP/1.1: S3 clients sign and stream over
+HTTP/1.1 in practice, so h2c there would be surface without a consumer.
+
+It is off by default because accepting a second protocol on a listener should be
+an operator's decision, not something that arrives with an upgrade.
+
+Measurements are in `bench/results/2026-07-27-h2c.md`: across four repeats per
+configuration, HTTP/1.1 and h2c differ by 1.5% to 6.7% at the median, inside a
+spread that reaches 2.6x within a single arm. Enable it because a proxy requires
+it, not to make anything faster.
+
+Proxy configuration for h2c upstreams:
+
+```caddyfile
+reverse_proxy filegate:8080 {
+	transport http {
+		versions h2c 2
+	}
+}
+```
+
+```yaml
+# Traefik
+services:
+  filegate:
+    loadBalancer:
+      servers:
+        - url: h2c://filegate:8080
+```
+
 ## Container Deployment
 
 Use the provided Dockerfile or compose examples for local evaluation, CI smoke tests, or environments that explicitly standardize on containers. For ordinary Linux production hosts, prefer package install plus systemd.

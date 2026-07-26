@@ -71,6 +71,27 @@ func wrapMetrics(h http.Handler, reg *metrics.Registry, adapter string, enabled 
 	})
 }
 
+// restListenerProtocols decides what the REST listener speaks.
+//
+// nil means the net/http default, which for a cleartext listener is HTTP/1.1.
+// With h2c enabled both run on the same port: the server only switches for a
+// connection that opens with the HTTP/2 preface, so HTTP/1.1 clients are
+// unaffected and no port or endpoint changes.
+//
+// The listener's timeouts keep their meaning across the switch. Go arms
+// ReadTimeout and WriteTimeout per stream for HTTP/2 rather than per connection,
+// and the listener sets IdleTimeout explicitly, so it does not fall back to
+// ReadTimeout and cut long-lived connections short.
+func restListenerProtocols(h2cEnabled bool) *http.Protocols {
+	if !h2cEnabled {
+		return nil
+	}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	return protocols
+}
+
 func newDaemonServeCmd() *cobra.Command {
 	var configFile string
 	cmd := &cobra.Command{
@@ -275,9 +296,14 @@ func newDaemonServeCmd() *cobra.Command {
 				IdleTimeout:       120 * time.Second,
 				MaxHeaderBytes:    1 << 20,
 			}
+			srv.Protocols = restListenerProtocols(cfg.Server.HTTP2Cleartext)
 			errCh := make(chan error, 2)
 			go func() {
-				log.Printf("[filegate] listening on %s", cfg.Server.Listen)
+				protocols := "HTTP/1.1"
+				if cfg.Server.HTTP2Cleartext {
+					protocols = "HTTP/1.1, h2c"
+				}
+				log.Printf("[filegate] listening on %s (%s)", cfg.Server.Listen, protocols)
 				errCh <- srv.ListenAndServe()
 			}()
 

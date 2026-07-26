@@ -108,15 +108,19 @@ Levers: `--tree-files`, `--tree-segments`, `--tree-hash`, `--tree-create`,
 `--tree-segment-size`, `--tree-batch`, `--keep-alive`, `--http2`.
 
 The script runs its own stack (`bench/compose.bench.yml`, ports 4911 and 4913,
-its own volumes) including a TLS edge, because HTTP/2 needs TLS and the Filegate
-listener serves cleartext HTTP/1.1 only. It recreates the stack between
+its own volumes) including a TLS edge, so browser-facing HTTP/2 can be measured
+the way it is actually deployed. The listener itself also speaks h2c when
+`server.http2_cleartext` is on, which the `h2c` preset uses to compare protocols
+on one port with no proxy in between. It recreates the stack between
 configurations, since a corpus left behind changes what later runs measure.
 
 Presets (`FILEGATE_BENCH_PRESET`): `full` (everything, the default), `levers`,
-`http2`, `shapes`, and `commit`. Use `commit` for before/after work on the
+`http2`, `shapes`, `commit`, and `h2c`. Use `commit` for before/after work on the
 commit path — it is the narrow set of session runs plus a large-file regression
 check, small enough to run once per build in a single sitting, which matters
 because this comparison is only meaningful when both arms ran back to back.
+Use `h2c` to compare HTTP/1.1 against cleartext HTTP/2 on the listener itself;
+both arms run against the same server, so it needs no rebuild between them.
 
 Results and interpretation: `bench/results/`.
 

@@ -16,6 +16,8 @@ services:
     environment:
       FILEGATE_AUTH_BEARER_TOKEN: "bench-token"
       FILEGATE_SERVER_LISTEN: ":8080"
+      # h2c on, so the harness can compare protocols without a TLS edge in between.
+      FILEGATE_SERVER_HTTP2_CLEARTEXT: "true"
       FILEGATE_SERVER_PUBLIC_URL: "http://filegate:8080"
       FILEGATE_STORAGE_BASE_PATHS: "/data"
       FILEGATE_STORAGE_INDEX_PATH: "/var/lib/filegate/index"
