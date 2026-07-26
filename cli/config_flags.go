@@ -64,9 +64,10 @@ type configFlagSpec struct {
 	Secret bool
 	// Reason documents why a static key cannot move. Empty for runtime keys.
 	Reason string
-	// Unit says what a number means, so a client can render 65536 as 64 KiB
-	// instead of a bare integer. The type alone cannot carry this: a byte
-	// limit and a max-count are both ints.
+	// Unit says what a number counts, so a client can render 65536 as 64 KiB
+	// and 100000 as "100,000 entries". The type alone cannot carry this: a
+	// byte limit and a max-count are both ints, and several keys are named
+	// "size" while holding a count.
 	Unit string
 }
 
@@ -90,27 +91,27 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
 		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Scope: scopeStatic, Reason: "selects a different detector implementation"},
 		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeRuntime},
-		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Kind: configFlagInt, Usage: "in-memory path cache size", Scope: scopeRuntime},
-		{Name: "jobs-workers", Path: "jobs.workers", Kind: configFlagInt, Usage: "background worker count", Scope: scopeRuntime},
-		{Name: "jobs-queue-size", Path: "jobs.queue_size", Kind: configFlagInt, Usage: "background job queue size", Scope: scopeRuntime},
-		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Kind: configFlagInt, Usage: "thumbnail worker count", Scope: scopeRuntime},
-		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Kind: configFlagInt, Usage: "thumbnail job queue size", Scope: scopeRuntime},
+		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of paths kept in the in-memory cache", Scope: scopeRuntime},
+		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count", Scope: scopeRuntime},
+		{Name: "jobs-queue-size", Path: "jobs.queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum jobs queued before new ones are rejected", Scope: scopeRuntime},
+		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Unit: "workers", Kind: configFlagInt, Usage: "thumbnail worker count", Scope: scopeRuntime},
+		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum thumbnail jobs queued before new ones are rejected", Scope: scopeRuntime},
 		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry", Scope: scopeRuntime},
 		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval", Scope: scopeRuntime},
 		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
 		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
 		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
-		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes", Scope: scopeRuntime},
+		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes", Scope: scopeRuntime},
 		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
-		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Kind: configFlagInt, Usage: "thumbnail LRU cache size", Scope: scopeRuntime},
+		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of thumbnails kept in memory", Scope: scopeRuntime},
 		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeRuntime},
-		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeRuntime},
+		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Unit: "pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeRuntime},
 		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Scope: scopeRuntime},
 		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown", Scope: scopeRuntime},
 		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeRuntime},
 		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets", Scope: scopeRuntime},
 		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval", Scope: scopeRuntime},
-		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap", Scope: scopeRuntime},
+		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Unit: "versions", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap", Scope: scopeRuntime},
 		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete", Scope: scopeRuntime},
 		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Unit: "bytes", Kind: configFlagInt, Usage: "maximum version label bytes", Scope: scopeRuntime},
 		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener", Scope: scopeStatic, Reason: "controls whether the second listener exists"},
@@ -118,7 +119,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region", Scope: scopeRuntime},
 		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "legacy single-tenant S3 access key", Scope: scopeRuntime, Secret: true},
 		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "legacy single-tenant S3 secret key", Scope: scopeRuntime, Secret: true},
-		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes", Scope: scopeRuntime},
+		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes", Scope: scopeRuntime},
 		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 key access_key=<ak>,secret_key=<sk>,buckets=<a|b|*>,requests_per_second=<n>,burst=<n>; repeat for multiple keys", Scope: scopeRuntime, Secret: true},
 		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default", Scope: scopeRuntime},
 		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default", Scope: scopeRuntime},
@@ -127,7 +128,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "metrics-enabled", Path: "metrics.enabled", Kind: configFlagBool, Usage: "enable Prometheus metrics endpoint", Scope: scopeStatic, Reason: "the metrics route is mounted conditionally during router construction"},
 		{Name: "metrics-path", Path: "metrics.path", Kind: configFlagString, Usage: "Prometheus metrics path", Scope: scopeStatic, Reason: "the metrics route pattern is fixed at router construction"},
 		{Name: "metrics-token", Path: "metrics.token", Kind: configFlagString, Usage: "optional Prometheus metrics bearer token", Scope: scopeRuntime, Secret: true},
-		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Kind: configFlagInt, Usage: "number of recent activity events kept in memory", Scope: scopeRuntime},
+		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Unit: "events", Kind: configFlagInt, Usage: "number of recent activity events kept in memory", Scope: scopeRuntime},
 	}
 }
 

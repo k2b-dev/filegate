@@ -45,7 +45,12 @@ function displayValue(value: unknown, key?: ConfigKeySchema): string {
     return value > 0 ? text.pprintBytes(value) : "0";
   }
   if (key?.type === "duration") return formatDurationValue(value);
-  if (typeof value === "number") return text.pprintNumber(value);
+  if (typeof value === "number") {
+    // Naming a key "size" does not make it bytes: several hold entry counts,
+    // so the unit is spelled out rather than guessed from the name.
+    const count = text.pprintNumber(value);
+    return key?.unit ? `${count} ${key.unit}` : count;
+  }
   return String(value);
 }
 

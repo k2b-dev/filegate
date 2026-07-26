@@ -538,7 +538,7 @@ export interface ConfigKeySchema {
   usage: string;
   /** Why a static key cannot change while the server runs. */
   reason?: string;
-  /** "bytes" for a byte count, absent otherwise. Lets a client render 65536 as 64 KiB. */
+  /** What a number counts: "bytes", "entries", "workers", "pixels", … Absent for non-numeric keys. */
   unit?: string;
   /** Secret values report presence only, never their content. */
   secret: boolean;

@@ -43,7 +43,19 @@ function button(text: string, value: string, variant?: PromptVariant): HTMLButto
   el.type = "button";
   el.className = `btn${variant === "danger" ? " danger" : value === "ok" ? " primary" : ""}`;
   el.dataset.promptValue = value;
-  el.textContent = text;
+
+  // The close affordance is a bare glyph, not a labelled action, so it keeps its
+  // own icon and no label.
+  if (text === "\u00d7") {
+    el.innerHTML = '<i class="ti ti-x" aria-hidden="true"></i>';
+    return el;
+  }
+  const icon = variant === "danger" ? "trash" : value === "ok" ? "check" : "x";
+  el.innerHTML = `<i class="ti ti-${icon}" aria-hidden="true"></i>`;
+  const label = document.createElement("span");
+  label.className = "btn-label";
+  label.textContent = text;
+  el.appendChild(label);
   return el;
 }
 

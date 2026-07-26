@@ -1,5 +1,6 @@
 import type { HealthResponse, SystemRuntimeResponse, UploadSessionSummary } from "@valentinkolb/filegate";
 import { formatBytes, formatUnix } from "../lib/format";
+import { IconLabel } from "../components/Icons";
 
 /**
  * Live operational panels.
@@ -243,7 +244,7 @@ export function UploadSessionPanel(props: { runtime?: SystemRuntimeResponse; ses
                         <form method="post" action="/system/sessions/abort" data-confirm-session={session.path}>
                           <input type="hidden" name="sessionId" value={session.id} />
                           <button class="btn danger" type="submit">
-                            Abort
+                            <IconLabel icon="player-stop">Abort</IconLabel>
                           </button>
                         </form>
                       </span>

@@ -97,8 +97,8 @@ export function openRetentionEditor(initial: Bucket[]): Promise<string | null> {
         <div class="prompt-footer retention-footer">
           <button type="button" class="btn" data-toggle-raw><i class="ti ti-code" aria-hidden="true"></i><span class="btn-label">Edit as text</span></button>
           <span class="tb-group">
-            <button type="button" class="btn" data-cancel>Cancel</button>
-            <button type="button" class="btn primary" data-save>Save policy</button>
+            <button type="button" class="btn" data-cancel><i class="ti ti-x" aria-hidden="true"></i><span class="btn-label">Cancel</span></button>
+            <button type="button" class="btn primary" data-save><i class="ti ti-check" aria-hidden="true"></i><span class="btn-label">Save policy</span></button>
           </span>
         </div>
       </div>`;

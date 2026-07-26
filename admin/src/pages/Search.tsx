@@ -1,5 +1,6 @@
 import type { GlobSearchResponse, StatsResponse } from "@valentinkolb/filegate";
 import { Layout } from "../components/Layout";
+import { IconLabel } from "../components/Icons";
 import { NodeTable } from "../components/Table";
 
 export function Search(props: { stats: StatsResponse; health?: "ok" | "degraded" | "fail"; pattern: string; hidden: boolean; results?: GlobSearchResponse; error?: string }) {
@@ -23,7 +24,9 @@ export function Search(props: { stats: StatsResponse; health?: "ok" | "degraded"
               Hidden on
             </option>
           </select>
-          <button class="btn primary">Search</button>
+          <button class="btn primary">
+            <IconLabel icon="search">Search</IconLabel>
+          </button>
         </form>
         {props.results?.errors.map((err) => (
           <div class="panel-body error-row">

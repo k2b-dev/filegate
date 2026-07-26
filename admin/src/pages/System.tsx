@@ -2,6 +2,7 @@ import type { ActivityEvent, ActivityListResponse, StatsResponse } from "@valent
 import { charts } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
 import { env } from "../lib/env";
+import { Icon, IconLabel } from "../components/Icons";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type ActivityQuery = { q: string; operation: string; outcome: string; page: number; pageSize: number };
@@ -259,7 +260,7 @@ export function System(props: {
             <p>{activitySummary(props.activity, props.activityQuery)}</p>
           </div>
           <a class="btn" href={activityURL(props.activityQuery, page)}>
-            Reload activity
+            <IconLabel icon="refresh">Reload activity</IconLabel>
           </a>
         </div>
         <form class="toolbar activity-filters" method="get" action="/system#activity">
@@ -281,10 +282,10 @@ export function System(props: {
             ))}
           </select>
           <button class="btn primary" type="submit">
-            Apply
+            <IconLabel icon="filter">Apply</IconLabel>
           </button>
           <a class="btn" href="/system#activity">
-            Reset
+            <IconLabel icon="filter-off">Reset</IconLabel>
           </a>
         </form>
         <div class="table-wrap">
@@ -323,7 +324,7 @@ export function System(props: {
         </div>
         <div class="activity-pager">
           <a class={`btn${page <= 1 ? " disabled" : ""}`} href={page <= 1 ? activityURL(props.activityQuery, 1) : activityURL(props.activityQuery, page - 1)}>
-            Previous
+            <IconLabel icon="chevron-left">Previous</IconLabel>
           </a>
           <span>
             Page {page} of {totalPages}

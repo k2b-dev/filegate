@@ -211,9 +211,11 @@ function UploadPanel() {
     <div id="fg-uploads" class="uploads" hidden>
       <div class="uploads-head">
         <span class="uploads-title">Uploading...</span>
-        <button type="button" class="btn uploads-cancel">Cancel</button>
+        <button type="button" class="btn uploads-cancel">
+          <IconLabel icon="player-stop">Cancel</IconLabel>
+        </button>
         <button type="button" class="uploads-close" aria-label="Close">
-          ×
+          <Icon name="x" />
         </button>
       </div>
       <div class="uploads-list" />
@@ -297,7 +299,7 @@ function Detail(props: { node: Node }) {
                 <span class="muted">{node.type === "directory" ? "Download as archive." : "Download directly."}</span>
               </div>
               <a class="btn" href={`/files/download?id=${encodeURIComponent(node.id)}`}>
-                Download
+                <IconLabel icon="download">Download</IconLabel>
               </a>
             </div>
             <div class="action-row">
@@ -330,7 +332,7 @@ function Detail(props: { node: Node }) {
                 data-metadata-gid={String(node.ownership.gid)}
                 data-metadata-mode={node.ownership.mode}
               >
-                Edit metadata
+                <IconLabel icon="user-cog">Edit metadata</IconLabel>
               </button>
             </div>
           </div>

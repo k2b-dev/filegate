@@ -112,3 +112,36 @@ func TestRuntimeConfigPathMustBeOutsideTheIndex(t *testing.T) {
 		t.Error("empty runtime config path accepted")
 	}
 }
+
+// Numeric keys must say what they count. Three of them are named "size" while
+// holding an entry count, and rendering those as bytes would claim a 100,000
+// entry cache occupies 97 KiB.
+func TestNumericKeysDeclareTheirUnit(t *testing.T) {
+	for _, spec := range allConfigFlagSpecs() {
+		if spec.Kind != configFlagInt && spec.Kind != configFlagInt64 {
+			continue
+		}
+		if strings.TrimSpace(spec.Unit) == "" {
+			t.Errorf("%s is numeric but declares no unit; a client cannot tell bytes from a count", spec.Path)
+		}
+	}
+}
+
+// A key named "size" is not evidence of bytes.
+func TestSizeNamedCountsAreNotMarkedAsBytes(t *testing.T) {
+	counts := map[string]string{
+		"cache.path_cache_size":     "entries",
+		"thumbnail.lru_cache_size":  "entries",
+		"activity.ring_buffer_size": "events",
+		"jobs.queue_size":           "jobs",
+	}
+	for _, spec := range allConfigFlagSpecs() {
+		want, tracked := counts[spec.Path]
+		if !tracked {
+			continue
+		}
+		if spec.Unit != want {
+			t.Errorf("%s unit = %q, want %q; it holds a count, not bytes", spec.Path, spec.Unit, want)
+		}
+	}
+}

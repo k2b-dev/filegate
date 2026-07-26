@@ -125,7 +125,7 @@ export function LoginPage(props: { error?: string; methods: { token: boolean; oi
           {props.error && <div class="error">{props.error}</div>}
           {props.methods.oidc && (
             <a class="btn primary login-sso" href="/auth/login">
-              Sign in with single sign-on
+              <IconLabel icon="key">Sign in with single sign-on</IconLabel>
             </a>
           )}
           {props.methods.oidc && props.methods.token && <div class="login-divider">or</div>}
@@ -143,7 +143,7 @@ export function LoginPage(props: { error?: string; methods: { token: boolean; oi
                 />
               </div>
               <button class={props.methods.oidc ? "btn" : "btn primary"} type="submit">
-                Sign in
+                <IconLabel icon="login">Sign in</IconLabel>
               </button>
             </form>
           )}
