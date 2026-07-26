@@ -626,3 +626,185 @@ func TestUploadSessionDirectTokenCanPutAndCommit(t *testing.T) {
 		t.Fatalf("resolve direct upload: %v", err)
 	}
 }
+
+// A session token is a capability for exactly one session. Nothing else in the
+// suite pinned that, so a scoping regression would have shipped silently.
+func TestUploadSessionTokenIsScopedToOneSession(t *testing.T) {
+	r, svc, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	root := svc.ListRoot()[0]
+	content := []byte("scoped token payload")
+	victim := createUploadSession(t, r, root.Name+"/scoped/victim.txt", content, int64(len(content)), true)
+	attacker := createUploadSession(t, r, root.Name+"/scoped/attacker.txt", content, int64(len(content)), true)
+	if victim.Direct == nil || attacker.Direct == nil {
+		t.Fatalf("expected direct tokens on both sessions")
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		target string
+		body   io.Reader
+	}{
+		{"status", http.MethodGet, "/v1/uploads/sessions/" + victim.ID, nil},
+		{"putSegment", http.MethodPut, "/v1/uploads/sessions/" + victim.ID + "/segments/0", bytes.NewReader(content)},
+		{"commit", http.MethodPost, "/v1/uploads/sessions/" + victim.ID + "/commit", nil},
+		{"abort", http.MethodDelete, "/v1/uploads/sessions/" + victim.ID, nil},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.target, tc.body)
+		req.Header.Set("Filegate-Upload-Session", attacker.Direct.Token)
+		r.ServeHTTP(w, req)
+		if w.Result().StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s with another session's token: status=%d, want 401", tc.name, w.Result().StatusCode)
+		}
+	}
+
+	// The victim session must still be usable afterwards.
+	if got := putSessionSegment(t, r, victim.ID, 0, content); got.Result().StatusCode != http.StatusOK {
+		t.Fatalf("victim segment put status=%d body=%s", got.Result().StatusCode, got.Body.String())
+	}
+}
+
+// Abort is destructive, so it must refuse both anonymous callers and tokens
+// that were minted without the abort scope.
+func TestUploadSessionAbortRequiresAbortScope(t *testing.T) {
+	r, svc, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	root := svc.ListRoot()[0]
+	content := []byte("abort scope payload")
+	body := apiv1.UploadSessionCreateRequest{
+		Path:        root.Name + "/scoped/no-abort.txt",
+		Size:        int64(len(content)),
+		Checksum:    sha256Prefixed(content),
+		SegmentSize: int64(len(content)),
+		OnConflict:  "error",
+		Direct: &apiv1.UploadSessionDirectRequest{
+			ExpiresInSeconds: 60,
+			Allow:            []string{"putSegment", "status"},
+		},
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authedJSONRequest(http.MethodPost, "/v1/uploads/sessions", raw))
+	if w.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+	var session apiv1.UploadSessionResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&session); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	anonymous := httptest.NewRecorder()
+	r.ServeHTTP(anonymous, httptest.NewRequest(http.MethodDelete, "/v1/uploads/sessions/"+session.ID, nil))
+	if anonymous.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("anonymous abort status=%d, want 401", anonymous.Result().StatusCode)
+	}
+
+	scoped := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/uploads/sessions/"+session.ID, nil)
+	req.Header.Set("Filegate-Upload-Session", session.Direct.Token)
+	r.ServeHTTP(scoped, req)
+	if scoped.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("abort without the abort scope status=%d, want 401", scoped.Result().StatusCode)
+	}
+
+	stored, err := svc.LookupUploadSession(session.ID)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if stored.Phase != domain.UploadSessionInProgress {
+		t.Fatalf("phase=%q, want the session untouched", stored.Phase)
+	}
+}
+
+// Aborting frees the staged bytes but leaves an aborted row behind, so a late
+// segment PUT cannot resurrect a cancelled upload.
+func TestUploadSessionAbortFreesBytesAndKeepsTheRow(t *testing.T) {
+	r, svc, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	root := svc.ListRoot()[0]
+	content := []byte("abort payload")
+	session := createUploadSession(t, r, root.Name+"/gc/aborted.txt", content, int64(len(content)), false)
+	if got := putSessionSegment(t, r, session.ID, 0, content); got.Result().StatusCode != http.StatusOK {
+		t.Fatalf("segment put status=%d", got.Result().StatusCode)
+	}
+	segs, err := svc.ListUploadSegments(session.ID)
+	if err != nil || len(segs) != 1 {
+		t.Fatalf("segments=%d err=%v", len(segs), err)
+	}
+
+	abort := httptest.NewRecorder()
+	r.ServeHTTP(abort, authedJSONRequest(http.MethodDelete, "/v1/uploads/sessions/"+session.ID, nil))
+	if abort.Result().StatusCode != http.StatusNoContent {
+		t.Fatalf("abort status=%d body=%s", abort.Result().StatusCode, abort.Body.String())
+	}
+
+	stored, err := svc.LookupUploadSession(session.ID)
+	if err != nil {
+		t.Fatalf("lookup after abort: %v", err)
+	}
+	if stored.Phase != domain.UploadSessionAborted {
+		t.Fatalf("phase=%q, want aborted", stored.Phase)
+	}
+	if _, statErr := os.Stat(segs[0].Path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("segment file %s still present after abort", segs[0].Path)
+	}
+	late := putSessionSegment(t, r, session.ID, 0, content)
+	if late.Result().StatusCode != http.StatusConflict {
+		t.Fatalf("segment PUT after abort status=%d, want 409", late.Result().StatusCode)
+	}
+}
+
+// The expiry sweep is the other half of GC: without it the aborted rows above
+// would accumulate in the index forever.
+func TestUploadSessionSweepRemovesExpiredRows(t *testing.T) {
+	r, svc, cleanup := newTestRouterWithCustomLimits(t, t.TempDir(), t.TempDir(), RouterOptions{
+		BearerToken:           "test-token",
+		JobWorkers:            2,
+		JobQueueSize:          64,
+		UploadExpiry:          10 * time.Millisecond,
+		UploadCleanupInterval: 20 * time.Millisecond,
+		MaxChunkBytes:         10 << 20,
+		MaxSessionUploadBytes: 10 << 20,
+		MaxUploadBytes:        10 << 20,
+	})
+	defer cleanup()
+	_ = r
+
+	root := svc.ListRoot()[0]
+	stale := domain.UploadSession{
+		ID:            "upl_" + strings.Repeat("a", 32),
+		Path:          root.Name + "/gc/stale.bin",
+		ParentID:      root.ID,
+		Filename:      "stale.bin",
+		Size:          1024,
+		SegmentSize:   1024,
+		TotalSegments: 1,
+		Phase:         domain.UploadSessionAborted,
+		CreatedAt:     time.Now().Add(-time.Hour).UnixMilli(),
+		UpdatedAt:     time.Now().Add(-time.Hour).UnixMilli(),
+	}
+	if err := svc.CreateUploadSession(stale); err != nil {
+		t.Fatalf("create stale session: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := svc.LookupUploadSession(stale.ID)
+		if errors.Is(err, domain.ErrNotFound) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stale session still present after the sweep window: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
