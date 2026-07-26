@@ -398,6 +398,29 @@ export const app = new Hono()
       return c.redirect(settingsURL(errorMessage(err)), 303);
     }
   })
+  .post("/api/s3keys/create", async (c) => {
+    // Deliberately JSON rather than a form post with a redirect: the secret is
+    // returned here, and a redirect would put it in the URL, the browser
+    // history and every access log along the way.
+    try {
+      const body = await c.req.json();
+      const rate = Number.parseInt(String(body.requestsPerSecond ?? ""), 10);
+      const created = await client().s3Keys.create({
+        buckets: Array.isArray(body.buckets) ? body.buckets.map(String) : [],
+        ...(Number.isFinite(rate) && rate > 0 ? { requestsPerSecond: rate } : {}),
+      });
+      return c.json(created, 201);
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 400);
+    }
+  })
+  .post("/api/s3keys/:accessKey/rotate", async (c) => {
+    try {
+      return c.json(await client().s3Keys.rotate(c.req.param("accessKey")));
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 400);
+    }
+  })
   .post("/settings/s3keys/create", async (c) => {
     const body = await c.req.parseBody();
     try {
@@ -586,7 +609,15 @@ async function loadSettings() {
     const s3Enabled = values.values.find((entry) => entry.path === "s3.enabled")?.value === true;
     // Listing keys fails when the S3 listener is off; that is expected, not an error.
     const keys = s3Enabled ? await fg.s3Keys.list().then((out) => out.items).catch(() => []) : [];
-    return { schema: schema.keys, values, keys, s3Enabled, mounts: stats.mounts.length, health: await loadHealth() };
+    return {
+      schema: schema.keys,
+      values,
+      keys,
+      s3Enabled,
+      mounts: stats.mounts.length,
+      mountNames: stats.mounts.map((mount) => mount.name),
+      health: await loadHealth(),
+    };
   } catch (err) {
     return {
       schema: [],
@@ -594,6 +625,7 @@ async function loadSettings() {
       keys: [],
       s3Enabled: false,
       mounts: 0,
+      mountNames: [] as string[],
       health: "fail" as const,
       error: errorMessage(err),
     };

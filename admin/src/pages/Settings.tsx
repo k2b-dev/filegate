@@ -8,6 +8,7 @@ type SettingsData = {
   values: ConfigValuesResponse;
   keys: S3Key[];
   s3Enabled: boolean;
+  mountNames: string[];
 };
 
 /** Groups keys by their leading path segment, which is already the section. */
@@ -157,7 +158,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
         <div class="panel-head">
           <h2>S3 access keys</h2>
           {props.s3Enabled && (
-            <button class="btn" type="button" data-s3key-create>
+            <button class="btn" type="button" data-s3key-create data-mounts={props.mountNames.join(",")}>
               Create key
             </button>
           )}
@@ -266,6 +267,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               type="button"
                               data-setting-edit={key.path}
                               data-setting-type={key.type}
+                              data-setting-unit={key.unit}
                               data-setting-value={key.type === "retentionBuckets" ? retentionAsText(current?.value) : rawValue(current?.value)}
                               data-setting-json={key.type === "retentionBuckets" ? JSON.stringify(current?.value ?? []) : undefined}
                             >
