@@ -48,6 +48,43 @@ func main() {
 | `sdk/filegate/directuploads` | Browser or external direct upload helpers | Signed direct upload flows. |
 | `sdk/filegate/segments` | Upload segment planning | Segment math and checksum-related helpers. |
 | `sdk/filegate/relay` | Application server relay patterns | Server-side helpers for proxying or authorizing browser transfers. |
+| `sdk/filegate/uploadtree` | Whole folders | Batch uploads over many one-file sessions. |
+
+## Uploading a folder
+
+`sdk/filegate/uploadtree` is the Go counterpart to the browser `upload()` helper
+in the TypeScript SDK. It walks a local directory, hashes with bounded
+concurrency, creates sessions in batches, uploads segments under one global
+concurrency limit, retries transient failures, and reports one progress view for
+the whole run.
+
+```go
+sources, err := uploadtree.FromDir("/srv/photos", "data/photos")
+if err != nil {
+	log.Fatal(err)
+}
+
+res, err := uploadtree.Upload(ctx, client, sources, uploadtree.Options{
+	OnConflict:           filegate.ConflictOverwrite,
+	DirectThresholdBytes: 256 << 10, // small files skip the session protocol
+	Resume:               true,      // adopt sessions an interrupted run left behind
+	Concurrency:          uploadtree.Concurrency{Hash: 4, Files: 8, Segments: 8},
+	OnEvent: func(e uploadtree.Event) {
+		if e.Type == uploadtree.EventFileDone {
+			log.Printf("%d/%d %s", e.Progress.FilesDone, e.Progress.Files, e.Path)
+		}
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+log.Printf("done=%d failed=%d skipped=%d", res.Done, res.Failed, res.Skipped)
+```
+
+A single file failing does not stop the run; its error is in `res.Files`.
+`DirectThresholdBytes` matters more than it looks: measurements in
+`bench/results/` show a session costs roughly 3 round trips and several fsyncs
+per file, so small files are much faster as one-shot `PUT /v1/paths` uploads.
 
 ## API coverage
 
