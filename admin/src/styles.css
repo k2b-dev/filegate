@@ -173,3 +173,27 @@ html{scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-dar
 .cred-row{display:flex;align-items:center;gap:8px}
 .cred-row code{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:#f6f8fa;font-size:12px;overflow-wrap:anywhere}
 .cred-copy{height:32px;padding:0 12px;font-size:12px;flex:0 0 auto}
+
+/* Icons.
+ *
+ * The font is self-hosted; see build.ts. Every icon element is aria-hidden,
+ * so meaning must come from an adjacent label or an aria-label. */
+.ti{font-size:16px;line-height:1;flex:0 0 auto}
+.btn .ti{font-size:15px}
+.nav .ti{font-size:16px;width:18px;text-align:center}
+.nav a{display:flex;align-items:center;gap:10px}
+.sort-link .ti{font-size:13px;color:var(--blue)}
+.status .ti{font-size:14px}
+.name-cell .ti{font-size:16px;color:var(--muted)}
+.thumb .ti{font-size:26px;opacity:.55}
+
+/* On narrow screens the labels collapse and the buttons become icon-only. The
+ * label stays in the DOM so the accessible name never changes. */
+@media (max-width:820px){
+  .btn-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .btn{padding:0 10px}
+  .row-actions .btn{padding:0 8px}
+}
+.dropzone-icon{font-size:28px;color:var(--muted)}
+.rr-remove .ti{font-size:14px}
+.tag .ti{font-size:11px;vertical-align:-1px}

@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js";
+import { Icon, IconLabel } from "./Icons";
 
 type LayoutProps = {
   active: "overview" | "files" | "search" | "system" | "settings";
@@ -35,12 +36,19 @@ function healthTitle(status?: string): string {
 }
 
 const nav = [
-  ["overview", "Overview", "/"],
-  ["files", "Files", "/files"],
-  ["search", "Search", "/search"],
-  ["system", "System", "/system"],
-  ["settings", "Settings", "/settings"],
+  ["overview", "Overview", "/", "dashboard"],
+  ["files", "Files", "/files", "folder"],
+  ["search", "Search", "/search", "search"],
+  ["system", "System", "/system", "activity"],
+  ["settings", "Settings", "/settings", "settings"],
 ] as const;
+
+function healthIcon(status?: string): string {
+  if (status === "ok") return "circle-check";
+  if (status === "degraded") return "alert-triangle";
+  if (status === "fail") return "circle-x";
+  return "help-circle";
+}
 
 export function Layout(props: LayoutProps) {
   return (
@@ -49,18 +57,18 @@ export function Layout(props: LayoutProps) {
         <div class="service">Filegate Admin</div>
         <div class="top-meta">
           <span class={`status ${healthClass(props.health)}`} title={healthTitle(props.health)}>
-            <span class="dot" />
-            {healthLabel(props.health)}
+            <Icon name={healthIcon(props.health)} />
+            <span class="btn-label">{healthLabel(props.health)}</span>
           </span>
           <span>
             {props.mounts} mount{props.mounts === 1 ? "" : "s"}
           </span>
           <button class="btn theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">
-            Theme
+            <Icon name="sun-moon" />
           </button>
           <form method="post" action="/logout">
             <button class="btn" type="submit">
-              Log out
+              <IconLabel icon="logout">Log out</IconLabel>
             </button>
           </form>
         </div>
@@ -69,9 +77,10 @@ export function Layout(props: LayoutProps) {
         <aside class="sidebar" style="view-transition-name: fg-sidebar">
           <div class="side-title">Resources</div>
           <nav class="nav">
-            {nav.map(([key, label, href]) => (
+            {nav.map(([key, label, href, icon]) => (
               <a class={props.active === key ? "active" : ""} href={href}>
-                {label}
+                <Icon name={icon} />
+                <span>{label}</span>
               </a>
             ))}
           </nav>
@@ -91,7 +100,9 @@ export function Layout(props: LayoutProps) {
             </div>
             {props.active === "system" && (
               <form method="post" action="/system/rescan" data-confirm-rescan>
-                <button class="btn primary">Rescan index</button>
+                <button class="btn primary">
+                  <IconLabel icon="refresh">Rescan index</IconLabel>
+                </button>
               </form>
             )}
           </section>

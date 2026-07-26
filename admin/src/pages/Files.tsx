@@ -1,6 +1,6 @@
 import type { Node, StatsResponse, VersionResponse } from "@valentinkolb/filegate";
 import { Layout } from "../components/Layout";
-import { FileIcon, FolderIcon } from "../components/Icons";
+import { FileIcon, FolderIcon, Icon, IconLabel } from "../components/Icons";
 import { NodeTable, type Sort } from "../components/Table";
 import { Versions } from "./Versions";
 import { formatBytes, formatUnix } from "../lib/format";
@@ -136,11 +136,11 @@ export function Files(props: {
                 item{props.children.length === 1 ? "" : "s"}
               </span>
               <span class="view-toggle" role="group" aria-label="Layout">
-                <a class={props.view === "grid" ? "" : "active"} href={viewHref(props, "list")} aria-current={props.view === "grid" ? undefined : "true"}>
-                  List
+                <a class={props.view === "grid" ? "" : "active"} href={viewHref(props, "list")} aria-current={props.view === "grid" ? undefined : "true"} aria-label="List layout">
+                  <Icon name="list" />
                 </a>
-                <a class={props.view === "grid" ? "active" : ""} href={viewHref(props, "grid")} aria-current={props.view === "grid" ? "true" : undefined}>
-                  Grid
+                <a class={props.view === "grid" ? "active" : ""} href={viewHref(props, "grid")} aria-current={props.view === "grid" ? "true" : undefined} aria-label="Grid layout">
+                  <Icon name="layout-grid" />
                 </a>
               </span>
             </span>
@@ -148,11 +148,11 @@ export function Files(props: {
           {props.current?.type === "directory" && (
             <div class="toolbar">
               <button class="btn" type="button" data-mkdir-open data-mkdir-parent={props.current.path}>
-                Create folder
+                <IconLabel icon="folder-plus">Create folder</IconLabel>
               </button>
               <div class="tb-group tb-right">
                 <button class="btn primary" type="button" data-upload-open={props.current.path.replace(/^\/+/, "")}>
-                  Upload
+                  <IconLabel icon="upload">Upload</IconLabel>
                 </button>
               </div>
             </div>
@@ -165,13 +165,13 @@ export function Files(props: {
                 <span class="bulk-count" data-bulk-count />
                 <span class="tb-group tb-right">
                   <button class="btn" type="button" data-bulk-move>
-                    Move
+                    <IconLabel icon="arrow-forward-up">Move</IconLabel>
                   </button>
                   <button class="btn danger" type="button" data-bulk-delete>
-                    Delete
+                    <IconLabel icon="trash">Delete</IconLabel>
                   </button>
                   <button class="btn" type="button" data-bulk-clear>
-                    Clear
+                    <IconLabel icon="x">Clear</IconLabel>
                   </button>
                 </span>
               </div>
@@ -305,18 +305,14 @@ function Detail(props: { node: Node }) {
                 <strong>Rename</strong>
                 <span class="muted">Change the name in this folder.</span>
               </div>
-              <button class="btn" type="button" data-rename-open data-rename-id={node.id} data-rename-name={node.name} data-rename-path={node.path}>
-                Rename
-              </button>
+              <button class="btn" type="button" data-rename-open data-rename-id={node.id} data-rename-name={node.name} data-rename-path={node.path}><IconLabel icon="pencil">Rename</IconLabel></button>
             </div>
             <div class="action-row">
               <div>
                 <strong>Move or copy</strong>
                 <span class="muted">Transfer to another folder.</span>
               </div>
-              <button class="btn" type="button" data-transfer-open data-transfer-id={node.id} data-transfer-name={node.name} data-transfer-path={node.path} data-transfer-parent={parentFolderOf(node.path)}>
-                Transfer
-              </button>
+              <button class="btn" type="button" data-transfer-open data-transfer-id={node.id} data-transfer-name={node.name} data-transfer-path={node.path} data-transfer-parent={parentFolderOf(node.path)}><IconLabel icon="arrow-forward-up">Transfer</IconLabel></button>
             </div>
             <div class="action-row">
               <div>
@@ -351,7 +347,7 @@ function Detail(props: { node: Node }) {
                 <input type="hidden" name="id" value={node.id} />
                 {/* Lets a failed delete return the user to this folder. */}
                 <input type="hidden" name="parentPath" value={parentFolderOf(node.path)} />
-                <button class="btn danger">Delete</button>
+                <button class="btn danger"><IconLabel icon="trash">Delete</IconLabel></button>
               </form>
             </div>
           </div>

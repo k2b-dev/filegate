@@ -17,6 +17,8 @@ export const { config, plugin, html } = createConfig<PageOptions>({
 <meta name="view-transition" content="same-origin">
 <meta name="theme-color" content="${theme === "dark" ? "#0f141b" : "#f2f3f5"}">
 <title>Filegate Admin${title ? ` - ${title}` : ""}</title>
+<link rel="preload" href="/fonts/tabler-icons.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/tabler-icons.css">
 <link rel="stylesheet" href="/styles.css">
 <script src="/theme.js" defer></script>
 </head>

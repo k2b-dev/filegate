@@ -1,5 +1,5 @@
 import type { Node } from "@valentinkolb/filegate";
-import { FileIcon, FolderIcon } from "./Icons";
+import { FileIcon, FolderIcon, Icon } from "./Icons";
 import { formatBytes, formatUnix } from "../lib/format";
 
 export type SortField = "name" | "size" | "modified";
@@ -86,9 +86,7 @@ export function NodeTable(props: {
               <th class={column.numeric ? "num" : ""} aria-sort={ariaSort(column.field, sort)}>
                 <a class="sort-link" href={sortHref(base, column.field, sort)}>
                   {column.label}
-                  <span class="sort-mark" aria-hidden="true">
-                    {sort.field === column.field ? (sort.direction === "asc" ? "▲" : "▼") : ""}
-                  </span>
+                  {sort.field === column.field && <Icon name={sort.direction === "asc" ? "chevron-up" : "chevron-down"} />}
                 </a>
               </th>
             ))}

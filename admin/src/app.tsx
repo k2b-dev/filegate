@@ -62,6 +62,12 @@ export const app = new Hono()
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./prompts.js", import.meta.url)));
   })
+  // Headers go on the Response, not the context: returning a fresh Response
+  // discards anything set via c.header. The Content-Type survives elsewhere in
+  // this file only because Bun.file infers it from the extension, which masks
+  // the same mistake for the other static routes.
+  .get("/tabler-icons.css", () => assetResponse("./tabler-icons.css", "text/css; charset=utf-8"))
+  .get("/fonts/tabler-icons.woff2", () => assetResponse("./fonts/tabler-icons.woff2", "font/woff2"))
   .get("/settings.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./settings.js", import.meta.url)));
@@ -540,6 +546,21 @@ function parseSort(field?: string, dir?: string): Sort {
     field: allowed.find((candidate) => candidate === field) ?? "name",
     direction: dir === "desc" ? "desc" : "asc",
   };
+}
+
+/**
+ * Serves a build artifact with a long immutable cache.
+ *
+ * Safe because these are rebuilt under the same name only when the app is
+ * rebuilt and redeployed, and the icon font is versioned by its content.
+ */
+function assetResponse(relative: string, contentType: string): Response {
+  return new Response(Bun.file(new URL(relative, import.meta.url)), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
 }
 
 function settingsURL(error?: string, notice?: string): string {

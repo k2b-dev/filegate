@@ -1,5 +1,6 @@
 import type { VersionResponse } from "@valentinkolb/filegate";
 import { formatBytes, formatUnix } from "../lib/format";
+import { Icon, IconLabel } from "../components/Icons";
 
 /**
  * Per-file version history.
@@ -39,7 +40,7 @@ export function Versions(props: { fileId: string; parentPath: string; versions?:
           data-snapshot-id={props.fileId}
           data-snapshot-parent={props.parentPath}
         >
-          Snapshot now
+          <IconLabel icon="camera">Snapshot now</IconLabel>
         </button>
       </div>
       <div class="panel-body">
@@ -55,14 +56,14 @@ export function Versions(props: { fileId: string; parentPath: string; versions?:
                     <span class="muted">{formatBytes(version.size)}</span>
                   </div>
                   <div class="version-tags">
-                    {version.pinned && <span class="tag pin">Pinned</span>}
+                    {version.pinned && <span class="tag pin"><Icon name="pin-filled" /> Pinned</span>}
                     {version.deletedAt ? <span class="tag warn">Source deleted</span> : null}
                   </div>
                 </div>
                 {version.label && <div class="version-label">{version.label}</div>}
                 <div class="version-actions">
                   <a class="btn" href={`/files/versions/download?id=${props.fileId}&versionId=${version.versionId}`}>
-                    Download
+                    <IconLabel icon="download">Download</IconLabel>
                   </a>
                   <button
                     class="btn"
@@ -73,14 +74,14 @@ export function Versions(props: { fileId: string; parentPath: string; versions?:
                     data-restore-parent={props.parentPath}
                     data-restore-when={formatUnix(version.timestamp)}
                   >
-                    Restore
+                    <IconLabel icon="history">Restore</IconLabel>
                   </button>
                   <form method="post" action={version.pinned ? "/files/versions/unpin" : "/files/versions/pin"}>
                     <input type="hidden" name="id" value={props.fileId} />
                     <input type="hidden" name="versionId" value={version.versionId} />
                     <input type="hidden" name="parentPath" value={props.parentPath} />
                     <button class="btn" type="submit">
-                      {version.pinned ? "Unpin" : "Pin"}
+                      <IconLabel icon={version.pinned ? "pin-filled" : "pin"}>{version.pinned ? "Unpin" : "Pin"}</IconLabel>
                     </button>
                   </form>
                   <form
@@ -92,7 +93,7 @@ export function Versions(props: { fileId: string; parentPath: string; versions?:
                     <input type="hidden" name="versionId" value={version.versionId} />
                     <input type="hidden" name="parentPath" value={props.parentPath} />
                     <button class="btn danger" type="submit">
-                      Delete
+                      <IconLabel icon="trash">Delete</IconLabel>
                     </button>
                   </form>
                 </div>

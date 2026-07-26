@@ -25,20 +25,20 @@ export function showCredential(opts: { title: string; accessKey: string; secretK
           <span class="muted">Access key</span>
           <div class="cred-row">
             <code data-access></code>
-            <button type="button" class="btn cred-copy" data-copy-access>Copy</button>
+            <button type="button" class="btn cred-copy" data-copy-access><i class="ti ti-copy" aria-hidden="true"></i><span class="btn-label">Copy</span></button>
           </div>
         </div>
         <div class="cred-field">
           <span class="muted">Secret key</span>
           <div class="cred-row">
             <code data-secret></code>
-            <button type="button" class="btn primary cred-copy" data-copy-secret>Copy</button>
+            <button type="button" class="btn cred-copy" data-copy-secret><i class="ti ti-copy" aria-hidden="true"></i><span class="btn-label">Copy</span></button>
           </div>
         </div>
         <p class="muted hint" data-note hidden></p>
       </div>
       <div class="prompt-footer">
-        <button type="button" class="btn primary" data-done>I have stored it</button>
+        <button type="button" class="btn primary" data-done><i class="ti ti-check" aria-hidden="true"></i><span class="btn-label">I have stored it</span></button>
       </div>
     </div>`;
   document.body.appendChild(dialog);
@@ -55,15 +55,23 @@ export function showCredential(opts: { title: string; accessKey: string; secretK
 
   const wire = (selector: string, value: string) => {
     const button = pick(selector) as HTMLButtonElement;
+    const icon = button.querySelector("i");
+    const label = button.querySelector(".btn-label");
     button.addEventListener("click", () => {
       void copyToClipboard(value).then(
         () => {
-          const previous = button.textContent;
-          button.textContent = "Copied";
-          window.setTimeout(() => (button.textContent = previous), 1200);
+          if (icon) icon.className = "ti ti-check";
+          if (label) label.textContent = "Copied";
+          window.setTimeout(() => {
+            if (icon) icon.className = "ti ti-copy";
+            if (label) label.textContent = "Copy";
+          }, 1600);
         },
         // Clipboard access can be denied; say so rather than pretending it worked.
-        () => (button.textContent = "Copy failed"),
+        () => {
+          if (icon) icon.className = "ti ti-alert-triangle";
+          if (label) label.textContent = "Copy failed";
+        },
       );
     });
   };

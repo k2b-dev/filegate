@@ -1,6 +1,7 @@
 import type { ConfigKeySchema, ConfigValue, ConfigValuesResponse, S3Key } from "@valentinkolb/filegate";
 import { text } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
+import { Icon, IconLabel } from "../components/Icons";
 import { tidyDuration } from "../retention";
 
 type SettingsData = {
@@ -159,7 +160,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
           <h2>S3 access keys</h2>
           {props.s3Enabled && (
             <button class="btn" type="button" data-s3key-create data-mounts={props.mountNames.join(",")}>
-              Create key
+              <IconLabel icon="plus">Create key</IconLabel>
             </button>
           )}
         </div>
@@ -197,16 +198,16 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                           <input type="hidden" name="accessKey" value={key.accessKey} />
                           <input type="hidden" name="disabled" value={key.disabled ? "false" : "true"} />
                           <button class="btn" type="submit">
-                            {key.disabled ? "Enable" : "Disable"}
+                            <IconLabel icon={key.disabled ? "player-play" : "player-pause"}>{key.disabled ? "Enable" : "Disable"}</IconLabel>
                           </button>
                         </form>
                         <button class="btn" type="button" data-s3key-rotate={key.accessKey}>
-                          Rotate
+                          <IconLabel icon="refresh">Rotate</IconLabel>
                         </button>
                         <form method="post" action="/settings/s3keys/delete" data-confirm-s3key={key.accessKey}>
                           <input type="hidden" name="accessKey" value={key.accessKey} />
                           <button class="btn danger" type="submit">
-                            Delete
+                            <IconLabel icon="trash">Delete</IconLabel>
                           </button>
                         </form>
                         </span>
@@ -253,7 +254,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                         <td>
                           {key.scope === "static" ? (
                             <span class="tag warn" title={key.reason}>
-                              static
+                              <Icon name="lock" /> static
                             </span>
                           ) : (
                             <span class="tag pin">runtime</span>
@@ -271,14 +272,14 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               data-setting-value={key.type === "retentionBuckets" ? retentionAsText(current?.value) : rawValue(current?.value)}
                               data-setting-json={key.type === "retentionBuckets" ? JSON.stringify(current?.value ?? []) : undefined}
                             >
-                              Edit
+                              <IconLabel icon="pencil">Edit</IconLabel>
                             </button>
                           )}
                           {current?.source === "runtime" && (
                             <form method="post" action="/settings/reset">
                               <input type="hidden" name="path" value={key.path} />
                               <button class="btn" type="submit" title="Drop the runtime override and fall back to the file or default">
-                                Reset
+                                <IconLabel icon="restore">Reset</IconLabel>
                               </button>
                             </form>
                           )}

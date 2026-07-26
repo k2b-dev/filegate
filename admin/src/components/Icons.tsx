@@ -17,3 +17,29 @@ export function FileIcon() {
     </svg>
   );
 }
+
+/**
+ * Tabler icon.
+ *
+ * Always aria-hidden: an icon font renders private-use codepoints, which a
+ * screen reader would otherwise read as garbage. Meaning comes from the adjacent
+ * label, or from aria-label on the button when the label is visual only.
+ */
+export function Icon(props: { name: string; class?: string }) {
+  return <i class={`ti ti-${props.name}${props.class ? ` ${props.class}` : ""}`} aria-hidden="true" />;
+}
+
+/**
+ * Button content: icon plus label, where the label collapses on narrow screens.
+ *
+ * The label stays in the DOM rather than being dropped, so the accessible name
+ * is unchanged regardless of viewport.
+ */
+export function IconLabel(props: { icon: string; children: string }) {
+  return (
+    <>
+      <Icon name={props.icon} />
+      <span class="btn-label">{props.children}</span>
+    </>
+  );
+}

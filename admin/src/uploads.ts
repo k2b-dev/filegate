@@ -340,6 +340,7 @@ function openUploadDialog(parentPath: string): void {
       <div class="prompt-body">
         <div class="prompt-message"><span class="prompt-badge"></span></div>
         <button type="button" class="dropzone" data-dropzone>
+          <i class="ti ti-cloud-upload dropzone-icon" aria-hidden="true"></i>
           <strong>Drop files or folders here</strong>
           <span class="muted">or click to choose files</span>
         </button>
@@ -356,8 +357,8 @@ function openUploadDialog(parentPath: string): void {
         </div>
       </div>
       <div class="prompt-footer upload-footer">
-        <button type="button" class="btn" data-folder>Upload folder</button>
-        <button type="button" class="btn primary" data-start disabled>Upload</button>
+        <button type="button" class="btn" data-folder><i class="ti ti-folder-up" aria-hidden="true"></i><span class="btn-label">Upload folder</span></button>
+        <button type="button" class="btn primary" data-start disabled><i class="ti ti-upload" aria-hidden="true"></i><span class="btn-label" data-start-label>Upload</span></button>
       </div>
     </div>`;
   document.body.appendChild(dialog);
@@ -378,7 +379,10 @@ function openUploadDialog(parentPath: string): void {
   const render = () => {
     const items = [...staged.values()];
     start.disabled = items.length === 0;
-    start.textContent = items.length ? `Upload ${items.length} file${items.length === 1 ? "" : "s"}` : "Upload";
+    const startLabel = start.querySelector("[data-start-label]");
+    if (startLabel) {
+      startLabel.textContent = items.length ? `Upload ${items.length} file${items.length === 1 ? "" : "s"}` : "Upload";
+    }
     list.hidden = items.length === 0;
     list.innerHTML = "";
     for (const file of items) {

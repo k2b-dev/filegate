@@ -83,7 +83,7 @@ export function openRetentionEditor(initial: Bucket[]): Promise<string | null> {
           </div>
           <div data-structured>
             <div class="retention-rules" data-rules></div>
-            <button type="button" class="btn retention-add" data-add>Add rule</button>
+            <button type="button" class="btn retention-add" data-add><i class="ti ti-plus" aria-hidden="true"></i><span class="btn-label">Add rule</span></button>
             <p class="muted hint" data-summary></p>
           </div>
           <div data-raw hidden>
@@ -95,7 +95,7 @@ export function openRetentionEditor(initial: Bucket[]): Promise<string | null> {
           </div>
         </div>
         <div class="prompt-footer retention-footer">
-          <button type="button" class="btn" data-toggle-raw>Edit as text</button>
+          <button type="button" class="btn" data-toggle-raw><i class="ti ti-code" aria-hidden="true"></i><span class="btn-label">Edit as text</span></button>
           <span class="tb-group">
             <button type="button" class="btn" data-cancel>Cancel</button>
             <button type="button" class="btn primary" data-save>Save policy</button>
@@ -133,7 +133,7 @@ export function openRetentionEditor(initial: Bucket[]): Promise<string | null> {
           <label class="rr-all">
             <input type="checkbox" class="rr-keep-all" /> <span>all</span>
           </label>
-          <button type="button" class="btn danger rr-remove" aria-label="Remove rule ${index + 1}">&times;</button>`;
+          <button type="button" class="btn danger rr-remove" aria-label="Remove rule ${index + 1}"><i class="ti ti-trash" aria-hidden="true"></i></button>`;
 
         const window = must(row, ".rr-window") as HTMLInputElement;
         const count = must(row, ".rr-count") as HTMLInputElement;
@@ -196,7 +196,8 @@ export function openRetentionEditor(initial: Bucket[]): Promise<string | null> {
       raw = !raw;
       structured.hidden = raw;
       rawPane.hidden = !raw;
-      toggle.textContent = raw ? "Edit as fields" : "Edit as text";
+      const toggleLabel = toggle.querySelector('.btn-label');
+      if (toggleLabel) toggleLabel.textContent = raw ? "Edit as fields" : "Edit as text";
     });
 
     const close = (value: string | null) => {
