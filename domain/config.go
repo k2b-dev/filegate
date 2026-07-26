@@ -180,6 +180,11 @@ type AuthConfig struct {
 type StorageConfig struct {
 	BasePaths []string `mapstructure:"base_paths"`
 	IndexPath string   `mapstructure:"index_path"`
+	// RuntimeConfigPath holds runtime configuration overrides and resources
+	// such as S3 access keys. It must not sit inside IndexPath: rebuilding
+	// the index removes that directory outright, and the index is a derived
+	// artifact while this store is authoritative.
+	RuntimeConfigPath string `mapstructure:"runtime_config_path"`
 }
 
 // DetectionConfig controls the filesystem change detection backend.

@@ -72,6 +72,11 @@ type RouterOptions struct {
 	MetricsToken   string
 	ActivityLog    *activity.Ring
 
+	// Config is the live snapshot. Runtime-scoped handlers read from it per
+	// request so a change applies without a restart; nil falls back to the
+	// values captured in this struct, which keeps existing callers working.
+	Config *domain.ConfigHolder
+
 	// Operational context for GET /v1/system/info, /v1/system/runtime and
 	// /v1/health. All optional: zero values degrade the reported detail
 	// rather than breaking the endpoints, which keeps existing router

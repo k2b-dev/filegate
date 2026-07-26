@@ -43,6 +43,7 @@ func newConfigViper(configFile string) (*viper.Viper, error) {
 	v.SetDefault("auth.bearer_token", "")
 	v.SetDefault("storage.base_paths", []string{})
 	v.SetDefault("storage.index_path", "/var/lib/filegate/index")
+	v.SetDefault("storage.runtime_config_path", "/var/lib/filegate/config")
 	v.SetDefault("detection.backend", "auto")
 	v.SetDefault("detection.poll_interval", "3s")
 	v.SetDefault("cache.path_cache_size", 100000)

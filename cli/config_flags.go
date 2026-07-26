@@ -82,6 +82,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "server-shutdown-timeout", Path: "server.shutdown_timeout", Kind: configFlagDuration, Usage: "graceful shutdown timeout", Scope: scopeRuntime},
 		{Name: "auth-bearer-token", Path: "auth.bearer_token", Kind: configFlagString, Usage: "REST bearer token", Scope: scopeStatic, Reason: "deliberately static: the break-glass credential must survive a damaged runtime store", Secret: true},
 		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts", Scope: scopeStatic, Reason: "mounts are bound into the service, seeded as index roots, and registered with the detector"},
+		{Name: "storage-runtime-config-path", Path: "storage.runtime_config_path", Kind: configFlagString, Usage: "directory holding runtime config overrides and resources; must be outside the index", Scope: scopeStatic, Reason: "the runtime config store is opened at startup"},
 		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
 		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Scope: scopeStatic, Reason: "selects a different detector implementation"},
 		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeRuntime},
@@ -202,6 +203,8 @@ func applyChangedConfigFlag(flags *pflag.FlagSet, spec configFlagSpec, cfg *doma
 		cfg.Auth.BearerToken = getFlagString(flags, spec.Name)
 	case "storage.base_paths":
 		cfg.Storage.BasePaths = getFlagStringArray(flags, spec.Name)
+	case "storage.runtime_config_path":
+		cfg.Storage.RuntimeConfigPath = strings.TrimSpace(getFlagString(flags, spec.Name))
 	case "storage.index_path":
 		cfg.Storage.IndexPath = getFlagString(flags, spec.Name)
 	case "detection.backend":
@@ -473,6 +476,9 @@ func validateResolvedConfig(cfg domain.Config) error {
 	if strings.TrimSpace(cfg.Auth.BearerToken) == "" && !cfg.S3.Enabled {
 		return fmt.Errorf("auth.bearer_token is required (unless s3.enabled=true for an S3-only deployment)")
 	}
+	if err := validateRuntimeConfigPath(cfg.Storage); err != nil {
+		return err
+	}
 	if err := validatePublicURL(cfg.Server.PublicURL); err != nil {
 		return err
 	}
@@ -502,6 +508,30 @@ func validateResolvedConfig(cfg domain.Config) error {
 	}
 	if err := validateS3Config(cfg); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateRuntimeConfigPath enforces the separation the runtime store depends
+// on. Rebuilding the index removes its directory outright, so a runtime store
+// nested inside it would take every stored credential with it.
+func validateRuntimeConfigPath(storage domain.StorageConfig) error {
+	runtimePath := strings.TrimSpace(storage.RuntimeConfigPath)
+	if runtimePath == "" {
+		return fmt.Errorf("storage.runtime_config_path is required")
+	}
+
+	index, err := filepath.Abs(strings.TrimSpace(storage.IndexPath))
+	if err != nil {
+		return err
+	}
+	runtime, err := filepath.Abs(runtimePath)
+	if err != nil {
+		return err
+	}
+
+	if runtime == index || strings.HasPrefix(runtime, index+string(filepath.Separator)) {
+		return fmt.Errorf("storage.runtime_config_path (%s) must not live inside storage.index_path (%s): rebuilding the index deletes that directory", runtime, index)
 	}
 	return nil
 }

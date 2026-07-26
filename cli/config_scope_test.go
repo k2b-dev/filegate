@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/valentinkolb/filegate/domain"
 )
 
 // Every key must carry a scope decision. Without this guard a newly added key
@@ -72,5 +74,41 @@ func TestScopeCountsAreDeliberate(t *testing.T) {
 	// this ratio inverts, something was classified without thinking.
 	if runtime < static {
 		t.Errorf("more static (%d) than runtime (%d) keys; the split is meant to favour runtime", static, runtime)
+	}
+}
+
+// The runtime store must never sit inside the index directory: index rebuilds
+// remove that directory, which would take stored credentials with it.
+func TestRuntimeConfigPathMustBeOutsideTheIndex(t *testing.T) {
+	base := domain.StorageConfig{IndexPath: "/var/lib/filegate/index"}
+
+	for _, nested := range []string{
+		"/var/lib/filegate/index",
+		"/var/lib/filegate/index/config",
+		"/var/lib/filegate/index/nested/deeper",
+	} {
+		storage := base
+		storage.RuntimeConfigPath = nested
+		if err := validateRuntimeConfigPath(storage); err == nil {
+			t.Errorf("%q accepted although an index rebuild would delete it", nested)
+		}
+	}
+
+	for _, ok := range []string{
+		"/var/lib/filegate/config",
+		"/var/lib/filegate/index-config",
+		"/etc/filegate/runtime",
+	} {
+		storage := base
+		storage.RuntimeConfigPath = ok
+		if err := validateRuntimeConfigPath(storage); err != nil {
+			t.Errorf("%q rejected although it is outside the index: %v", ok, err)
+		}
+	}
+
+	storage := base
+	storage.RuntimeConfigPath = ""
+	if err := validateRuntimeConfigPath(storage); err == nil {
+		t.Error("empty runtime config path accepted")
 	}
 }

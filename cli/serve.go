@@ -24,6 +24,7 @@ import (
 	"github.com/valentinkolb/filegate/infra/filesystem"
 	"github.com/valentinkolb/filegate/infra/metrics"
 	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	"github.com/valentinkolb/filegate/infra/runtimecfg"
 
 	"github.com/spf13/cobra"
 )
@@ -105,6 +106,24 @@ func newDaemonServeCmd() *cobra.Command {
 					return err
 				}
 			}
+			// The runtime store is opened before anything else durable so a
+			// bad path fails fast, and it is validated to sit outside the
+			// index directory, which index rebuilds delete.
+			runtimeStore, err := runtimecfg.Open(cfg.Storage.RuntimeConfigPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = runtimeStore.Close() }()
+
+			// Re-resolve now that the store is available, so runtime overrides
+			// stored by a previous run apply from this boot onward.
+			resolved, err := resolveConfig(configFile, runtimeStore.Overrides())
+			if err != nil {
+				return err
+			}
+			cfg = resolved.Config
+			configManager := newConfigManager(configFile, runtimeStore, resolved)
+
 			idx, svc, err := buildCore(cfg)
 			if err != nil {
 				return err
@@ -199,6 +218,7 @@ func newDaemonServeCmd() *cobra.Command {
 				MetricsPath:                cfg.Metrics.Path,
 				MetricsToken:               cfg.Metrics.Token,
 				ActivityLog:                activityLog,
+				Config:                     configManager.Holder(),
 
 				BuildVersion:  buildVersion,
 				BuildCommit:   buildCommit,
