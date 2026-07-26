@@ -1089,8 +1089,20 @@ func (m *uploadSessionManager) handleCommit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	completePath := filepath.Join(completeDir, session.ID+".complete")
-	if err := assembleUploadSession(*session, byIndex, completePath); err != nil {
-		statusFromErr(w, err)
+	// An earlier commit attempt may have assembled the file and then failed
+	// further along -- on a conflict at the destination, say. Reassembling is
+	// not merely wasted work here: the single-segment path moves the staged
+	// segment into place, so the input no longer exists. A recorded segment is
+	// immutable (re-uploading different bytes is refused with a conflict), so
+	// an assembled file can only hold the bytes the session declared, and the
+	// checksum below verifies it either way.
+	if _, statErr := os.Stat(completePath); errors.Is(statErr, os.ErrNotExist) {
+		if err := assembleUploadSession(*session, byIndex, completePath); err != nil {
+			statusFromErr(w, err)
+			return
+		}
+	} else if statErr != nil {
+		statusFromErr(w, statErr)
 		return
 	}
 	hashes, size, err := hashWholeFile(completePath)
@@ -1247,7 +1259,52 @@ func rollbackEmptyDirs(svc *domain.Service, ids []domain.FileID) {
 	}
 }
 
+// adoptSingleSegment moves a lone staged segment into place instead of copying
+// it, reporting whether the move was used.
+//
+// Most small-file uploads are exactly one segment, and for those the copy was
+// the entire cost of commit: the segment is read back, written out a second
+// time, then read a third time to hash. A rename produces the same file for one
+// directory update. The staged segment and the complete directory are siblings
+// under the same session root, so the rename stays within one filesystem.
+//
+// The per-segment checksum comparison the copy loop performs is not lost. The
+// caller hashes the assembled file and rejects the commit unless the size and
+// SHA-256 match the session, and with one segment those are the same bytes the
+// loop would have covered.
+//
+// A false return means fall back to copying. Rename can fail for reasons this
+// code should not have to enumerate -- a segment staged on another device, a
+// filesystem that refuses the operation -- and the copy path reports the real
+// error if the input is genuinely unusable.
+func adoptSingleSegment(session domain.UploadSession, segments map[int]domain.UploadSegment, completePath string) (bool, error) {
+	segment, ok := segments[0]
+	if !ok {
+		return false, domain.ErrInvalidArgument
+	}
+	if segment.Size != session.Size {
+		return false, fmt.Errorf("segment size mismatch")
+	}
+	if err := os.Rename(segment.Path, completePath); err != nil {
+		return false, nil
+	}
+	if err := filesystem.SyncDir(filepath.Dir(completePath)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func assembleUploadSession(session domain.UploadSession, segments map[int]domain.UploadSegment, completePath string) error {
+	if session.TotalSegments == 1 {
+		moved, err := adoptSingleSegment(session, segments, completePath)
+		if err != nil {
+			return err
+		}
+		if moved {
+			return nil
+		}
+	}
+
 	tmp := completePath + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
