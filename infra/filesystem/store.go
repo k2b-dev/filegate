@@ -77,6 +77,12 @@ func (s *Store) SetID(path string, id domain.FileID) error {
 	return setID(path, id)
 }
 
+// SetIDIfAbsent assigns an ID only if the path has none yet, returning the ID
+// that ended up on disk and whether this call wrote it.
+func (s *Store) SetIDIfAbsent(path string, id domain.FileID) (domain.FileID, bool, error) {
+	return setIDIfAbsent(path, id)
+}
+
 func (s *Store) GetID(path string) (domain.FileID, error) {
 	return getID(path)
 }

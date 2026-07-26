@@ -121,6 +121,11 @@ type Store interface {
 	OpenRead(path string) (io.ReadCloser, error)
 	OpenWrite(path string, perm os.FileMode) (io.WriteCloser, error)
 	SetID(path string, id FileID) error
+	// SetIDIfAbsent assigns an ID only when the path has none, atomically.
+	// Returns the ID that ended up on disk and whether this call wrote it,
+	// so a caller that loses the race adopts the winner instead of
+	// proceeding with an ID nothing else agrees with.
+	SetIDIfAbsent(path string, id FileID) (FileID, bool, error)
 	GetID(path string) (FileID, error)
 	// CloneFile copies srcPath to dstPath using FICLONE on btrfs (cheap,
 	// constant-time) or a byte copy fallback. dstPath must not exist;

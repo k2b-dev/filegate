@@ -763,11 +763,20 @@ func (s *Service) GetFile(id FileID) (*FileMeta, error) {
 func (s *Service) ensureIndexed(absPath string) (FileID, error) {
 	id, err := s.store.GetID(absPath)
 	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+		// Same reasoning as parentIDForSync: an xattr is not proof of an
+		// index row, so verify before handing the ID back. A path whose
+		// xattr survived without its entity -- a sync interrupted between
+		// the two writes, or a file copied in with the attribute intact --
+		// is repaired here rather than returned as a dangling reference.
+		if _, getErr := s.idx.GetEntity(id); getErr == nil {
+			return id, nil
+		} else if !errors.Is(getErr, ErrNotFound) {
+			return FileID{}, getErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return FileID{}, err
 	}
+
 	if err := s.syncSingle(absPath); err != nil {
 		return FileID{}, err
 	}
@@ -2602,7 +2611,7 @@ func (s *Service) resolveOrReissueID(absPath string, info os.FileInfo) (FileID, 
 		if !errors.Is(err, os.ErrNotExist) {
 			return FileID{}, err
 		}
-		return s.mintAndSetID(absPath)
+		return s.claimID(absPath)
 	}
 
 	device, inode, _ := fileInodeIdentity(info)
@@ -2650,9 +2659,30 @@ func (s *Service) resolveOrReissueID(absPath string, info os.FileInfo) (FileID, 
 	return id, nil
 }
 
-// mintAndSetID generates a fresh UUID v7, writes it to absPath's xattr,
-// and returns it. Used both for first-time indexing and for re-issue on
-// xattr-conflict.
+// claimID assigns an ID to a path that has none, tolerating a concurrent
+// claimant.
+//
+// First-time indexing is reachable from several requests at once -- two uploads
+// creating sibling directories both recurse into the shared parent -- and an
+// unconditional write there let each caller keep its own ID while the xattr
+// held only the last one. Whoever writes first wins and everyone adopts that
+// value.
+func (s *Service) claimID(absPath string) (FileID, error) {
+	id, err := newID()
+	if err != nil {
+		return FileID{}, err
+	}
+	settled, _, err := s.store.SetIDIfAbsent(absPath, id)
+	if err != nil {
+		return FileID{}, err
+	}
+	return settled, nil
+}
+
+// mintAndSetID generates a fresh UUID v7 and writes it to absPath's xattr
+// unconditionally. Only for deliberate re-issue on xattr conflict, where an
+// existing value is exactly what has to be replaced; first-time indexing goes
+// through claimID.
 func (s *Service) mintAndSetID(absPath string) (FileID, error) {
 	id, err := newID()
 	if err != nil {
@@ -2684,6 +2714,33 @@ func (s *Service) claimedAbsPath(e *Entity) (string, error) {
 		return "", err
 	}
 	return filepath.Join(parentAbs, e.Name), nil
+}
+
+// parentIDForSync returns the ID of parentAbs, indexing it first when it is
+// not already in the index.
+//
+// The parent has to be present in the INDEX, not merely carry an xattr. Those
+// are two separate writes, and a request that claimed the parent's ID a moment
+// ago has done the first but not yet the second -- two uploads creating
+// sibling directories under a freshly created shared parent hit that window
+// routinely. Trusting the xattr alone anchors the child to a parent whose
+// entity does not exist yet, and VirtualPath then walks into a dead end and
+// reports a directory that plainly exists as not found.
+func (s *Service) parentIDForSync(parentAbs string) (FileID, error) {
+	id, err := s.store.GetID(parentAbs)
+	if err == nil {
+		if _, getErr := s.idx.GetEntity(id); getErr == nil {
+			return id, nil
+		} else if !errors.Is(getErr, ErrNotFound) {
+			return FileID{}, getErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return FileID{}, err
+	}
+	if err := s.syncSingle(parentAbs); err != nil {
+		return FileID{}, err
+	}
+	return s.store.GetID(parentAbs)
 }
 
 func (s *Service) syncSingle(absPath string) error {
@@ -2718,17 +2775,9 @@ func (s *Service) syncSingle(absPath string) error {
 	}
 
 	parentAbs := filepath.Dir(absPath)
-	parentID, err := s.store.GetID(parentAbs)
+	parentID, err := s.parentIDForSync(parentAbs)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if err := s.syncSingle(parentAbs); err != nil {
-				return err
-			}
-			parentID, err = s.store.GetID(parentAbs)
-		}
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	name := filepath.Base(absPath)
