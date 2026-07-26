@@ -85,6 +85,35 @@ This script:
 3. Runs benchmark matrix
 4. Stops compose stack
 
+## Many-Small-Files Upload Benchmark
+
+Script: [`bench/scripts/run-tree-bench.sh`](https://github.com/ValentinKolb/filegate/blob/main/bench/scripts/run-tree-bench.sh)
+
+The load-generator scenarios above measure steady-state ops/s for one request
+shape. Folder uploads need a different question answered — how long a whole
+corpus takes and which lever moves that — so `cmd/filegate-bench --mode tree`
+uploads a fixed corpus to completion and reports wall time, files/s, MiB/s and a
+per-phase split (hash, session create, segment PUT, commit).
+
+Corpus shapes (`--tree-shape`, scaled with `--tree-scale`):
+
+- `photos`: 600 mostly-multi-megabyte files with a large-file tail
+- `logs`: 20000 files of 1–32 KiB
+- `node-modules`: 20000 mostly-tiny files in a deep tree
+
+Upload paths (`--tree-transport`): `put` (one-shot `PUT /v1/paths`), `direct`
+(mint a signed URL, then PUT), `session` (hash, create, segment PUT, commit).
+
+Levers: `--tree-files`, `--tree-segments`, `--tree-hash`, `--tree-create`,
+`--tree-segment-size`, `--tree-batch`, `--keep-alive`, `--http2`.
+
+The script runs its own stack (`bench/compose.bench.yml`, ports 4911 and 4913,
+its own volumes) including a TLS edge, because HTTP/2 needs TLS and the Filegate
+listener serves cleartext HTTP/1.1 only. It recreates the stack between
+configurations, since a corpus left behind changes what later runs measure.
+
+Results and interpretation: `bench/results/`.
+
 ## Notes
 
 - `metadata-*` scenarios benchmark API metadata routes, not content download.
