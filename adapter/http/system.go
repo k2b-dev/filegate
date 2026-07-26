@@ -143,9 +143,17 @@ func (r *systemReporter) handleRuntime(w http.ResponseWriter, _ *http.Request) {
 		PathCache:      cacheRuntime(pathEntries, pathCapacity, pathHits, pathMisses),
 		ThumbnailCache: thumbCacheRuntime(r.thumbs.cacheStats()),
 		UploadSessions: r.uploadSessionRuntime(),
+		Lifecycle:      r.lifecycleRuntime(),
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (r *systemReporter) lifecycleRuntime() apiv1.LifecycleRuntime {
+	if r.opts.Lifecycle == nil {
+		return apiv1.LifecycleRuntime{}
+	}
+	return r.opts.Lifecycle()
 }
 
 func (r *systemReporter) uploadSessionRuntime() apiv1.UploadSessionsRuntime {

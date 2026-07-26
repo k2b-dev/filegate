@@ -17,6 +17,7 @@ import (
 
 	httpadapter "github.com/valentinkolb/filegate/adapter/http"
 	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/activity"
 	"github.com/valentinkolb/filegate/infra/detect"
@@ -185,13 +186,14 @@ func newDaemonServeCmd() *cobra.Command {
 				consumeDetectorEvents(ctx, svc, detector.Events(), metricsReg)
 			}()
 
+			lifecycle := &lifecycleState{}
 			versioningEnabled := versioningShouldEnable(cfg.Versioning, cfg.Storage.BasePaths)
 			svc.EnableVersioning(cfg.Versioning, versioningEnabled)
 			prunerDone := make(chan struct{})
 			if versioningEnabled {
 				log.Printf("[filegate] versioning: enabled (cooldown=%s, pruner_interval=%s)",
 					cfg.Versioning.Cooldown, cfg.Versioning.PrunerInterval)
-				go runVersioningPruner(ctx, svc, cfg.Versioning.PrunerInterval, metricsReg, prunerDone)
+				go runVersioningPruner(ctx, svc, cfg.Versioning.PrunerInterval, metricsReg, lifecycle, prunerDone)
 			} else {
 				close(prunerDone)
 				log.Printf("[filegate] versioning: disabled (config=%q, btrfs check failed for at least one mount)",
@@ -243,6 +245,9 @@ func newDaemonServeCmd() *cobra.Command {
 				BasePaths:     cfg.Storage.BasePaths,
 				PathCacheSize: cfg.Cache.PathCacheSize,
 				DetectorStats: detector.Stats,
+				Lifecycle: func() apiv1.LifecycleRuntime {
+					return lifecycle.Snapshot(cfg.Versioning.PrunerInterval)
+				},
 
 				VersioningEnabled:          versioningEnabled,
 				VersioningMode:             cfg.Versioning.Enabled,

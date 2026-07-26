@@ -459,6 +459,22 @@ export interface UploadSessionsRuntime {
   writeSlotsLimit: number;
 }
 
+/** Last background maintenance run. lastPruneAt of 0 means none completed yet. */
+export interface LifecycleRuntime {
+  prunerIntervalMs: number;
+  lastPruneAt: number;
+  lastPruneDurationMs: number;
+  nextPruneAt: number;
+  pruneRuns: number;
+  filesScanned: number;
+  versionsKept: number;
+  versionsDeleted: number;
+  orphansPurged: number;
+  blobsDeleted: number;
+  pruneErrors: number;
+  pruneError?: string;
+}
+
 export interface SystemRuntimeResponse {
   generatedAt: number;
   detector: DetectorRuntime;
@@ -466,6 +482,7 @@ export interface SystemRuntimeResponse {
   pathCache: CacheRuntime;
   thumbnailCache: CacheRuntime;
   uploadSessions: UploadSessionsRuntime;
+  lifecycle: LifecycleRuntime;
 }
 
 export type HealthStatus = "ok" | "degraded" | "fail";
@@ -513,6 +530,8 @@ export interface ConfigKeySchema {
   usage: string;
   /** Why a static key cannot change while the server runs. */
   reason?: string;
+  /** "bytes" for a byte count, absent otherwise. Lets a client render 65536 as 64 KiB. */
+  unit?: string;
   /** Secret values report presence only, never their content. */
   secret: boolean;
   default?: unknown;

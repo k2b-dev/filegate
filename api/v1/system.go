@@ -131,6 +131,29 @@ type UploadSessionsRuntime struct {
 	WriteSlotsLimit int `json:"writeSlotsLimit"`
 }
 
+// LifecycleRuntime reports the last background maintenance run.
+//
+// All six PruneStats fields are here, not the three that reach Prometheus:
+// OrphansPurged and BlobsDeleted are what tell an operator whether retention is
+// actually reclaiming space.
+type LifecycleRuntime struct {
+	PrunerIntervalMs int64 `json:"prunerIntervalMs"`
+	// LastPruneAt is zero when no round has completed yet, which is different
+	// from a round that found nothing to do.
+	LastPruneAt         int64  `json:"lastPruneAt"`
+	LastPruneDurationMs int64  `json:"lastPruneDurationMs"`
+	NextPruneAt         int64  `json:"nextPruneAt"`
+	PruneRuns           uint64 `json:"pruneRuns"`
+	FilesScanned        int    `json:"filesScanned"`
+	VersionsKept        int    `json:"versionsKept"`
+	VersionsDeleted     int    `json:"versionsDeleted"`
+	OrphansPurged       int    `json:"orphansPurged"`
+	BlobsDeleted        int    `json:"blobsDeleted"`
+	PruneErrors         int    `json:"pruneErrors"`
+	// PruneError carries the message when the last run failed outright.
+	PruneError string `json:"pruneError,omitempty"`
+}
+
 // SystemRuntimeResponse is the body of GET /v1/system/runtime. Every field is an
 // in-memory counter, so this endpoint is safe to poll.
 type SystemRuntimeResponse struct {
@@ -140,6 +163,7 @@ type SystemRuntimeResponse struct {
 	PathCache      CacheRuntime          `json:"pathCache"`
 	ThumbnailCache CacheRuntime          `json:"thumbnailCache"`
 	UploadSessions UploadSessionsRuntime `json:"uploadSessions"`
+	Lifecycle      LifecycleRuntime      `json:"lifecycle"`
 }
 
 // HealthCheck is one dependency probe.

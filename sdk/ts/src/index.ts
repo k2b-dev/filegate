@@ -71,6 +71,7 @@ export type {
   HealthResponse,
   HealthStatus,
   JobsRuntime,
+  LifecycleRuntime,
   LimitsInfo,
   MountInfo,
   SystemInfoResponse,

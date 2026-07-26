@@ -135,3 +135,28 @@ th.pick input,td.pick input{margin:0;cursor:pointer}
 .filter-input{height:30px;width:170px;font-size:13px}
 /* The name column still absorbs the free space when a checkbox precedes it. */
 th.pick+th,td.pick+td{width:100%}
+
+/* Scrollbars.
+ *
+ * scrollbar-gutter reserves the track unconditionally, which is what removes
+ * the layout shift when a scrollbar appears or disappears between pages of
+ * different height. On platforms with native overlay scrollbars (macOS, iOS)
+ * nothing is reserved and the bar floats over the content anyway.
+ *
+ * Deliberately not done: a JS-driven custom scrollbar to force overlay
+ * behaviour everywhere. It would take the element out of the platform's
+ * accessibility and input handling -- keyboard scrolling, assistive tech and
+ * OS-level "always show scrollbars" settings all stop working as expected --
+ * which is a bad trade for a few pixels.
+ *
+ * The thumb keeps a real contrast ratio and the standard size class rather
+ * than being hidden until hover, so it stays a visible affordance. */
+html{scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-dark) transparent}
+*{scrollbar-width:thin;scrollbar-color:var(--line-dark) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-dark);border-radius:6px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:content-box}
+::-webkit-scrollbar-corner{background:transparent}
+/* Respect the OS preference for permanently visible scrollbars. */
+@media (prefers-reduced-motion:reduce){::-webkit-scrollbar-thumb{background:var(--muted);background-clip:content-box}}

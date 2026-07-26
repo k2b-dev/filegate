@@ -64,6 +64,10 @@ type configFlagSpec struct {
 	Secret bool
 	// Reason documents why a static key cannot move. Empty for runtime keys.
 	Reason string
+	// Unit says what a number means, so a client can render 65536 as 64 KiB
+	// instead of a bare integer. The type alone cannot carry this: a byte
+	// limit and a max-count are both ints.
+	Unit string
 }
 
 func allConfigFlagSpecs() []configFlagSpec {
@@ -93,22 +97,22 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Kind: configFlagInt, Usage: "thumbnail job queue size", Scope: scopeRuntime},
 		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry", Scope: scopeRuntime},
 		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval", Scope: scopeRuntime},
-		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
-		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
-		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
 		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes", Scope: scopeRuntime},
-		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
+		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
 		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Kind: configFlagInt, Usage: "thumbnail LRU cache size", Scope: scopeRuntime},
-		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeRuntime},
+		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeRuntime},
 		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeRuntime},
 		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Scope: scopeRuntime},
 		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown", Scope: scopeRuntime},
-		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeRuntime},
+		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeRuntime},
 		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets", Scope: scopeRuntime},
 		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval", Scope: scopeRuntime},
 		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap", Scope: scopeRuntime},
 		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete", Scope: scopeRuntime},
-		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Kind: configFlagInt, Usage: "maximum version label bytes", Scope: scopeRuntime},
+		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Unit: "bytes", Kind: configFlagInt, Usage: "maximum version label bytes", Scope: scopeRuntime},
 		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener", Scope: scopeStatic, Reason: "controls whether the second listener exists"},
 		{Name: "s3-listen", Path: "s3.listen", Kind: configFlagString, Usage: "S3 listener address", Scope: scopeStatic, Reason: "S3 listener bind address"},
 		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region", Scope: scopeRuntime},

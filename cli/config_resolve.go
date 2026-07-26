@@ -261,6 +261,7 @@ func (m *ConfigManager) Schema() []apiv1.ConfigKeySchema {
 			Scope:  spec.Scope.String(),
 			Usage:  spec.Usage,
 			Reason: spec.Reason,
+			Unit:   spec.Unit,
 			Secret: spec.Secret,
 		}
 		// A secret's default is either empty or a placeholder; publishing it

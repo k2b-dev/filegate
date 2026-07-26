@@ -1,4 +1,5 @@
 import type { ConfigKeySchema, ConfigValue, ConfigValuesResponse, S3Key } from "@valentinkolb/filegate";
+import { text } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
 
 type SettingsData = {
@@ -18,15 +19,78 @@ function sections(schema: ConfigKeySchema[]): [string, ConfigKeySchema[]][] {
   return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function displayValue(value: unknown): string {
+/**
+ * Human-readable rendering of a config value.
+ *
+ * Byte counts and durations are formatted rather than printed raw: 64 KiB reads
+ * at a glance where 65536 does not. The exact value is still one click away in
+ * the edit dialog, which is where a precise number actually matters.
+ */
+function displayValue(value: unknown, key?: ConfigKeySchema): string {
   if (value === null || value === undefined) return "-";
+
   // Secrets arrive as a presence flag, never as their content.
-  if (typeof value === "object" && "configured" in (value as Record<string, unknown>)) {
+  if (typeof value === "object" && !Array.isArray(value) && "configured" in (value as Record<string, unknown>)) {
     return (value as { configured: boolean }).configured ? "configured" : "not set";
   }
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
   if (typeof value === "boolean") return value ? "true" : "false";
+
+  if (key?.type === "retentionBuckets") return describeRetention(value);
+  if (Array.isArray(value)) return value.length ? value.map((entry) => String(entry)).join(", ") : "-";
+
+  if (key?.unit === "bytes" && typeof value === "number") {
+    return value > 0 ? text.pprintBytes(value) : "0";
+  }
+  if (key?.type === "duration") return formatDurationValue(value);
+  if (typeof value === "number") return text.pprintNumber(value);
   return String(value);
+}
+
+/** Raw value for the edit dialog, where precision is the point. */
+function rawValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return value.map((entry) => String(entry)).join(", ");
+  if (typeof value === "object") return "";
+  return String(value);
+}
+
+/**
+ * Durations arrive as Go duration strings such as "15m0s". Reformatting through
+ * stdlib drops the noise, and an unparseable value is shown as-is rather than
+ * replaced by a guess.
+ */
+function formatDurationValue(value: unknown): string {
+  const raw = String(value);
+  const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?$/.exec(raw);
+  if (!match) return raw;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  const total = (hours * 3600 + minutes * 60 + seconds) * 1000;
+  return total > 0 ? text.pprintDurationMs(total) : raw;
+}
+
+type RetentionBucket = { keep_for?: string; max_count?: number };
+
+/**
+ * Renders retention rules as sentences.
+ *
+ * These are objects, so the generic array path printed "[object Object]". The
+ * rules are also the answer to "what happens to my versions?", which deserves
+ * more than a raw dump.
+ */
+function describeRetention(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "no retention (versions accumulate)";
+  return value
+    .map((entry) => {
+      const bucket = entry as RetentionBucket;
+      const window = bucket.keep_for ? formatDurationValue(bucket.keep_for) : "?";
+      const count = bucket.max_count;
+      if (count === undefined || count < 0) return `all within ${window}`;
+      return `max ${count} within ${window}`;
+    })
+    .join(" · ");
 }
 
 /** Only a runtime key that is neither secret nor structured is editable inline. */
@@ -162,7 +226,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                           <code>{key.path}</code>
                           <div class="muted setting-usage">{key.usage}</div>
                         </td>
-                        <td>{displayValue(current?.value)}</td>
+                        <td>{displayValue(current?.value, key)}</td>
                         <td>
                           <span class={`tag source-${current?.source ?? "default"}`}>{current?.source ?? "default"}</span>
                         </td>
@@ -183,7 +247,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               type="button"
                               data-setting-edit={key.path}
                               data-setting-type={key.type}
-                              data-setting-value={displayValue(current?.value)}
+                              data-setting-value={rawValue(current?.value)}
                             >
                               Edit
                             </button>

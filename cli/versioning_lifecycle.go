@@ -64,7 +64,7 @@ func versioningShouldEnable(cfg domain.VersioningConfig, basePaths []string) boo
 // context is cancelled. The first prune happens after one interval (not
 // at startup) so a flapping daemon doesn't immediately churn through
 // reflinked blobs after every restart.
-func runVersioningPruner(ctx context.Context, svc *domain.Service, interval time.Duration, reg *metrics.Registry, done chan<- struct{}) {
+func runVersioningPruner(ctx context.Context, svc *domain.Service, interval time.Duration, reg *metrics.Registry, state *lifecycleState, done chan<- struct{}) {
 	defer close(done)
 	if interval <= 0 {
 		interval = 5 * time.Minute
@@ -76,7 +76,11 @@ func runVersioningPruner(ctx context.Context, svc *domain.Service, interval time
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			started := time.Now()
 			stats, err := svc.PruneVersions()
+			// Recorded either way: a failing pruner is exactly what an operator
+			// needs to see, and it used to leave only a log line.
+			state.recordPrune(stats, time.Since(started), err)
 			if err != nil {
 				log.Printf("[filegate] versioning pruner: %v", err)
 				continue

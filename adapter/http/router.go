@@ -76,6 +76,8 @@ type RouterOptions struct {
 	// request so a change applies without a restart; nil falls back to the
 	// values captured in this struct, which keeps existing callers working.
 	Config *domain.ConfigHolder
+	// Lifecycle reports the last background maintenance run. Nil reports zeroes.
+	Lifecycle func() apiv1.LifecycleRuntime
 	// ConfigService backs the /v1/config endpoints. Nil leaves them unmounted,
 	// which is how every existing router caller and test keeps working.
 	ConfigService ConfigService

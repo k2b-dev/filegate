@@ -23,6 +23,11 @@ type ConfigKeySchema struct {
 	// Reason explains why a static key cannot change at runtime. Empty for
 	// runtime keys.
 	Reason string `json:"reason,omitempty"`
+	// Unit says what a number means: "bytes" for a byte count, empty
+	// otherwise. Lets a client render 65536 as 64 KiB rather than as an
+	// integer, which the type alone cannot express since a byte limit and a
+	// max-count are both ints.
+	Unit string `json:"unit,omitempty"`
 	// Secret marks values that are never returned; they report presence only.
 	Secret bool `json:"secret"`
 	// Default is the built-in value used when nothing sets the key.
