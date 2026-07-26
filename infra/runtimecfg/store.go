@@ -24,9 +24,9 @@ import (
 var ErrNotFound = errors.New("runtimecfg: not found")
 
 const (
-	prefixOverride = "o/"
-	prefixResource = "r/"
-	keyBootstrap   = "meta/bootstrapped_at"
+	prefixOverride  = "o/"
+	prefixResource  = "r/"
+	prefixBootstrap = "meta/bootstrapped/"
 )
 
 // Store is the durable home for runtime configuration.
@@ -211,8 +211,10 @@ func resourceKey(kind, id string) string {
 // than a reconciliation loop. Without it, an operator who revokes a compromised
 // credential would find it recreated at the next restart, because the variable
 // that originally seeded it is still sitting in a deployment file.
-func (s *Store) Bootstrapped() (time.Time, bool, error) {
-	value, closer, err := s.db.Get([]byte(keyBootstrap))
+// The marker is per kind: a deployment that enables S3 only later must still
+// get its configured keys seeded, which a single global marker would prevent.
+func (s *Store) Bootstrapped(kind string) (time.Time, bool, error) {
+	value, closer, err := s.db.Get([]byte(prefixBootstrap + kind))
 	if errors.Is(err, pebble.ErrNotFound) {
 		return time.Time{}, false, nil
 	}
@@ -231,6 +233,6 @@ func (s *Store) Bootstrapped() (time.Time, bool, error) {
 }
 
 // MarkBootstrapped records that seeding has run. Idempotent.
-func (s *Store) MarkBootstrapped(at time.Time) error {
-	return s.db.Set([]byte(keyBootstrap), []byte(at.UTC().Format(time.RFC3339Nano)), pebble.Sync)
+func (s *Store) MarkBootstrapped(kind string, at time.Time) error {
+	return s.db.Set([]byte(prefixBootstrap+kind), []byte(at.UTC().Format(time.RFC3339Nano)), pebble.Sync)
 }

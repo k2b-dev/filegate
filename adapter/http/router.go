@@ -79,6 +79,8 @@ type RouterOptions struct {
 	// ConfigService backs the /v1/config endpoints. Nil leaves them unmounted,
 	// which is how every existing router caller and test keeps working.
 	ConfigService ConfigService
+	// S3Keys backs the /v1/s3/keys endpoints. Nil leaves them unmounted.
+	S3Keys S3KeyService
 
 	// Operational context for GET /v1/system/info, /v1/system/runtime and
 	// /v1/health. All optional: zero values degrade the reported detail
@@ -221,6 +223,15 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		handleV1("PATCH /v1/config", cfgAPI.handlePatch)
 		handleV1("POST /v1/config/validate", cfgAPI.handleValidate)
 		handleV1("POST /v1/config/reload", cfgAPI.handleReload)
+	}
+
+	if opts.S3Keys != nil {
+		keysAPI := s3KeyHandlers{svc: opts.S3Keys}
+		handleV1("GET /v1/s3/keys", keysAPI.handleList)
+		handleV1("POST /v1/s3/keys", keysAPI.handleCreate)
+		handleV1("PATCH /v1/s3/keys/{accessKey}", keysAPI.handleUpdate)
+		handleV1("POST /v1/s3/keys/{accessKey}/rotate", keysAPI.handleRotate)
+		handleV1("DELETE /v1/s3/keys/{accessKey}", keysAPI.handleDelete)
 	}
 
 	handleV1("GET /v1/stats", func(w http.ResponseWriter, _ *http.Request) {

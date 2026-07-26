@@ -105,7 +105,7 @@ func TestDeletedResourceStaysDeletedAcrossRestart(t *testing.T) {
 	if err := store.PutResource("s3key", "AKIA1", s3key{AccessKey: "AKIA1"}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if err := store.MarkBootstrapped(time.Now()); err != nil {
+	if err := store.MarkBootstrapped("s3key", time.Now()); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
 	if err := store.DeleteResource("s3key", "AKIA1"); err != nil {
@@ -118,7 +118,7 @@ func TestDeletedResourceStaysDeletedAcrossRestart(t *testing.T) {
 	if err := store.GetResource("s3key", "AKIA1", &got); err != ErrNotFound {
 		t.Fatalf("deleted key came back after restart: err = %v", err)
 	}
-	if _, done, err := store.Bootstrapped(); err != nil || !done {
+	if _, done, err := store.Bootstrapped("s3key"); err != nil || !done {
 		t.Fatalf("bootstrap marker lost: done=%v err=%v", done, err)
 	}
 }
@@ -126,17 +126,17 @@ func TestDeletedResourceStaysDeletedAcrossRestart(t *testing.T) {
 func TestBootstrapMarkerIsStickyAndSurvivesCorruption(t *testing.T) {
 	store, path := openTemp(t)
 
-	if _, done, err := store.Bootstrapped(); err != nil || done {
+	if _, done, err := store.Bootstrapped("s3key"); err != nil || done {
 		t.Fatalf("fresh store reports bootstrapped: done=%v err=%v", done, err)
 	}
 
 	stamp := time.Now().UTC().Truncate(time.Second)
-	if err := store.MarkBootstrapped(stamp); err != nil {
+	if err := store.MarkBootstrapped("s3key", stamp); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
 	store = reopen(t, store, path)
 
-	at, done, err := store.Bootstrapped()
+	at, done, err := store.Bootstrapped("s3key")
 	if err != nil || !done {
 		t.Fatalf("marker not persisted: done=%v err=%v", done, err)
 	}
@@ -146,10 +146,10 @@ func TestBootstrapMarkerIsStickyAndSurvivesCorruption(t *testing.T) {
 
 	// An unreadable marker must still count as bootstrapped, otherwise a
 	// corrupt byte would re-run seeding and resurrect deleted resources.
-	if err := store.db.Set([]byte(keyBootstrap), []byte("not-a-timestamp"), nil); err != nil {
+	if err := store.db.Set([]byte(prefixBootstrap+"s3key"), []byte("not-a-timestamp"), nil); err != nil {
 		t.Fatalf("corrupt: %v", err)
 	}
-	if _, done, err := store.Bootstrapped(); err != nil || !done {
+	if _, done, err := store.Bootstrapped("s3key"); err != nil || !done {
 		t.Errorf("corrupt marker read as un-bootstrapped: done=%v err=%v", done, err)
 	}
 }

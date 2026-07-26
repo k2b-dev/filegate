@@ -123,6 +123,9 @@ func newDaemonServeCmd() *cobra.Command {
 			}
 			cfg = resolved.Config
 			configManager := newConfigManager(configFile, runtimeStore, resolved)
+			// Created before the router because the router exposes it; the S3
+			// adapter is attached later, once its listener is built.
+			s3Keys := newS3KeyService(runtimeStore)
 
 			idx, svc, err := buildCore(cfg)
 			if err != nil {
@@ -220,6 +223,7 @@ func newDaemonServeCmd() *cobra.Command {
 				ActivityLog:                activityLog,
 				Config:                     configManager.Holder(),
 				ConfigService:              configManager,
+				S3Keys:                     s3Keys,
 
 				BuildVersion:  buildVersion,
 				BuildCommit:   buildCommit,
@@ -290,6 +294,15 @@ func newDaemonServeCmd() *cobra.Command {
 					MaxConcurrentWrites: cfg.S3.MaxConcurrentWrites,
 					ActivityLog:         activityLog,
 				})
+				// Seed before attaching: attaching publishes, and publishing an
+				// empty store first would leave the adapter with no keys until
+				// the seed landed.
+				if hErr == nil {
+					hErr = s3Keys.SeedOnce(cfg.S3.AccessKey, cfg.S3.SecretKey, keys)
+				}
+				if hErr == nil {
+					hErr = s3Keys.AttachHandler(s3Handler)
+				}
 				if hErr != nil {
 					cancel()
 					detector.Close()
