@@ -1,6 +1,7 @@
 import type { ConfigKeySchema, ConfigValue, ConfigValuesResponse, S3Key } from "@valentinkolb/filegate";
 import { text } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
+import { tidyDuration } from "../retention";
 
 type SettingsData = {
   schema: ConfigKeySchema[];
@@ -104,9 +105,9 @@ function retentionAsText(value: unknown): string {
   return value
     .map((entry) => {
       const bucket = entry as Bucket;
-      return `keep_for=${bucket.keepFor ?? ""},max_count=${bucket.maxCount ?? -1}`;
+      return `keep_for=${tidyDuration(bucket.keepFor ?? "")},max_count=${bucket.maxCount ?? -1}`;
     })
-    .join("\n");
+    .join("; ");
 }
 
 /** Only a runtime key that is neither secret nor structured is editable inline. */
@@ -266,6 +267,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               data-setting-edit={key.path}
                               data-setting-type={key.type}
                               data-setting-value={key.type === "retentionBuckets" ? retentionAsText(current?.value) : rawValue(current?.value)}
+                              data-setting-json={key.type === "retentionBuckets" ? JSON.stringify(current?.value ?? []) : undefined}
                             >
                               Edit
                             </button>

@@ -1,4 +1,5 @@
 import { prompts, submitForm } from "./prompts";
+import { openRetentionEditor, type Bucket } from "./retention";
 
 /**
  * Settings page interactions.
@@ -30,15 +31,27 @@ document.addEventListener("click", async (event) => {
     const path = edit.dataset.settingEdit ?? "";
     const type = edit.dataset.settingType ?? "string";
     const current = edit.dataset.settingValue ?? "";
+
+    // Retention gets a real editor: it is a list of rules, not a string.
+    if (type === "retentionBuckets") {
+      let buckets: Bucket[] = [];
+      try {
+        buckets = JSON.parse(edit.dataset.settingJson ?? "[]") as Bucket[];
+      } catch {
+        buckets = [];
+      }
+      const value = await openRetentionEditor(buckets);
+      if (value !== null) submitForm("/settings/apply", { path, type, value });
+      return;
+    }
+
     const values = await prompts.form({
       title: "Change setting",
       badge: path,
       message: hintFor(type),
       confirmText: "Apply",
       fields: [
-        type === "retentionBuckets"
-          ? { name: "value", label: "Retention rules", value: current, placeholder: "keep_for=1h,max_count=-1", required: true }
-          : type === "bool"
+        type === "bool"
           ? { name: "value", label: "Value", value: current === "true" ? "true" : "false", options: [{ value: "true", label: "true" }, { value: "false", label: "false" }] }
           : { name: "value", label: "Value", value: current === "-" ? "" : current, placeholder: placeholderFor(type), required: true },
       ],

@@ -160,3 +160,12 @@ html{scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-dar
 ::-webkit-scrollbar-corner{background:transparent}
 /* Respect the OS preference for permanently visible scrollbars. */
 @media (prefers-reduced-motion:reduce){::-webkit-scrollbar-thumb{background:var(--muted);background-clip:content-box}}
+.retention-rules{display:grid;gap:8px}
+.retention-rule{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.rr-field{display:grid;gap:3px;font-size:12px}
+.rr-field .input{height:32px;width:110px;font-size:13px}
+.rr-all{display:inline-flex;align-items:center;gap:5px;height:32px;font-size:13px;white-space:nowrap}
+.rr-remove{height:32px;width:32px;padding:0;font-size:16px;line-height:1}
+.retention-add{height:30px;padding:0 11px;margin-top:10px;font-size:12px}
+.retention-raw{height:auto;padding:8px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;resize:vertical}
+.retention-footer{justify-content:space-between}
