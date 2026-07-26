@@ -1,8 +1,16 @@
-import type { ActivityEvent, ActivityListResponse, StatsResponse } from "@valentinkolb/filegate";
+import type {
+  ActivityEvent,
+  ActivityListResponse,
+  HealthResponse,
+  StatsResponse,
+  SystemRuntimeResponse,
+  UploadSessionSummary,
+} from "@valentinkolb/filegate";
 import { charts } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
 import { env } from "../lib/env";
 import { Icon, IconLabel } from "../components/Icons";
+import { CachePanel, DetectorPanel, HealthPanel, LifecyclePanel, QueuePanel, UploadSessionPanel } from "./Live";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type ActivityQuery = { q: string; operation: string; outcome: string; page: number; pageSize: number };
@@ -12,6 +20,9 @@ export function System(props: {
   health?: "ok" | "degraded" | "fail";
   activity?: ActivityListResponse;
   activityQuery: ActivityQuery;
+  runtime?: SystemRuntimeResponse;
+  healthDetail?: HealthResponse;
+  sessions: UploadSessionSummary[];
   error?: string;
   notice?: string;
 }) {
@@ -69,6 +80,15 @@ export function System(props: {
             {formatCount(props.stats.cache.pathEntries)} / {formatCount(props.stats.cache.pathCapacity)}
           </div>
         </div>
+      </section>
+
+      <section class="metrics-grid live-grid" data-live-root>
+        <HealthPanel health={props.healthDetail} />
+        <DetectorPanel runtime={props.runtime} />
+        <QueuePanel runtime={props.runtime} />
+        <CachePanel runtime={props.runtime} />
+        <LifecyclePanel runtime={props.runtime} />
+        <UploadSessionPanel runtime={props.runtime} sessions={props.sessions} />
       </section>
 
       <section class="metrics-grid">
@@ -337,6 +357,7 @@ export function System(props: {
           </a>
         </div>
       </section>
+      <script src="/system.js" defer />
     </Layout>
   );
 }

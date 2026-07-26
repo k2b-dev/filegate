@@ -197,3 +197,15 @@ html{scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-dar
 .dropzone-icon{font-size:28px;color:var(--muted)}
 .rr-remove .ti{font-size:14px}
 .tag .ti{font-size:11px;vertical-align:-1px}
+.live-grid{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-bottom:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:13px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.check-list{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:7px;font-size:13px}
+.check-list li{display:flex;align-items:center;gap:9px}
+.check-list .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.dot-ok{background:#2bb24c}.dot-degraded{background:#d9880a}.dot-fail{background:#d64b32}
+.hint{margin:10px 0 0;font-size:12px;line-height:1.45}
+/* A dashboard that silently stops updating is worse than one that says so. */
+[data-live-state="stale"]{opacity:.55}
+[data-live-state="stale"]::before{content:"Live updates interrupted — values may be out of date";display:block;grid-column:1/-1;padding:8px 12px;border:1px solid #e8c48d;border-radius:var(--radius);background:#fdf9f3;color:#7a4a05;font-size:12px}

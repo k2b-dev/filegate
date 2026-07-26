@@ -68,6 +68,10 @@ export const app = new Hono()
   // the same mistake for the other static routes.
   .get("/tabler-icons.css", () => assetResponse("./tabler-icons.css", "text/css; charset=utf-8"))
   .get("/fonts/tabler-icons.woff2", () => assetResponse("./fonts/tabler-icons.woff2", "font/woff2"))
+  .get("/system.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./system.js", import.meta.url)));
+  })
   .get("/settings.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./settings.js", import.meta.url)));
@@ -353,13 +357,16 @@ export const app = new Hono()
         outcome: c.req.query("outcome"),
         page: c.req.query("page"),
       });
-      const [base, activity] = await Promise.all([loadBase(), loadActivity(activityQuery)]);
+      const [base, activity, live] = await Promise.all([loadBase(), loadActivity(activityQuery), loadLive()]);
       return () => (
         <System
           stats={base.stats}
           health={base.health}
           activity={activity}
           activityQuery={activityQuery}
+          runtime={live.runtime}
+          healthDetail={live.health}
+          sessions={live.sessions}
           error={queryError(c.req.query("error"), base.error)}
           notice={c.req.query("notice")}
         />
@@ -469,6 +476,31 @@ export const app = new Hono()
       return c.redirect(settingsURL(undefined, `${accessKey} deleted.`), 303);
     } catch (err) {
       return c.redirect(settingsURL(errorMessage(err)), 303);
+    }
+  })
+  .get("/api/runtime", async (c) => {
+    // One request for everything the dashboard polls, so a slow page does not
+    // fan out into three round trips per tick.
+    try {
+      const fg = client();
+      const [runtime, health, sessions] = await Promise.all([
+        fg.system.runtime(),
+        fg.system.health().catch(() => undefined),
+        fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
+      ]);
+      return c.json({ runtime, health, sessions: sessions?.items ?? [] });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 502);
+    }
+  })
+  .post("/system/sessions/abort", async (c) => {
+    const body = await c.req.parseBody();
+    const sessionId = field(body, "sessionId");
+    try {
+      await client().uploads.sessions.abort({ sessionId });
+      return c.redirect("/system?notice=" + encodeURIComponent(`Upload session ${sessionId} aborted; its staged bytes are released.`), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
     }
   })
   .post("/system/rescan", async (c) => {
@@ -621,6 +653,23 @@ function parseRetention(raw: string): { keep_for: string; max_count: number }[] 
     if (!Number.isInteger(count)) throw new Error(`rule "${rule}" has a non-integer max_count`);
     return { keep_for: keepFor, max_count: count };
   });
+}
+
+/**
+ * Live operational state for the System page.
+ *
+ * Rendered server-side for the first frame so the page is complete without
+ * JavaScript; the poll only keeps it current. Each part degrades on its own,
+ * because a stalled detector must not blank the panels that would explain it.
+ */
+async function loadLive() {
+  const fg = client();
+  const [runtime, health, sessions] = await Promise.all([
+    fg.system.runtime().catch(() => undefined),
+    fg.system.health().catch(() => undefined),
+    fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
+  ]);
+  return { runtime, health, sessions: sessions?.items ?? [] };
 }
 
 async function loadSettings() {
