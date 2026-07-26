@@ -76,3 +76,61 @@ func TestConcurrentWritesUnderAFreshSharedParent(t *testing.T) {
 		}
 	}
 }
+
+// A directory chain with a hole in it must not be chained across the hole.
+//
+// MkdirRelative reports the levels it created, and under concurrency that list
+// can skip a middle level: another request creates it between this one's lstat
+// and its mkdir. Indexing such a list as one chain anchors the deepest directory
+// to its grandparent, which silently drops a path component -- writes then land
+// at the wrong place rather than failing. The fix keeps only the trailing
+// contiguous run, so this asserts the resulting paths, which is what a lost
+// component would change.
+func TestDirectoriesResolveWhenAnIntermediateLevelIsCreatedConcurrently(t *testing.T) {
+	svc, cleanup := newServiceForOwnershipTest(t)
+	defer cleanup()
+
+	mount := svc.ListRoot()[0].Name
+
+	// Two workers race into the same three-level chain from opposite ends of the
+	// middle level, which is the shape that produced a skipped level.
+	for round := range 40 {
+		top := fmt.Sprintf("hole-%d", round)
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _, errs[0] = svc.WriteContentByVirtualPath(
+				fmt.Sprintf("%s/%s/mid/leaf-a/file.txt", mount, top),
+				bytes.NewReader([]byte("a")), domain.ConflictOverwrite)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, errs[1] = svc.WriteContentByVirtualPath(
+				fmt.Sprintf("%s/%s/mid/leaf-b/file.txt", mount, top),
+				bytes.NewReader([]byte("b")), domain.ConflictOverwrite)
+		}()
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d worker %d: %v", round, i, err)
+			}
+		}
+
+		// Every level has to resolve at its real depth. A chain written across a
+		// hole would leave leaf-a or leaf-b hanging directly off top.
+		for _, rel := range []string{
+			top, top + "/mid", top + "/mid/leaf-a", top + "/mid/leaf-b",
+			top + "/mid/leaf-a/file.txt", top + "/mid/leaf-b/file.txt",
+		} {
+			if _, err := svc.ResolvePath(mount + "/" + rel); err != nil {
+				t.Fatalf("round %d: %s does not resolve: %v", round, rel, err)
+			}
+		}
+		if _, err := svc.ResolvePath(mount + "/" + top + "/leaf-a"); err == nil {
+			t.Fatalf("round %d: leaf-a resolves directly under %s, so a path component was dropped", round, top)
+		}
+	}
+}

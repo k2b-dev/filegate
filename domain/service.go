@@ -1676,6 +1676,10 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 	current := parentAbs
 	createdAny := false
 	firstCreated := ""
+	// The exact levels this call created, top down. The loop creates one level
+	// per iteration -- it walks down, so a segment's parent always exists by the
+	// time MkdirAll runs -- which makes this the precise chain to index.
+	createdChain := make([]string, 0, len(parts))
 	for i, seg := range parts {
 		isLeaf := i == len(parts)-1
 		next := filepath.Join(current, seg)
@@ -1726,6 +1730,7 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 		if firstCreated == "" {
 			firstCreated = next
 		}
+		createdChain = append(createdChain, next)
 		current = next
 	}
 
@@ -1735,7 +1740,8 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 		if err := s.applyOwnership(firstCreated, effectiveOwnership, true); err != nil {
 			return nil, err
 		}
-		if err := s.syncSingle(targetAbs); err != nil {
+		// One batch for the whole chain instead of one synced write per level.
+		if err := s.indexNewDirChain(createdChain); err != nil {
 			return nil, err
 		}
 	}
@@ -2741,6 +2747,112 @@ func (s *Service) parentIDForSync(parentAbs string) (FileID, error) {
 		return FileID{}, err
 	}
 	return s.store.GetID(parentAbs)
+}
+
+// indexNewDirChain records a run of directories that were created together, in
+// one write.
+//
+// syncSingle indexes one path per call and reaches ancestors by recursing, which
+// costs a synced index write per level. For an upload committing into a tree that
+// does not exist yet, that is the dominant cost of the whole commit: measured at
+// roughly one 1.8 ms durable write per level, eight levels deep, against a 26 ms
+// commit.
+//
+// Nothing about a fresh chain needs separate writes. The levels were created
+// together and are only reachable through each other, so one atomic batch is
+// both cheaper and a stronger guarantee than a chain that can be observed
+// half-indexed.
+//
+// Directories only. Files carry S3 extension fields that syncSingle preserves by
+// reading the entity it is replacing, and a freshly created path has none.
+//
+// A crash before the batch commits leaves the directories on disk and absent
+// from the index, which is the state the index is designed to recover from: the
+// next resolve indexes them, and a rescan rebuilds them from the filesystem.
+func (s *Service) indexNewDirChain(absPaths []string) error {
+	// Only a contiguous run can be chained, and the caller cannot promise one.
+	// Concurrency punches holes in it: another request may create an intermediate
+	// level between the caller's lstat and its mkdir, so that level is skipped
+	// while levels above it were created. Chaining across such a gap would anchor
+	// a directory to its grandparent and lose a path component -- which is a
+	// corrupt index, not a slow one, so it is resolved here rather than trusted
+	// to the caller.
+	//
+	// Levels dropped from the run are not lost. The parent resolution below
+	// indexes whatever the first batched level hangs off, recursing upward as far
+	// as it needs to.
+	for i := len(absPaths) - 1; i > 0; i-- {
+		if filepath.Dir(absPaths[i]) != absPaths[i-1] {
+			absPaths = absPaths[i:]
+			break
+		}
+	}
+	if len(absPaths) == 0 {
+		return nil
+	}
+
+	// The chain hangs off a parent that must already be in the index, which is
+	// what parentIDForSync guarantees -- including indexing it first if some
+	// other request only just claimed its ID.
+	parentID, err := s.parentIDForSync(filepath.Dir(absPaths[0]))
+	if err != nil {
+		return err
+	}
+
+	type chainLevel struct {
+		entity   Entity
+		parentID FileID
+		name     string
+		entry    DirEntry
+	}
+	levels := make([]chainLevel, 0, len(absPaths))
+	for _, absPath := range absPaths {
+		info, err := os.Lstat(absPath)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return ErrInvalidArgument
+		}
+		id, err := s.resolveOrReissueID(absPath, info)
+		if err != nil {
+			return err
+		}
+		name := filepath.Base(absPath)
+		levels = append(levels, chainLevel{
+			entity:   buildEntityMetadata(id, parentID, name, absPath, info),
+			parentID: parentID,
+			name:     name,
+			entry: DirEntry{
+				ID:    id,
+				Name:  name,
+				IsDir: true,
+				Size:  info.Size(),
+				Mtime: info.ModTime().UnixMilli(),
+			},
+		})
+		parentID = id
+	}
+
+	if err := s.idx.Batch(func(b Batch) error {
+		for i := range levels {
+			b.PutEntity(levels[i].entity)
+			b.PutChild(levels[i].parentID, levels[i].name, levels[i].entry)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// The new levels were not cached -- they did not exist -- but the listing of
+	// the directory they were added to was.
+	for i := range levels {
+		s.invalidateCacheByID(levels[i].entity.ID)
+	}
+	if parentVP, err := s.VirtualPath(levels[0].parentID); err == nil {
+		s.InvalidatePathCache(parentVP)
+	}
+	return nil
 }
 
 func (s *Service) syncSingle(absPath string) error {

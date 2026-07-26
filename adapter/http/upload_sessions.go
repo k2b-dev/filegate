@@ -242,31 +242,33 @@ func (m *uploadSessionManager) cleanupExpired() error {
 	return nil
 }
 
+// removeSessionArtifacts deletes a session's staged segments and its assembled
+// file.
+//
+// The paths are derived rather than looked up or globbed. A segment file only
+// ever lives at segmentPath(session, i) for an index the PUT handler validated
+// into [0, TotalSegments), and the partial writes it makes carry a
+// .upload-segment-* name that never matched the old glob anyway. Deriving them
+// drops an index read and, more importantly, a directory scan: the stage
+// directory is shared by every session on the mount, so globbing it once per
+// commit turned a five-thousand-file upload into five thousand scans of a
+// five-thousand-entry directory.
+//
+// The directories are deliberately not fsynced. The only thing that would
+// guarantee is that the deletion of temporary staging files survives a crash,
+// and a resurrected staging file is harmless: a committed session answers from
+// its commit record without consulting segments, an aborted one is closed to
+// writes, and the cleanup loop sweeps whatever is left. Two directory fsyncs per
+// commit is a real cost paid for keeping garbage deleted.
 func (m *uploadSessionManager) removeSessionArtifacts(session domain.UploadSession) error {
-	segments, _ := m.svc.ListUploadSegments(session.ID)
-	for _, segment := range segments {
-		_ = os.Remove(segment.Path)
-	}
-	if session.StageDir != "" {
-		for _, path := range orphanSegmentPaths(session) {
-			_ = os.Remove(path)
-		}
-		_ = os.Remove(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir, session.ID+".complete"))
-		_ = filesystem.SyncDir(session.StageDir)
-		_ = filesystem.SyncDir(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir))
-	}
-	return nil
-}
-
-func orphanSegmentPaths(session domain.UploadSession) []string {
 	if session.StageDir == "" || session.ID == "" {
 		return nil
 	}
-	paths, err := filepath.Glob(filepath.Join(session.StageDir, session.ID+"-*.part"))
-	if err != nil {
-		return nil
+	for i := 0; i < session.TotalSegments; i++ {
+		_ = os.Remove(segmentPath(session, i))
 	}
-	return paths
+	_ = os.Remove(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir, session.ID+".complete"))
+	return nil
 }
 
 func generateUploadSessionID() (string, error) {
@@ -1218,31 +1220,70 @@ func (m *uploadSessionManager) ensureSessionParent(session domain.UploadSession)
 	if len(parts) <= 2 {
 		return session.ParentID, noop, nil
 	}
+
+	// Almost every commit lands in a directory that already exists, because an
+	// earlier file in the same upload created it. One lookup settles that. The
+	// loop below reaches the same answer by re-creating every level in turn, and
+	// each of those levels costs a path lock, a filesystem walk of its own
+	// prefix and an index read -- work that scales with tree depth and was being
+	// paid once per file. Nothing is created here, so the rollback stays a
+	// no-op, which is what it should be for a directory this commit found.
+	parentPath := strings.Join(parts[:len(parts)-1], "/")
+	if id, err := m.svc.ResolvePath(parentPath); err == nil {
+		return id, noop, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.FileID{}, noop, err
+	}
+
 	root, _, err := m.mountRootByName(parts[0])
 	if err != nil {
 		return domain.FileID{}, noop, err
 	}
 	parentRelParts := parts[1 : len(parts)-1]
-	created := make([]domain.FileID, 0, len(parentRelParts))
-	var parentID domain.FileID
+
+	// Note which levels are absent before creating anything, so the rollback
+	// only ever removes directories this commit introduced. These are reads;
+	// the mkdir below is the single write.
+	missing := make([]string, 0, len(parentRelParts))
 	for i := range parentRelParts {
-		rel := strings.Join(parentRelParts[:i+1], "/")
-		virtualPath := parts[0] + "/" + rel
-		_, existedErr := m.svc.ResolvePath(virtualPath)
-		meta, err := m.svc.MkdirRelative(root.ID, rel, true, nil, domain.ConflictSkip)
-		if err != nil {
-			rollbackEmptyDirs(m.svc, created)
+		levelPath := parts[0] + "/" + strings.Join(parentRelParts[:i+1], "/")
+		if _, err := m.svc.ResolvePath(levelPath); errors.Is(err, domain.ErrNotFound) {
+			missing = append(missing, levelPath)
+		} else if err != nil {
 			return domain.FileID{}, noop, err
 		}
-		if errors.Is(existedErr, domain.ErrNotFound) {
-			created = append(created, meta.ID)
-		} else if existedErr != nil {
-			rollbackEmptyDirs(m.svc, created)
-			return domain.FileID{}, noop, existedErr
-		}
-		parentID = meta.ID
 	}
-	return parentID, func() { rollbackEmptyDirs(m.svc, created) }, nil
+
+	// One recursive mkdir for the whole chain. Calling it once per level made
+	// the same directories, but each call re-acquired a path lock and re-walked
+	// its own prefix, so a chain of depth d cost d locks and d prefix walks
+	// instead of one -- the dominant cost of committing into a deep tree.
+	// Levels that were absent and now exist belong to this commit, and that has
+	// to be evaluated on the failure path too: a recursive mkdir can create a
+	// prefix and then stop at a level where a file sits where a directory
+	// belongs, leaving those directories behind with nobody to remove them.
+	// A level that still does not resolve is simply left out; the worst outcome
+	// is an empty directory nobody cleans up.
+	createdIDs := func() []domain.FileID {
+		out := make([]domain.FileID, 0, len(missing))
+		for _, levelPath := range missing {
+			id, err := m.svc.ResolvePath(levelPath)
+			if err != nil {
+				continue
+			}
+			out = append(out, id)
+		}
+		return out
+	}
+
+	meta, err := m.svc.MkdirRelative(root.ID, strings.Join(parentRelParts, "/"), true, nil, domain.ConflictSkip)
+	if err != nil {
+		rollbackEmptyDirs(m.svc, createdIDs())
+		return domain.FileID{}, noop, err
+	}
+
+	created := createdIDs()
+	return meta.ID, func() { rollbackEmptyDirs(m.svc, created) }, nil
 }
 
 func rollbackEmptyDirs(svc *domain.Service, ids []domain.FileID) {
