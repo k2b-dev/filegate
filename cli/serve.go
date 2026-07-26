@@ -94,6 +94,9 @@ func newDaemonServeCmd() *cobra.Command {
 			// silently dropped to disk-full overnight. Failing here
 			// is way better than failing on the first PUT, when
 			// the symptom is a confusing 500 to a real client.
+			if err := ensureDefaultBasePath(cfg); err != nil {
+				return err
+			}
 			if err := checkMountsHealthOrFail(cfg.Storage.BasePaths); err != nil {
 				return err
 			}
@@ -122,6 +125,16 @@ func newDaemonServeCmd() *cobra.Command {
 				return err
 			}
 			cfg = resolved.Config
+
+			// A fresh install has no token configured; generate and store one
+			// so the service is reachable without editing any file first.
+			token, tErr := bootstrapBearerToken(runtimeStore, cfg.Auth.BearerToken)
+			if tErr != nil {
+				return tErr
+			}
+			cfg.Auth.BearerToken = token
+			resolved.Config = cfg
+
 			configManager := newConfigManager(configFile, runtimeStore, resolved)
 			// Created before the router because the router exposes it; the S3
 			// adapter is attached later, once its listener is built.

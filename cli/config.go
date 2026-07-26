@@ -41,8 +41,11 @@ func registerConfigDefaults(v *viper.Viper) {
 	v.SetDefault("server.write_timeout", "5m")
 	v.SetDefault("server.access_log_enabled", true)
 	v.SetDefault("server.shutdown_timeout", "60s")
+	// Empty means "generate one on first boot"; see bootstrapBearerToken.
 	v.SetDefault("auth.bearer_token", "")
-	v.SetDefault("storage.base_paths", []string{})
+	// A default mount means a fresh install starts and can be configured from
+	// the UI, instead of refusing to boot until someone writes a config file.
+	v.SetDefault("storage.base_paths", []string{defaultBasePath})
 	v.SetDefault("storage.index_path", "/var/lib/filegate/index")
 	v.SetDefault("storage.runtime_config_path", "/var/lib/filegate/config")
 	v.SetDefault("detection.backend", "auto")
@@ -174,9 +177,10 @@ func finishConfig(v *viper.Viper) (domain.Config, error) {
 	// 401 for every /v1 route). Allowing an empty bearer token here is
 	// what makes the documented open /metrics mode reachable for an
 	// S3-only daemon on a trusted internal network.
-	if strings.TrimSpace(cfg.Auth.BearerToken) == "" && !cfg.S3.Enabled {
-		return cfg, fmt.Errorf("auth.bearer_token is required (unless s3.enabled=true for an S3-only deployment)")
-	}
+	// An empty token is no longer an error: serve generates one on first boot
+	// and stores it, so a fresh install needs no configuration at all. The REST
+	// auth middleware still fails closed until a token exists, so this cannot
+	// open the API by accident.
 	if err := validatePublicURL(cfg.Server.PublicURL); err != nil {
 		return cfg, err
 	}

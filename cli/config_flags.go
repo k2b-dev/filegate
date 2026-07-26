@@ -473,9 +473,8 @@ func validateResolvedConfig(cfg domain.Config) error {
 	if len(cfg.Storage.BasePaths) == 0 {
 		return fmt.Errorf("storage.base_paths is required")
 	}
-	if strings.TrimSpace(cfg.Auth.BearerToken) == "" && !cfg.S3.Enabled {
-		return fmt.Errorf("auth.bearer_token is required (unless s3.enabled=true for an S3-only deployment)")
-	}
+	// auth.bearer_token is no longer required: an empty one is generated on
+	// first boot and stored, so a fresh install needs no configuration at all.
 	if err := validateRuntimeConfigPath(cfg.Storage); err != nil {
 		return err
 	}
