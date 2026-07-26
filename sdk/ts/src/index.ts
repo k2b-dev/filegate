@@ -48,6 +48,7 @@ export type { FileConflictMode, FingerprintMode, MkdirConflictMode, UploadSessio
 
 export type {
   ConfigKeySchema,
+  RetentionBucket,
   ConfigRestartRequired,
   ConfigSchemaResponse,
   ConfigScope,

@@ -71,7 +71,7 @@ function formatDurationValue(value: unknown): string {
   return total > 0 ? text.pprintDurationMs(total) : raw;
 }
 
-type RetentionBucket = { keep_for?: string; max_count?: number };
+type Bucket = { keepFor?: string; maxCount?: number };
 
 /**
  * Renders retention rules as sentences.
@@ -84,18 +84,36 @@ function describeRetention(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "no retention (versions accumulate)";
   return value
     .map((entry) => {
-      const bucket = entry as RetentionBucket;
-      const window = bucket.keep_for ? formatDurationValue(bucket.keep_for) : "?";
-      const count = bucket.max_count;
-      if (count === undefined || count < 0) return `all within ${window}`;
-      return `max ${count} within ${window}`;
+      const bucket = entry as Bucket;
+      const window = bucket.keepFor ? formatDurationValue(bucket.keepFor) : "?";
+      const count = bucket.maxCount;
+      if (count === undefined || count < 0) return `keep all within ${window}`;
+      return `keep ${count} within ${window}`;
     })
     .join(" · ");
 }
 
+/**
+ * Editable form of the retention policy, one rule per line.
+ *
+ * Reuses the syntax the CLI flag already documents (keep_for=1h,max_count=-1)
+ * instead of inventing a second one for the UI.
+ */
+function retentionAsText(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((entry) => {
+      const bucket = entry as Bucket;
+      return `keep_for=${bucket.keepFor ?? ""},max_count=${bucket.maxCount ?? -1}`;
+    })
+    .join("\n");
+}
+
 /** Only a runtime key that is neither secret nor structured is editable inline. */
 function editable(key: ConfigKeySchema): boolean {
-  return key.scope === "runtime" && !key.secret && !["s3Keys", "retentionBuckets"].includes(key.type);
+  // s3Keys stays out because access keys are managed as resources above, with
+  // rotation and an audit trail, not as a config value.
+  return key.scope === "runtime" && !key.secret && key.type !== "s3Keys";
 }
 
 export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "fail"; mounts: number; error?: string; notice?: string }) {
@@ -247,7 +265,7 @@ export function Settings(props: SettingsData & { health?: "ok" | "degraded" | "f
                               type="button"
                               data-setting-edit={key.path}
                               data-setting-type={key.type}
-                              data-setting-value={rawValue(current?.value)}
+                              data-setting-value={key.type === "retentionBuckets" ? retentionAsText(current?.value) : rawValue(current?.value)}
                             >
                               Edit
                             </button>

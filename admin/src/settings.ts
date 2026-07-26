@@ -36,7 +36,9 @@ document.addEventListener("click", async (event) => {
       message: hintFor(type),
       confirmText: "Apply",
       fields: [
-        type === "bool"
+        type === "retentionBuckets"
+          ? { name: "value", label: "Retention rules", value: current, placeholder: "keep_for=1h,max_count=-1", required: true }
+          : type === "bool"
           ? { name: "value", label: "Value", value: current === "true" ? "true" : "false", options: [{ value: "true", label: "true" }, { value: "false", label: "false" }] }
           : { name: "value", label: "Value", value: current === "-" ? "" : current, placeholder: placeholderFor(type), required: true },
       ],
@@ -73,6 +75,9 @@ document.addEventListener("click", async (event) => {
 });
 
 function hintFor(type: string): string {
+  if (type === "retentionBuckets") {
+    return "One rule per line: keep_for=<duration>,max_count=<n>. max_count=-1 keeps everything in that window. Rules are windows measured back from now, so 1h then 24h then 720h forms a decay schedule.";
+  }
   if (type === "duration") return "A Go duration such as 30s, 5m or 24h.";
   if (type === "stringList") return "Comma separated. Leave empty for none.";
   if (type === "int") return "A whole number. Byte limits are in bytes.";

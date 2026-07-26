@@ -538,6 +538,7 @@ function splitCSV(raw: string): string[] {
  * number rather than as a string that would fail a type check downstream.
  */
 function parseSettingValue(type: string, raw: string): unknown {
+  if (type === "retentionBuckets") return parseRetention(raw);
   if (type === "bool") return raw === "true";
   if (type === "int") {
     const parsed = Number(raw);
@@ -546,6 +547,36 @@ function parseSettingValue(type: string, raw: string): unknown {
   }
   if (type === "stringList") return splitCSV(raw);
   return raw;
+}
+
+/**
+ * Parses the retention rules from the CLI's documented syntax.
+ *
+ * The keys are the mapstructure names the server expects, not the camelCase the
+ * API returns: reading and writing this value use different shapes, and pushing
+ * the response shape back would silently produce empty buckets.
+ */
+function parseRetention(raw: string): { keep_for: string; max_count: number }[] {
+  const rules = raw
+    .split(/[\n;]/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (rules.length === 0) throw new Error("at least one rule is required, or clear the override to restore the default");
+
+  return rules.map((rule) => {
+    const fields = new Map(
+      rule.split(",").map((part) => {
+        const [key, value] = part.split("=");
+        return [key?.trim() ?? "", value?.trim() ?? ""];
+      }),
+    );
+    const keepFor = fields.get("keep_for");
+    const maxCount = fields.get("max_count");
+    if (!keepFor) throw new Error(`rule "${rule}" is missing keep_for`);
+    const count = Number(maxCount ?? -1);
+    if (!Number.isInteger(count)) throw new Error(`rule "${rule}" has a non-integer max_count`);
+    return { keep_for: keepFor, max_count: count };
+  });
 }
 
 async function loadSettings() {

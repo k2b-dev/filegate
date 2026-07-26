@@ -34,6 +34,18 @@ type ConfigKeySchema struct {
 	Default any `json:"default,omitempty"`
 }
 
+// RetentionBucket is one age window of the version retention policy.
+//
+// A deliberate API shape rather than the domain struct, which carries only
+// mapstructure tags and would otherwise serialize as Go field names with
+// nanosecond durations.
+type RetentionBucket struct {
+	// KeepFor is the window measured back from now, as a duration string.
+	KeepFor string `json:"keepFor"`
+	// MaxCount is how many versions to keep inside the window; -1 is unlimited.
+	MaxCount int `json:"maxCount"`
+}
+
 // ConfigSchemaResponse is the body of GET /v1/config/schema.
 type ConfigSchemaResponse struct {
 	Keys []ConfigKeySchema `json:"keys"`

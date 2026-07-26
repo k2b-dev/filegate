@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 )
 
@@ -81,6 +82,16 @@ func configValueForAPI(cfg *domain.Config, spec configFlagSpec) any {
 	}
 	if duration, isDuration := value.(time.Duration); isDuration {
 		return duration.String()
+	}
+	// Retention buckets are published in a deliberate API shape; the domain
+	// struct has only mapstructure tags and would serialize as Go field names
+	// with nanosecond durations.
+	if buckets, isBuckets := value.([]domain.RetentionBucketConfig); isBuckets {
+		out := make([]apiv1.RetentionBucket, 0, len(buckets))
+		for _, bucket := range buckets {
+			out = append(out, apiv1.RetentionBucket{KeepFor: bucket.KeepFor.String(), MaxCount: bucket.MaxCount})
+		}
+		return out
 	}
 	return value
 }

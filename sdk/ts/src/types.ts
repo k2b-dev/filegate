@@ -519,6 +519,14 @@ export interface UploadSessionListResponse {
   total: number;
 }
 
+/** One age window of the version retention policy. */
+export interface RetentionBucket {
+  /** Window measured back from now, as a duration string. */
+  keepFor: string;
+  /** Versions to keep inside the window; -1 is unlimited. */
+  maxCount: number;
+}
+
 export type ConfigScope = "static" | "runtime";
 export type ConfigSource = "default" | "file" | "env" | "runtime";
 
