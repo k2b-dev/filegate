@@ -51,12 +51,15 @@ func (c SystemClient) Health(ctx context.Context) (*apiv1.HealthResponse, error)
 // them; this is how an orphaned session left by an interrupted upload is found,
 // since aborting one needs an ID that is otherwise no longer known.
 func (c SystemClient) UploadSessions(ctx context.Context, phase string) (*apiv1.UploadSessionListResponse, error) {
-	path := "/v1/uploads/sessions"
+	// The query has to travel as url.Values: newRequest assigns the endpoint
+	// to URL.Path, which escapes a literal "?" into %3F and turns the filter
+	// into part of a path that matches no route.
+	query := url.Values{}
 	if phase != "" {
-		path += "?phase=" + url.QueryEscape(phase)
+		query.Set("phase", phase)
 	}
 	var out apiv1.UploadSessionListResponse
-	if err := c.core.doJSON(ctx, http.MethodGet, path, nil, nil, "", &out); err != nil {
+	if err := c.core.doJSON(ctx, http.MethodGet, "/v1/uploads/sessions", query, nil, "", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
