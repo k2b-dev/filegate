@@ -358,7 +358,7 @@ export function System(props: {
           </a>
         </div>
       </section>
-      <script src="/system.js" defer />
+      <script type="module" src="/system.js" />
     </Layout>
   );
 }

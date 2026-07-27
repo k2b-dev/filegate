@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/valentinkolb/filegate/infra/runtimecfg"
@@ -175,5 +176,29 @@ func TestSecretsNeverRenderTheirValue(t *testing.T) {
 	tokenSpec, _ := specByPath("auth.bearer_token")
 	if got := configValueForAPI(&cfg, tokenSpec).(map[string]any)["configured"]; got != true {
 		t.Errorf("bearer token reported as not configured despite being set")
+	}
+}
+
+func TestSchemaPublishesClosedStringChoices(t *testing.T) {
+	choicesByPath := map[string][]string{
+		"detection.backend":  {"auto", "poll", "btrfs"},
+		"versioning.enabled": {"auto", "on", "off"},
+	}
+
+	for _, key := range configSchema() {
+		want, ok := choicesByPath[key.Path]
+		if !ok {
+			if len(key.Choices) != 0 {
+				t.Errorf("%s choices = %v, want none", key.Path, key.Choices)
+			}
+			continue
+		}
+		if !slices.Equal(key.Choices, want) {
+			t.Errorf("%s choices = %v, want %v", key.Path, key.Choices, want)
+		}
+		delete(choicesByPath, key.Path)
+	}
+	if len(choicesByPath) != 0 {
+		t.Errorf("schema is missing choice keys: %v", choicesByPath)
 	}
 }

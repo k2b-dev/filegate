@@ -7,10 +7,22 @@ import { openChipsEditor } from "./chips";
 /**
  * Settings page interactions.
  *
- * Editing is typed from the schema: a bool gets a select, a duration and an int
- * get text fields with the shape named in the placeholder. The server validates
- * regardless, so this only shortens the feedback loop.
+ * Booleans submit through native switch forms. Closed string choices enhance
+ * their select into auto-apply while retaining an Apply button without JS.
+ * Structured values keep their focused editors below.
  */
+document.documentElement.classList.add("settings-enhanced");
+
+document.addEventListener("change", (event) => {
+  const select = event.target;
+  if (!(select instanceof HTMLSelectElement) || !select.matches("[data-setting-choice]")) return;
+  const form = select.form;
+  if (!form || form.dataset.submitting === "true") return;
+  form.dataset.submitting = "true";
+  select.setAttribute("aria-busy", "true");
+  form.requestSubmit();
+});
+
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || !form.matches("[data-confirm-s3key]")) return;
@@ -68,9 +80,7 @@ document.addEventListener("click", async (event) => {
       message: hintFor(type),
       confirmText: "Apply",
       fields: [
-        type === "bool"
-          ? { name: "value", label: "Value", value: current === "true" ? "true" : "false", options: [{ value: "true", label: "true" }, { value: "false", label: "false" }] }
-          : { name: "value", label: "Value", value: current === "-" ? "" : current, placeholder: placeholderFor(type), required: true },
+        { name: "value", label: "Value", value: current === "-" ? "" : current, placeholder: placeholderFor(type), required: true },
       ],
     });
     if (values) submitForm("/settings/apply", { path, type, value: values.value ?? "" });

@@ -28,6 +28,10 @@ type ConfigKeySchema struct {
 	// integer, which the type alone cannot express since a byte limit and a
 	// max-count are both ints.
 	Unit string `json:"unit,omitempty"`
+	// Choices lists the complete allowed values when a string is a closed
+	// choice rather than free text. Empty means the client should use a normal
+	// string control.
+	Choices []string `json:"choices,omitempty"`
 	// Secret marks values that are never returned; they report presence only.
 	Secret bool `json:"secret"`
 	// Default is the built-in value used when nothing sets the key.

@@ -21,10 +21,11 @@ export function errorMessage(err: unknown): string {
   return "Operation failed";
 }
 
-export function redirectFiles(path: string, error?: string): string {
+export function redirectFiles(path: string, error?: string, notice?: string): string {
   const q = new URLSearchParams();
   if (path.trim()) q.set("path", path);
   if (error) q.set("error", error);
+  if (notice) q.set("notice", notice);
   const suffix = q.toString();
   return `/files${suffix ? `?${suffix}` : ""}`;
 }

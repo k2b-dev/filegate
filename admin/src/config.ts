@@ -20,7 +20,7 @@ export const { config, plugin, html } = createConfig<PageOptions>({
 <link rel="preload" href="/fonts/tabler-icons.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/tabler-icons.css">
 <link rel="stylesheet" href="/styles.css">
-<script src="/theme.js" defer></script>
+<script type="module" src="/theme.js"></script>
 </head>
 <body>${body}${scripts}</body>
 </html>`,

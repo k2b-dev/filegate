@@ -1,5 +1,6 @@
 import type { JSX } from "solid-js";
 import { Icon, IconLabel } from "./Icons";
+import { Toasts } from "./Toasts";
 
 type LayoutProps = {
   active: "overview" | "files" | "search" | "system" | "settings";
@@ -91,8 +92,7 @@ export function Layout(props: LayoutProps) {
             <span>/</span>
             <strong>{props.title}</strong>
           </nav>
-          {props.notice && <div class="notice">{props.notice}</div>}
-          {props.error && <div class="error">{props.error}</div>}
+          <Toasts notice={props.notice} error={props.error} />
           <section class="head" style="view-transition-name: fg-page-head">
             <div>
               <h1>{props.title}</h1>
@@ -109,7 +109,8 @@ export function Layout(props: LayoutProps) {
           {props.children}
         </main>
       </div>
-      <script src="/prompts.js" defer />
+      <script type="module" src="/prompts.js" />
+      <script type="module" src="/toast.js" />
     </>
   );
 }

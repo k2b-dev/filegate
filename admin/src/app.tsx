@@ -62,6 +62,10 @@ export const app = new Hono()
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./prompts.js", import.meta.url)));
   })
+  .get("/toast.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./toast.js", import.meta.url)));
+  })
   // Headers go on the Response, not the context: returning a fresh Response
   // discards anything set via c.header. The Content-Type survives elsewhere in
   // this file only because Bun.file infers it from the extension, which masks
@@ -138,7 +142,7 @@ export const app = new Hono()
     try {
       const parent = await resolveDirectory(path);
       await client().nodes.mkdir(parent.id, { path: field(body, "name"), recursive: true, onConflict: mkdirConflictMode(field(body, "onConflict")) });
-      return c.redirect(redirectFiles(path), 303);
+      return c.redirect(redirectFiles(path, undefined, "Folder created."), 303);
     } catch (err) {
       return c.redirect(redirectFiles(path, errorMessage(err)), 303);
     }
@@ -166,7 +170,7 @@ export const app = new Hono()
     try {
       const node = await client().nodes.get(field(body, "id"));
       await client().nodes.delete(node.id);
-      return c.redirect(redirectFiles(parentPath(node.path)), 303);
+      return c.redirect(redirectFiles(parentPath(node.path), undefined, `${node.name} deleted.`), 303);
     } catch (err) {
       return c.redirect(redirectFiles(field(body, "parentPath"), errorMessage(err)), 303);
     }
@@ -215,7 +219,7 @@ export const app = new Hono()
     const body = await c.req.parseBody();
     try {
       const updated = await client().nodes.patch(field(body, "id"), { name: field(body, "name") });
-      return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
+      return c.redirect(selectedFiles(parentPath(updated.path), updated.id, undefined, `Renamed to ${updated.name}.`), 303);
     } catch (err) {
       return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
@@ -224,26 +228,26 @@ export const app = new Hono()
     const body = await c.req.parseBody();
     try {
       const updated = await client().nodes.patch(field(body, "id"), { ownership: ownershipFromForm(body) }, field(body, "recursiveOwnership") === "true");
-      return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
+      return c.redirect(selectedFiles(parentPath(updated.path), updated.id, undefined, "Metadata updated."), 303);
     } catch (err) {
       return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .post("/files/versions/snapshot", async (c) => {
     const body = await c.req.parseBody();
-    return versionAction(c, body, () => client().versions.snapshot(field(body, "id"), field(body, "label") || undefined));
+    return versionAction(c, body, "Snapshot created.", () => client().versions.snapshot(field(body, "id"), field(body, "label") || undefined));
   })
   .post("/files/versions/pin", async (c) => {
     const body = await c.req.parseBody();
-    return versionAction(c, body, () => client().versions.pin(field(body, "id"), field(body, "versionId"), field(body, "label") || undefined));
+    return versionAction(c, body, "Version pinned.", () => client().versions.pin(field(body, "id"), field(body, "versionId"), field(body, "label") || undefined));
   })
   .post("/files/versions/unpin", async (c) => {
     const body = await c.req.parseBody();
-    return versionAction(c, body, () => client().versions.unpin(field(body, "id"), field(body, "versionId")));
+    return versionAction(c, body, "Version unpinned.", () => client().versions.unpin(field(body, "id"), field(body, "versionId")));
   })
   .post("/files/versions/delete", async (c) => {
     const body = await c.req.parseBody();
-    return versionAction(c, body, () => client().versions.delete(field(body, "id"), field(body, "versionId")));
+    return versionAction(c, body, "Version deleted.", () => client().versions.delete(field(body, "id"), field(body, "versionId")));
   })
   .post("/files/versions/restore", async (c) => {
     const body = await c.req.parseBody();
@@ -321,7 +325,8 @@ export const app = new Hono()
         targetName: field(body, "targetName"),
         onConflict: conflictMode(field(body, "onConflict")),
       });
-      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id), 303);
+      const verb = field(body, "op") === "copy" ? "Copied" : "Moved";
+      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id, undefined, `${verb} ${out.node.name}.`), 303);
     } catch (err) {
       return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
@@ -733,11 +738,12 @@ function restoreNotice(asNew: boolean): string {
 async function versionAction(
   c: Context,
   body: Record<string, string | File>,
+  notice: string,
   run: () => Promise<unknown>,
 ): Promise<Response> {
   try {
     await run();
-    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id")), 303);
+    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), undefined, notice), 303);
   } catch (err) {
     return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
   }

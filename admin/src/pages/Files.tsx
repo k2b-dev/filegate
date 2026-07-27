@@ -201,7 +201,7 @@ export function Files(props: {
         </aside>
       </section>
       <UploadPanel />
-      <script src="/uploads.js" defer />
+      <script type="module" src="/uploads.js" />
     </Layout>
   );
 }

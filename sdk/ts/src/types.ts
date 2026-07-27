@@ -553,6 +553,8 @@ export interface ConfigKeySchema {
   reason?: string;
   /** What a number counts: "bytes", "entries", "workers", "pixels", … Absent for non-numeric keys. */
   unit?: string;
+  /** Complete allowed set when a string is a closed choice rather than free text. */
+  choices?: string[];
   /** Secret values report presence only, never their content. */
   secret: boolean;
   default?: unknown;

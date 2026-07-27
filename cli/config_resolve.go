@@ -263,13 +263,14 @@ func configSchema() []apiv1.ConfigKeySchema {
 	out := make([]apiv1.ConfigKeySchema, 0, len(specs))
 	for _, spec := range specs {
 		entry := apiv1.ConfigKeySchema{
-			Path:   spec.Path,
-			Type:   kindName(spec.Kind),
-			Scope:  spec.Scope.String(),
-			Usage:  spec.Usage,
-			Reason: spec.Reason,
-			Unit:   spec.Unit,
-			Secret: spec.Secret,
+			Path:    spec.Path,
+			Type:    kindName(spec.Kind),
+			Scope:   spec.Scope.String(),
+			Usage:   spec.Usage,
+			Reason:  spec.Reason,
+			Unit:    spec.Unit,
+			Choices: append([]string(nil), spec.Choices...),
+			Secret:  spec.Secret,
 		}
 		// A secret's default is either empty or a placeholder; publishing it
 		// would defeat the deny list.

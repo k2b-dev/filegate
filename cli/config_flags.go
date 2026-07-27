@@ -69,6 +69,10 @@ type configFlagSpec struct {
 	// byte limit and a max-count are both ints, and several keys are named
 	// "size" while holding a count.
 	Unit string
+	// Choices is the complete allowed set for a closed string value. Keeping it
+	// beside validation lets schema-driven clients render a select without
+	// parsing human-facing usage text.
+	Choices []string
 }
 
 func allConfigFlagSpecs() []configFlagSpec {
@@ -90,7 +94,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts", Scope: scopeStatic, Reason: "mounts are bound into the service, seeded as index roots, and registered with the detector"},
 		{Name: "storage-runtime-config-path", Path: "storage.runtime_config_path", Kind: configFlagString, Usage: "directory holding runtime config overrides and resources; must be outside the index", Scope: scopeStatic, Reason: "the runtime config store is opened at startup"},
 		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
-		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Scope: scopeStatic, Reason: "selects a different detector implementation"},
+		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Choices: []string{"auto", "poll", "btrfs"}, Scope: scopeStatic, Reason: "selects a different detector implementation"},
 		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeRuntime},
 		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of paths kept in the in-memory cache", Scope: scopeRuntime},
 		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count", Scope: scopeRuntime},
@@ -107,7 +111,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of thumbnails kept in memory", Scope: scopeRuntime},
 		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeRuntime},
 		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Unit: "pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeRuntime},
-		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Scope: scopeRuntime},
+		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Choices: []string{"auto", "on", "off"}, Scope: scopeRuntime},
 		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown", Scope: scopeRuntime},
 		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeRuntime},
 		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets", Scope: scopeRuntime},
