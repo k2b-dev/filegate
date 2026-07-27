@@ -328,22 +328,20 @@ All require the bearer token. Secrets are never returned; they report
 `{"configured": true|false}`.
 
 - `GET /v1/config/schema`
-  - Every key with its type, scope (`static` or `runtime`), default and usage.
-  - Clients render controls from this instead of hardcoding the key list, so a
-    key added in a later release appears on its own.
+  - Every key with its type, activation (`static` or `runtime`), owner
+    (`manifest`, `bootstrap`, or `resource`), default and usage.
 - `GET /v1/config`
-  - Effective values, the source of each (`default`, `file`, `env`, `runtime`),
-    and any static setting waiting on a restart.
-- `PATCH /v1/config`
-  - Body `{"changes": {"<path>": <value>}}`. A `null` value clears the runtime
-    override so the key falls back to the file or its default.
-  - Batched because some settings are only valid together.
-  - Three outcomes: applied and live, applied with `restartRequired` naming the
-    running and desired values, or `400`.
-- `POST /v1/config/validate`
-  - Same validation without persisting, for checking input as it is typed.
-- `POST /v1/config/reload`
-  - Re-reads every source, for a config file edited by hand.
+  - Manifest metadata, effective and desired values, provenance, and static
+    settings waiting on a restart.
+- `POST /v1/config/plan`
+  - Body `{"values": {"<path>": <value>}}`, containing the complete replacement
+    manifest as dotted paths.
+  - Validates and returns add/change/remove operations without changing state.
+- `POST /v1/config/apply`
+  - Body `{"values": {...}, "expectedRevision": "<revision from plan>"}`.
+  - Replaces the complete managed set. Omitted keys fall back to bootstrap
+    sources or defaults. `null` is rejected.
+  - Returns `409` when the plan revision is stale.
 
 ## S3 access keys
 

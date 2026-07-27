@@ -59,21 +59,40 @@ func TestSecretLookingKeysAreMarkedSecret(t *testing.T) {
 	}
 }
 
-func TestScopeCountsAreDeliberate(t *testing.T) {
+func TestRuntimeScopeMatchesLiveSnapshotConsumers(t *testing.T) {
+	expectedRuntime := map[string]bool{
+		"server.public_url":               true,
+		"server.trusted_proxies":          true,
+		"server.cors.allowed_origins":     true,
+		"server.cors.allowed_methods":     true,
+		"server.cors.allowed_headers":     true,
+		"server.cors.exposed_headers":     true,
+		"server.cors.max_age":             true,
+		"server.cors.allow_credentials":   true,
+		"server.access_log_enabled":       true,
+		"upload.max_chunk_bytes":          true,
+		"upload.max_upload_bytes":         true,
+		"upload.max_session_upload_bytes": true,
+		"upload.min_free_bytes":           true,
+	}
 	var static, runtime int
 	for _, spec := range allConfigFlagSpecs() {
 		if spec.Scope == scopeStatic {
 			static++
+			if expectedRuntime[spec.Path] {
+				t.Errorf("%s is consumed from the live snapshot but marked static", spec.Path)
+			}
 			continue
 		}
 		runtime++
+		if !expectedRuntime[spec.Path] {
+			t.Errorf("%s is marked runtime without a live snapshot consumer", spec.Path)
+		}
+		delete(expectedRuntime, spec.Path)
 	}
 	t.Logf("config keys: %d static, %d runtime, %d total", static, runtime, static+runtime)
-
-	// The whole point of the split is that most settings are adjustable. If
-	// this ratio inverts, something was classified without thinking.
-	if runtime < static {
-		t.Errorf("more static (%d) than runtime (%d) keys; the split is meant to favour runtime", static, runtime)
+	for path := range expectedRuntime {
+		t.Errorf("%s has a live snapshot consumer but no runtime schema entry", path)
 	}
 }
 

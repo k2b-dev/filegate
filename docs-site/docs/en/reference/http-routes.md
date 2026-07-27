@@ -83,18 +83,17 @@ These change service behavior and credentials. They exist only when the server w
 
 | Method | Path | Auth | Request | Response | Meaning |
 |---|---|---|---|---|---|
-| `GET` | `/v1/config/schema` | Bearer | None | `ConfigSchemaResponse` | Every key with type, scope, unit, default, and why a static key needs a restart. |
-| `GET` | `/v1/config` | Bearer | None | `ConfigValuesResponse` | Effective values and provenance. Secrets report only whether they are configured. |
-| `PATCH` | `/v1/config` | Bearer | `ConfigChangeRequest` | `ConfigChangeResponse` | Apply changes. `null` clears an override. Returns keys still needing a restart. |
-| `POST` | `/v1/config/validate` | Bearer | `ConfigChangeRequest` | `ConfigChangeResponse` | Check a change without applying it. |
-| `POST` | `/v1/config/reload` | Bearer | None | `ConfigChangeResponse` | Re-read file and environment. Same effect as `SIGHUP`. |
+| `GET` | `/v1/config/schema` | Bearer | None | `ConfigSchemaResponse` | Every key with type, activation, owner, unit, default, and restart reason. |
+| `GET` | `/v1/config` | Bearer | None | `ConfigValuesResponse` | Manifest metadata plus effective, desired, and provenance. Secrets report presence only. |
+| `POST` | `/v1/config/plan` | Bearer | `ConfigManifestPlanRequest` | `ConfigManifestPlanResponse` | Validate and diff a complete replacement manifest without changing state. |
+| `POST` | `/v1/config/apply` | Bearer | `ConfigManifestApplyRequest` | `ConfigManifestApplyResponse` | Replace desired state when `expectedRevision` still matches. Returns `409` for a stale plan. |
 | `GET` | `/v1/s3/keys` | Bearer | None | `S3KeyListResponse` | List S3 access keys. Secrets are never included. |
 | `POST` | `/v1/s3/keys` | Bearer | `S3KeyCreateRequest` | `S3KeyCreated` | Create a key. The secret is returned once and never again. |
 | `PATCH` | `/v1/s3/keys/{accessKey}` | Bearer | `S3KeyUpdateRequest` | `S3Key` | Change buckets, rate limits, or label. |
 | `POST` | `/v1/s3/keys/{accessKey}/rotate` | Bearer | None | `S3KeyCreated` | Issue a new secret for an existing key. |
 | `DELETE` | `/v1/s3/keys/{accessKey}` | Bearer | None | `204` | Delete a key. Deleting the last key leaves nothing able to authenticate against S3. |
 
-The bearer token is the only credential here, so it grants configuration authority as well as data access. See [Security model](../security).
+`values` is a map of dotted config paths to values. Omission removes a previously managed path; `null`, bootstrap-owned, secret, resource-owned, and unknown keys are rejected. The bearer token grants configuration authority as well as data access. See [Security model](../security).
 
 ## Listing query
 

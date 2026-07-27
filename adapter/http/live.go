@@ -9,9 +9,9 @@ import (
 
 // liveConfig reads runtime-scoped settings from the published snapshot.
 //
-// Without this the configuration API would be dishonest: it reports a key as
-// runtime-adjustable and answers success, while handlers keep using whatever
-// they captured when the router was built. Each accessor falls back to the
+// Without this manifest apply would be dishonest: it reports a key as
+// runtime-activated, while handlers keep using whatever they captured when the
+// router was built. Each accessor falls back to the
 // boot-time options when no holder is supplied, which is how the existing
 // callers and every current test keep working.
 type liveConfig struct {
@@ -107,8 +107,8 @@ func (l liveConfig) accessLogEnabled() bool {
 
 // The middlewares below re-read their settings on every request. Deciding once
 // when the chain is built would mean a change to CORS, trusted proxies or
-// access logging only applied after a restart, while the config API reported
-// those keys as runtime-adjustable.
+// access logging only applied after a restart, while the schema reported those
+// keys as runtime-activated.
 
 func liveRealIPMiddleware(live liveConfig) middlewareFunc {
 	return func(next http.Handler) http.Handler {

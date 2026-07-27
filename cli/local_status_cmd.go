@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -101,6 +102,12 @@ func newStatusCmd() *cobra.Command {
 func resolveLocalEndpoint(configFile, host, token string, needToken bool) (string, string, error) {
 	baseURL := strings.TrimSpace(host)
 	bearer := strings.TrimSpace(token)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(os.Getenv("FILEGATE_HOST"))
+	}
+	if bearer == "" {
+		bearer = strings.TrimSpace(os.Getenv("FILEGATE_TOKEN"))
+	}
 
 	needsCfg := baseURL == "" || (needToken && bearer == "")
 	if needsCfg {

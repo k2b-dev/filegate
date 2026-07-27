@@ -22,14 +22,16 @@ func newDaemonConfigCmd() *cobra.Command {
 	var configFile string
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Inspect and edit Filegate YAML config",
-		Long:  "Inspect and edit Filegate YAML config offline. Mutating commands require --config and do not change a running daemon.",
+		Short: "Inspect bootstrap config and manage declarative manifests",
+		Long:  "Inspect or edit bootstrap YAML offline, and plan or apply a versioned manifest through the authenticated daemon API.",
 	}
 	cmd.PersistentFlags().StringVar(&configFile, "config", "", "path to config file")
 	cmd.AddCommand(newConfigShowCmd(&configFile))
 	cmd.AddCommand(newConfigSchemaCmd())
 	cmd.AddCommand(newConfigValidateCmd(&configFile))
 	cmd.AddCommand(newConfigSetCmd(&configFile))
+	cmd.AddCommand(newConfigPlanCmd(&configFile))
+	cmd.AddCommand(newConfigApplyCmd(&configFile))
 	cmd.AddCommand(newConfigS3Cmd(&configFile))
 	cmd.AddCommand(newConfigMountCmd(&configFile))
 	return cmd

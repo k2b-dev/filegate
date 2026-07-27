@@ -11,8 +11,8 @@ import (
 // without a restart. Static-scoped values are still read once during startup;
 // see the Scope field on the CLI's config specs for which is which.
 //
-// Reads are lock-free and safe from any goroutine. A reload swaps the whole
-// configuration at once, so a request never sees half of an update.
+// Reads are lock-free and safe from any goroutine. A manifest apply swaps the
+// whole runtime configuration at once, so a request never sees half an update.
 type ConfigHolder struct {
 	current atomic.Pointer[Config]
 }
@@ -52,8 +52,8 @@ func (h *ConfigHolder) Set(cfg Config) {
 // RestartRequired lists the static settings whose desired value differs from
 // what the running process is using.
 //
-// Reporting this is the difference between an honest reload and one that
-// accepts an edit, answers success, and quietly changes nothing. The caller
+// Reporting this is the difference between an honest apply and one that
+// accepts desired state, answers success, and quietly changes nothing. The caller
 // supplies the comparison because only it knows which paths are static.
 type RestartRequired struct {
 	Path    string `json:"path"`

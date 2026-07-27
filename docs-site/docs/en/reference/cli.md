@@ -20,6 +20,8 @@ This reference catalogs Filegate CLI commands for operators using `filegate` or 
 | `fg config schema` | Local CLI | List every config key with type, scope and default. Needs no config file. |
 | `fg config validate` | Config file | Validate resolved config. |
 | `fg config set` | Config file | Set one or more config values offline. |
+| `fg config plan -f <manifest>` | Running service | Validate and diff a complete desired-state manifest. |
+| `fg config apply -f <manifest>` | Running service | Apply a complete manifest with revision conflict protection. |
 | `fg config mount add` | Config file | Add a storage mount. |
 | `fg config mount remove` | Config file | Remove a storage mount. |
 | `fg config s3 key generate` | Local CLI | Generate an S3 access key and secret. |
@@ -37,9 +39,11 @@ This reference catalogs Filegate CLI commands for operators using `filegate` or 
 | Flag | Type | Scope | Meaning |
 |---|---|---:|---|
 | `--config` | string | Config commands, serve, index, health/status resolution | Config file path. |
-| `--host` | string | `health`, `status` | API base URL override. |
-| `--token` | string | `status` | Bearer token override. |
-| `--timeout` | duration | `health`, `status` | HTTP request timeout. Default `10s`. |
+| `--host` | string | `health`, `status`, config `plan/apply` | API base URL override. |
+| `--token` | string | `status`, config `plan/apply` | Bearer token override. |
+| `--timeout` | duration | `health`, `status`, config `plan/apply` | HTTP request timeout. |
+
+Config `plan/apply` also accept `FILEGATE_HOST` and `FILEGATE_TOKEN`. Without explicit values they resolve the local listener and bearer token from the bootstrap config.
 
 ## `fg config show`
 
@@ -58,11 +62,27 @@ This reference catalogs Filegate CLI commands for operators using `filegate` or 
 
 ## `fg config set`
 
-`fg config set` accepts every config flag listed in [Config reference](config). Mutating config commands require explicit `--config`.
+`fg config set` edits the offline bootstrap file. It does not mutate a running daemon. Manifest-owned deployment state should be changed in the manifest and applied instead.
 
 | Flag | Type | Default | Meaning |
 |---|---|---:|---|
 | `--no-backup` | boolean | `false` | Skip timestamped config backup before replacing the config file. |
+
+## `fg config plan` and `fg config apply`
+
+Both commands require a version 1 manifest through `--file` / `-f` and use the authenticated HTTP API.
+
+| Flag | Type | Default | Meaning |
+|---|---|---:|---|
+| `--file`, `-f` | string | required | Versioned manifest YAML. |
+| `--host` | string | resolved | Filegate API base URL. |
+| `--token` | string | resolved | Bearer token. Mutually exclusive with `--token-file`. |
+| `--token-file` | string | empty | File containing the bearer token. |
+| `--actor` | string | `filegate-cli` | Operator label persisted with the apply. |
+| `--format` | enum | `text` | `text` or `json`. |
+| `--timeout` | duration | `15s` | Per-request timeout. |
+
+`apply` plans first and sends the observed current revision to the apply route. A concurrent apply returns a conflict instead of overwriting newer desired state.
 
 ## S3 key commands
 

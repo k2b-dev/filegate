@@ -226,9 +226,8 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		cfgAPI := configHandlers{svc: opts.ConfigService}
 		handleV1("GET /v1/config/schema", cfgAPI.handleSchema)
 		handleV1("GET /v1/config", cfgAPI.handleValues)
-		handleV1("PATCH /v1/config", cfgAPI.handlePatch)
-		handleV1("POST /v1/config/validate", cfgAPI.handleValidate)
-		handleV1("POST /v1/config/reload", cfgAPI.handleReload)
+		handleV1("POST /v1/config/plan", cfgAPI.handlePlan)
+		handleV1("POST /v1/config/apply", cfgAPI.handleApply)
 	}
 
 	if opts.S3Keys != nil {
@@ -1499,6 +1498,10 @@ func restOperationName(method, path string) string {
 		return "index.rescan"
 	case method == http.MethodPost && path == "/v1/versions/prune":
 		return "versions.prune"
+	case method == http.MethodPost && path == "/v1/config/plan":
+		return "config.plan"
+	case method == http.MethodPost && path == "/v1/config/apply":
+		return "config.apply"
 	case method == http.MethodPost && path == "/v1/uploads/direct":
 		return "direct_upload.create_url"
 	case method == http.MethodPost && path == "/v1/downloads/direct":

@@ -541,13 +541,15 @@ export interface RetentionBucket {
 }
 
 export type ConfigScope = "static" | "runtime";
-export type ConfigSource = "default" | "file" | "env" | "runtime";
+export type ConfigSource = "default" | "file" | "env" | "manifest";
+export type ConfigManagedBy = "manifest" | "bootstrap" | "resource";
 
 export interface ConfigKeySchema {
   path: string;
   /** string, bool, int, duration, stringList, s3Keys or retentionBuckets. */
   type: string;
   scope: ConfigScope;
+  managedBy: ConfigManagedBy;
   usage: string;
   /** Why a static key cannot change while the server runs. */
   reason?: string;
@@ -566,26 +568,52 @@ export interface ConfigSchemaResponse {
 
 export interface ConfigValue {
   path: string;
-  /** The effective value, or {configured: boolean} for secrets. */
-  value: unknown;
+  /** What the running process currently uses. */
+  effective: unknown;
+  /** What will be effective after any required restart. */
+  desired: unknown;
   source: ConfigSource;
   scope: ConfigScope;
+  managedBy: ConfigManagedBy;
 }
 
 export interface ConfigRestartRequired {
   path: string;
-  running: string;
+  effective: string;
   desired: string;
+}
+
+export interface ConfigManifestStatus {
+  revision: string;
+  appliedAt: number;
+  appliedBy: string;
 }
 
 export interface ConfigValuesResponse {
   generatedAt: number;
+  manifest?: ConfigManifestStatus;
   values: ConfigValue[];
   restartRequired?: ConfigRestartRequired[];
 }
 
-export interface ConfigChangeResponse {
-  applied: boolean;
+export interface ConfigManifestChange {
+  path: string;
+  operation: "add" | "change" | "remove";
+  activation: ConfigScope;
+  from?: unknown;
+  to?: unknown;
+}
+
+export interface ConfigManifestPlanResponse {
+  currentRevision: string;
+  proposedRevision: string;
+  changes: ConfigManifestChange[];
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface ConfigManifestApplyResponse {
+  manifest: ConfigManifestStatus;
+  changes: ConfigManifestChange[];
   restartRequired?: ConfigRestartRequired[];
 }
 

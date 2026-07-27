@@ -48,6 +48,11 @@ export type { FileConflictMode, FingerprintMode, MkdirConflictMode, UploadSessio
 
 export type {
   ConfigKeySchema,
+  ConfigManagedBy,
+  ConfigManifestApplyResponse,
+  ConfigManifestChange,
+  ConfigManifestPlanResponse,
+  ConfigManifestStatus,
   RetentionBucket,
   ConfigRestartRequired,
   ConfigSchemaResponse,
@@ -55,7 +60,6 @@ export type {
   ConfigSource,
   ConfigValue,
   ConfigValuesResponse,
-  ConfigChangeResponse,
   S3Key,
   S3KeyCreated,
   S3KeyCreateRequest,

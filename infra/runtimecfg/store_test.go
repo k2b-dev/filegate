@@ -36,34 +36,53 @@ func reopen(t *testing.T, store *Store, path string) *Store {
 	return reopened
 }
 
-func TestOverridesRoundTripAndSurviveReopen(t *testing.T) {
+func TestManifestRoundTripAndSurvivesReopen(t *testing.T) {
 	store, path := openTemp(t)
 
-	if err := store.SetOverrides(map[string]any{"upload.max_upload_bytes": 1234, "server.access_log_enabled": false}); err != nil {
+	want := AppliedManifest{
+		Values:    map[string]any{"upload.max_upload_bytes": 1234, "server.access_log_enabled": false},
+		Revision:  "abc123",
+		AppliedAt: 1720000000000,
+		AppliedBy: "alice",
+	}
+	if err := store.SetManifest(want); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
 	store = reopen(t, store, path)
-	got := store.Overrides()
-	if len(got) != 2 {
-		t.Fatalf("overrides = %d, want 2", len(got))
+	got, exists, err := store.Manifest()
+	if err != nil || !exists {
+		t.Fatalf("manifest: exists=%v err=%v", exists, err)
 	}
-	if string(got["upload.max_upload_bytes"]) != "1234" {
-		t.Errorf("max_upload_bytes = %s, want 1234", got["upload.max_upload_bytes"])
+	if got.Revision != want.Revision || got.AppliedAt != want.AppliedAt || got.AppliedBy != want.AppliedBy {
+		t.Errorf("metadata = %+v, want %+v", got, want)
+	}
+	if got.Values["upload.max_upload_bytes"] != float64(1234) {
+		t.Errorf("max_upload_bytes = %#v, want 1234", got.Values["upload.max_upload_bytes"])
 	}
 }
 
-func TestNilOverrideClearsBackToDefault(t *testing.T) {
+func TestManifestIsACompleteAtomicReplacement(t *testing.T) {
 	store, _ := openTemp(t)
 
-	if err := store.SetOverrides(map[string]any{"upload.expiry": "1h"}); err != nil {
+	if _, exists, err := store.Manifest(); err != nil || exists {
+		t.Fatalf("fresh manifest: exists=%v err=%v", exists, err)
+	}
+	if err := store.SetManifest(AppliedManifest{Values: map[string]any{"upload.expiry": "1h"}, Revision: "one"}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if err := store.SetOverrides(map[string]any{"upload.expiry": nil}); err != nil {
-		t.Fatalf("clear: %v", err)
+	if err := store.SetManifest(AppliedManifest{Values: map[string]any{"server.access_log_enabled": true}, Revision: "two"}); err != nil {
+		t.Fatalf("replace: %v", err)
 	}
-	if _, present := store.Overrides()["upload.expiry"]; present {
-		t.Error("cleared override is still stored; the key would never fall back to its default")
+	got, exists, err := store.Manifest()
+	if err != nil || !exists {
+		t.Fatalf("manifest: exists=%v err=%v", exists, err)
+	}
+	if _, present := got.Values["upload.expiry"]; present {
+		t.Error("removed path survived complete manifest replacement")
+	}
+	if got.Values["server.access_log_enabled"] != true || got.Revision != "two" {
+		t.Errorf("replacement = %+v", got)
 	}
 }
 
@@ -154,22 +173,23 @@ func TestBootstrapMarkerIsStickyAndSurvivesCorruption(t *testing.T) {
 	}
 }
 
-func TestOverridesAreIsolatedFromResources(t *testing.T) {
+func TestManifestIsIsolatedFromResources(t *testing.T) {
 	store, _ := openTemp(t)
 
-	if err := store.SetOverrides(map[string]any{"upload.expiry": "2h"}); err != nil {
+	if err := store.SetManifest(AppliedManifest{Values: map[string]any{"upload.expiry": "2h"}, Revision: "rev"}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	if err := store.PutResource("s3key", "AKIA1", s3key{AccessKey: "AKIA1"}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
-	if len(store.Overrides()) != 1 {
-		t.Errorf("resources leaked into overrides: %v", store.Overrides())
+	manifest, exists, err := store.Manifest()
+	if err != nil || !exists || len(manifest.Values) != 1 {
+		t.Errorf("manifest changed by resource: exists=%v values=%v err=%v", exists, manifest.Values, err)
 	}
 	list, _ := store.ListResources("s3key")
 	if len(list) != 1 {
-		t.Errorf("overrides leaked into resources: %v", list)
+		t.Errorf("manifest leaked into resources: %v", list)
 	}
 
 	var raw json.RawMessage

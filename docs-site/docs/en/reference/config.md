@@ -11,135 +11,141 @@ tags: [reference, config]
 
 # Config reference
 
-This reference catalogs every Filegate configuration key for operators who maintain YAML files, environment variables, or `fg config` commands.
+This reference catalogs every Filegate configuration key, when a change activates, and which surface owns it.
 
 Environment variables use `FILEGATE_` plus the uppercase config path with `_` separators. Example: `server.listen` becomes `FILEGATE_SERVER_LISTEN`.
 
-## Scope
+## Activation and ownership
 
-Every key is either static or runtime. The distinction is not cosmetic: a runtime key can be changed through the admin UI or `PATCH /v1/config` and takes effect on the next request, while a static key is consumed once during startup and a new value only applies after a restart.
+A manifest is a complete desired-state replacement. Runtime keys activate when `fg config apply` succeeds. Static keys are stored immediately but remain pending until restart.
 
-| Scope | Keys | Changing it |
+| Activation | Keys | Effect |
 |---|---:|---|
-| `static` | 12 | Edit the YAML file or environment, then restart. Rejected by the config API. |
-| `runtime` | 45 | Admin UI, `PATCH /v1/config`, or the YAML file. Stored in the runtime config store and outlives a restart. |
+| `static` | 44 | Desired state is stored; the running process changes after restart. |
+| `runtime` | 13 | The running snapshot changes immediately. |
 
-Secret keys are never returned by the config API or printed by `fg config show`; they report only whether a value is configured. They are `auth.bearer_token`, `metrics.token`, `s3.access_key`, `s3.keys` and `s3.secret_key`.
+| Managed by | Keys | Meaning |
+|---|---:|---|
+| `manifest` | 51 | Accepted by the complete manifest in `fg config plan/apply`. |
+| `bootstrap` | 3 | Read from file, environment, or startup flags; excluded from manifests. |
+| `resource` | 3 | Managed through its dedicated resource API, not configuration apply. |
+
+Secret keys are excluded from manifests, never returned by the config API, and redacted by `fg config show`; they report only whether a value is configured. They are `auth.bearer_token`, `metrics.token`, `s3.access_key`, `s3.keys` and `s3.secret_key`.
 
 ## Server
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `server.listen` | string | static | `:8080` | REST listener address. Needs a restart: REST listener bind address, fixed once the server accepts connections. |
-| `server.public_url` | string | runtime | - | Public REST base URL used when minting direct upload URLs. |
-| `server.trusted_proxies` | string list | runtime | - | Proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers. |
-| `server.cors.allowed_origins` | string list | runtime | - | CORS allowed origin; repeat for multiple origins; empty disables CORS. |
-| `server.cors.allowed_methods` | string list | runtime | - | CORS allowed method; repeat for multiple methods; empty uses REST defaults. |
-| `server.cors.allowed_headers` | string list | runtime | - | CORS allowed request header; repeat for multiple headers; empty uses REST defaults. |
-| `server.cors.exposed_headers` | string list | runtime | - | CORS response header exposed to browsers; repeat for multiple headers. |
-| `server.cors.max_age` | duration | runtime | `0s` | CORS preflight cache duration. |
-| `server.cors.allow_credentials` | bool | runtime | `false` | Allow credentials on CORS responses; cannot be used with wildcard origin. |
-| `server.write_timeout` | duration | static | `5m` | HTTP response write timeout. Needs a restart: an http.Server field, no longer read after ListenAndServe. |
-| `server.access_log_enabled` | bool | runtime | `true` | Enable REST and S3 access logs. |
-| `server.shutdown_timeout` | duration | runtime | `60s` | Graceful shutdown timeout. |
-| `server.http2_cleartext` | bool | static | `false` | Accept unencrypted HTTP/2 (h2c) on the REST listener, alongside HTTP/1.1 on the same port. Needs a restart: the protocol set is fixed when the listener starts accepting connections. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `server.listen` | string | static | manifest | `:8080` | REST listener address. Needs a restart: REST listener bind address, fixed once the server accepts connections. |
+| `server.public_url` | string | runtime | manifest | - | Public REST base URL used when minting direct upload URLs. |
+| `server.trusted_proxies` | string list | runtime | manifest | - | Proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers. |
+| `server.cors.allowed_origins` | string list | runtime | manifest | - | CORS allowed origin; repeat for multiple origins; empty disables CORS. |
+| `server.cors.allowed_methods` | string list | runtime | manifest | - | CORS allowed method; repeat for multiple methods; empty uses REST defaults. |
+| `server.cors.allowed_headers` | string list | runtime | manifest | - | CORS allowed request header; repeat for multiple headers; empty uses REST defaults. |
+| `server.cors.exposed_headers` | string list | runtime | manifest | - | CORS response header exposed to browsers; repeat for multiple headers. |
+| `server.cors.max_age` | duration | runtime | manifest | `0s` | CORS preflight cache duration. |
+| `server.cors.allow_credentials` | bool | runtime | manifest | `false` | Allow credentials on CORS responses; cannot be used with wildcard origin. |
+| `server.write_timeout` | duration | static | manifest | `5m` | HTTP response write timeout. Needs a restart: an http.Server field, no longer read after ListenAndServe. |
+| `server.access_log_enabled` | bool | runtime | manifest | `true` | Enable REST and S3 access logs. |
+| `server.shutdown_timeout` | duration | static | manifest | `60s` | Graceful shutdown timeout. Needs a restart: the shutdown plan captures its deadline when the process starts. |
+| `server.http2_cleartext` | bool | static | manifest | `false` | Accept unencrypted HTTP/2 (h2c) on the REST listener, alongside HTTP/1.1 on the same port. Needs a restart: the protocol set is fixed when the listener starts accepting connections. |
 
 ## Auth
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `auth.bearer_token` | string | static | - | REST bearer token. Needs a restart: deliberately static: the break-glass credential must survive a damaged runtime store. Secret; never returned by the API. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `auth.bearer_token` | string | static | bootstrap | - | REST bearer token. Needs a restart: deliberately static: the break-glass credential must survive a damaged runtime store. Secret; never returned by the API. |
 
 ## Storage
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `storage.base_paths` | string list | static | `/var/lib/filegate/data` | Storage mount path; repeat for multiple mounts. Needs a restart: mounts are bound into the service, seeded as index roots, and registered with the detector. |
-| `storage.runtime_config_path` | string | static | `/var/lib/filegate/config` | Directory holding runtime config overrides and resources; must be outside the index. Needs a restart: the runtime config store is opened at startup. |
-| `storage.index_path` | string | static | `/var/lib/filegate/index` | Pebble index directory. Needs a restart: the Pebble index is opened at startup. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `storage.base_paths` | string list | static | manifest | `/var/lib/filegate/data` | Storage mount path; repeat for multiple mounts. Needs a restart: mounts are bound into the service, seeded as index roots, and registered with the detector. |
+| `storage.runtime_config_path` | string | static | bootstrap | `/var/lib/filegate/config` | Directory holding the applied manifest and runtime resources; must be outside the index. Needs a restart: the runtime config store is opened before the manifest can be read. |
+| `storage.index_path` | string | static | manifest | `/var/lib/filegate/index` | Pebble index directory. Needs a restart: the Pebble index is opened at startup. |
 
 ## Detection
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `detection.backend` | string | static | `auto` | Change detector backend: auto, poll, btrfs. Needs a restart: selects a different detector implementation. |
-| `detection.poll_interval` | duration | runtime | `3s` | Polling interval when poll detection is used. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `detection.backend` | string | static | manifest | `auto` | Change detector backend: auto, poll, btrfs. Needs a restart: selects a different detector implementation. |
+| `detection.poll_interval` | duration | static | manifest | `3s` | Polling interval when poll detection is used. Needs a restart: the detector loop captures its interval when it starts. |
 
 ## Cache
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `cache.path_cache_size` | int | runtime | `100000` | Maximum number of paths kept in the in-memory cache. Measured in entries. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `cache.path_cache_size` | int | static | manifest | `100000` | Maximum number of paths kept in the in-memory cache. Measured in entries. Needs a restart: the path cache is allocated when the service is built. |
 
 ## Jobs
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `jobs.workers` | int | runtime | `40` | Background worker count. Measured in workers. |
-| `jobs.queue_size` | int | runtime | `8192` | Maximum jobs queued before new ones are rejected. Measured in jobs. |
-| `jobs.thumbnail_workers` | int | runtime | - | Thumbnail worker count. Measured in workers. |
-| `jobs.thumbnail_queue_size` | int | runtime | - | Maximum thumbnail jobs queued before new ones are rejected. Measured in jobs. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `jobs.workers` | int | static | manifest | `40` | Background worker count. Measured in workers. Needs a restart: the worker pool is created at startup. |
+| `jobs.queue_size` | int | static | manifest | `8192` | Maximum jobs queued before new ones are rejected. Measured in jobs. Needs a restart: the job queue is allocated at startup. |
+| `jobs.thumbnail_workers` | int | static | manifest | - | Thumbnail worker count. Measured in workers. Needs a restart: the thumbnail worker pool is created at startup. |
+| `jobs.thumbnail_queue_size` | int | static | manifest | - | Maximum thumbnail jobs queued before new ones are rejected. Measured in jobs. Needs a restart: the thumbnail queue is allocated at startup. |
 
 ## Upload
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `upload.expiry` | duration | runtime | `24h` | Upload session expiry. |
-| `upload.cleanup_interval` | duration | runtime | `6h` | Upload session cleanup interval. |
-| `upload.max_chunk_bytes` | int | runtime | `52428800` | Maximum single chunk size in bytes. Measured in bytes. |
-| `upload.max_upload_bytes` | int | runtime | `524288000` | Maximum one-shot upload size in bytes. Measured in bytes. |
-| `upload.max_session_upload_bytes` | int | runtime | `53687091200` | Maximum upload-session size in bytes. Measured in bytes. |
-| `upload.max_concurrent_segment_writes` | int | runtime | `80` | Maximum concurrent segment writes. Measured in writes. |
-| `upload.min_free_bytes` | int | runtime | `67108864` | Minimum free bytes required before accepting uploads. Measured in bytes. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `upload.expiry` | duration | static | manifest | `24h` | Upload session expiry. Needs a restart: the upload session manager captures its expiry at startup. |
+| `upload.cleanup_interval` | duration | static | manifest | `6h` | Upload session cleanup interval. Needs a restart: the upload cleanup loop captures its interval at startup. |
+| `upload.max_chunk_bytes` | int | runtime | manifest | `52428800` | Maximum single chunk size in bytes. Measured in bytes. |
+| `upload.max_upload_bytes` | int | runtime | manifest | `524288000` | Maximum one-shot upload size in bytes. Measured in bytes. |
+| `upload.max_session_upload_bytes` | int | runtime | manifest | `53687091200` | Maximum upload-session size in bytes. Measured in bytes. |
+| `upload.max_concurrent_segment_writes` | int | static | manifest | `80` | Maximum concurrent segment writes. Measured in writes. Needs a restart: the segment-write semaphore is allocated at startup. |
+| `upload.min_free_bytes` | int | runtime | manifest | `67108864` | Minimum free bytes required before accepting uploads. Measured in bytes. |
 
 ## Thumbnail
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `thumbnail.lru_cache_size` | int | runtime | `1024` | Maximum number of thumbnails kept in memory. Measured in entries. |
-| `thumbnail.max_source_bytes` | int | runtime | `67108864` | Maximum source file size for thumbnails. Measured in bytes. |
-| `thumbnail.max_pixels` | int | runtime | `41943040` | Maximum decoded pixels for thumbnails. Measured in pixels. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `thumbnail.lru_cache_size` | int | static | manifest | `1024` | Maximum number of thumbnails kept in memory. Measured in entries. Needs a restart: the thumbnail cache is allocated at startup. |
+| `thumbnail.max_source_bytes` | int | static | manifest | `67108864` | Maximum source file size for thumbnails. Measured in bytes. Needs a restart: the thumbnail service captures this limit at startup. |
+| `thumbnail.max_pixels` | int | static | manifest | `41943040` | Maximum decoded pixels for thumbnails. Measured in pixels. Needs a restart: the thumbnail service captures this limit at startup. |
 
 ## Versioning
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `versioning.enabled` | string | runtime | `auto` | Versioning mode: auto, on, off. |
-| `versioning.cooldown` | duration | runtime | `15m` | Automatic version capture cooldown. |
-| `versioning.min_size_for_auto_v1` | int | runtime | `65536` | Minimum size for automatic V1 capture. Measured in bytes. |
-| `versioning.retention_buckets` | retention buckets | runtime | `[{"keep_for":"1h","max_count":-1},{"keep_for":"24h","max_count":24},{"keep_for":"720h","max_count":30},{"keep_for":"8760h","max_count":12}]` | Retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets. |
-| `versioning.pruner_interval` | duration | runtime | `5m` | Versioning pruner interval. |
-| `versioning.max_pinned_per_file` | int | runtime | `100` | Maximum pinned versions per file; 0 disables cap. Measured in versions. |
-| `versioning.pinned_grace_after_delete` | duration | runtime | `720h` | Retention grace for pinned versions after live file delete. |
-| `versioning.max_label_bytes` | int | runtime | `2048` | Maximum version label bytes. Measured in bytes. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `versioning.enabled` | string | static | manifest | `auto` | Versioning mode: auto, on, off. Needs a restart: versioning and its background pruner are initialized at startup. |
+| `versioning.cooldown` | duration | static | manifest | `15m` | Automatic version capture cooldown. Needs a restart: the versioning service captures its policy at startup. |
+| `versioning.min_size_for_auto_v1` | int | static | manifest | `65536` | Minimum size for automatic V1 capture. Measured in bytes. Needs a restart: the versioning service captures its policy at startup. |
+| `versioning.retention_buckets` | retention buckets | static | manifest | `[{"keep_for":"1h","max_count":-1},{"keep_for":"24h","max_count":24},{"keep_for":"720h","max_count":30},{"keep_for":"8760h","max_count":12}]` | Retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets. Needs a restart: the versioning pruner captures its retention policy at startup. |
+| `versioning.pruner_interval` | duration | static | manifest | `5m` | Versioning pruner interval. Needs a restart: the versioning pruner loop starts with a fixed interval. |
+| `versioning.max_pinned_per_file` | int | static | manifest | `100` | Maximum pinned versions per file; 0 disables cap. Measured in versions. Needs a restart: the versioning service captures this limit at startup. |
+| `versioning.pinned_grace_after_delete` | duration | static | manifest | `720h` | Retention grace for pinned versions after live file delete. Needs a restart: the versioning pruner captures its policy at startup. |
+| `versioning.max_label_bytes` | int | static | manifest | `2048` | Maximum version label bytes. Measured in bytes. Needs a restart: the versioning service captures this limit at startup. |
 
 ## S3
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `s3.enabled` | bool | static | `false` | Enable S3-compatible listener. Needs a restart: controls whether the second listener exists. |
-| `s3.listen` | string | static | `:9000` | S3 listener address. Needs a restart: S3 listener bind address. |
-| `s3.region` | string | runtime | `us-east-1` | S3 SigV4 region. |
-| `s3.access_key` | string | runtime | - | Legacy single-tenant S3 access key. Secret; never returned by the API. |
-| `s3.secret_key` | string | runtime | - | Legacy single-tenant S3 secret key. Secret; never returned by the API. |
-| `s3.max_concurrent_writes` | int | runtime | `80` | Maximum concurrent S3 object and part writes. Measured in writes. |
-| `s3.keys` | S3 key list | runtime | - | S3 key access_key=<ak>,secret_key=<sk>,buckets=<a\|b\|*>,requests_per_second=<n>,burst=<n>; repeat for multiple keys. Secret; never returned by the API. |
-| `s3.cleanup.done_retention` | duration | runtime | - | Multipart done-manifest retention; zero uses adapter default. |
-| `s3.cleanup.aborted_retention` | duration | runtime | - | Multipart aborted-manifest retention; zero uses adapter default. |
-| `s3.cleanup.stuck_upload_max_age` | duration | runtime | - | Maximum age for stuck open multipart uploads; zero uses adapter default. |
-| `s3.cleanup.interval` | duration | runtime | - | Multipart cleanup interval; negative disables. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `s3.enabled` | bool | static | manifest | `false` | Enable S3-compatible listener. Needs a restart: controls whether the second listener exists. |
+| `s3.listen` | string | static | manifest | `:9000` | S3 listener address. Needs a restart: S3 listener bind address. |
+| `s3.region` | string | static | manifest | `us-east-1` | S3 SigV4 region. Needs a restart: the S3 signing handler captures its region at startup. |
+| `s3.access_key` | string | static | resource | - | Single-tenant S3 seed access key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
+| `s3.secret_key` | string | static | resource | - | Single-tenant S3 seed secret key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
+| `s3.max_concurrent_writes` | int | static | manifest | `80` | Maximum concurrent S3 object and part writes. Measured in writes. Needs a restart: the S3 write semaphore is allocated at startup. |
+| `s3.keys` | S3 key list | static | resource | - | S3 access-key seed entries; use the S3 key resource API after bootstrap. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
+| `s3.cleanup.done_retention` | duration | static | manifest | - | Multipart done-manifest retention; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |
+| `s3.cleanup.aborted_retention` | duration | static | manifest | - | Multipart aborted-manifest retention; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |
+| `s3.cleanup.stuck_upload_max_age` | duration | static | manifest | - | Maximum age for stuck open multipart uploads; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |
+| `s3.cleanup.interval` | duration | static | manifest | - | Multipart cleanup interval; negative disables. Needs a restart: the multipart cleanup loop starts with a fixed interval. |
 
 ## Metrics
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `metrics.enabled` | bool | static | `false` | Enable Prometheus metrics endpoint. Needs a restart: the metrics route is mounted conditionally during router construction. |
-| `metrics.path` | string | static | `/metrics` | Prometheus metrics path. Needs a restart: the metrics route pattern is fixed at router construction. |
-| `metrics.token` | string | runtime | - | Optional Prometheus metrics bearer token. Secret; never returned by the API. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `metrics.enabled` | bool | static | manifest | `false` | Enable Prometheus metrics endpoint. Needs a restart: the metrics route is mounted conditionally during router construction. |
+| `metrics.path` | string | static | manifest | `/metrics` | Prometheus metrics path. Needs a restart: the metrics route pattern is fixed at router construction. |
+| `metrics.token` | string | static | bootstrap | - | Optional Prometheus metrics bearer token. Needs a restart: the metrics authentication middleware captures its token at startup. Secret; never returned by the API. |
 
 ## Activity
 
-| Key | Type | Scope | Default | Meaning |
-|---|---|---|---|---|
-| `activity.ring_buffer_size` | int | runtime | `500` | Number of recent activity events kept in memory. Measured in events. |
+| Key | Type | Activation | Managed by | Default | Meaning |
+|---|---|---|---|---|---|
+| `activity.ring_buffer_size` | int | static | manifest | `500` | Number of recent activity events kept in memory. Measured in events. Needs a restart: the activity ring is allocated at startup. |
 

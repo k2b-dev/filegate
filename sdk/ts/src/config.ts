@@ -1,6 +1,7 @@
 import { ClientCore } from "./core.js";
 import type {
-  ConfigChangeResponse,
+  ConfigManifestApplyResponse,
+  ConfigManifestPlanResponse,
   ConfigSchemaResponse,
   ConfigValuesResponse,
   S3Key,
@@ -24,30 +25,31 @@ export class ConfigClient {
     return this.core.doJSON<ConfigSchemaResponse>("GET", "/v1/config/schema");
   }
 
-  /** Effective values, where each came from, and anything awaiting a restart. */
+  /** Desired and effective values, provenance, and manifest metadata. */
   async values(): Promise<ConfigValuesResponse> {
     return this.core.doJSON<ConfigValuesResponse>("GET", "/v1/config");
   }
 
-  /**
-   * Apply a batch of changes. A null value clears an override so the key falls
-   * back to the file or its default.
-   *
-   * A static key is stored but cannot take effect until a restart; it comes
-   * back in restartRequired rather than being silently ignored.
-   */
-  async patch(changes: Record<string, unknown>): Promise<ConfigChangeResponse> {
-    return this.core.doJSON<ConfigChangeResponse>("PATCH", "/v1/config", undefined, JSON.stringify({ changes }), "application/json");
+  /** Plan a complete replacement manifest without changing server state. */
+  async plan(values: Record<string, unknown>): Promise<ConfigManifestPlanResponse> {
+    return this.core.doJSON<ConfigManifestPlanResponse>(
+      "POST",
+      "/v1/config/plan",
+      undefined,
+      JSON.stringify({ values }),
+      "application/json",
+    );
   }
 
-  /** Validate without applying, for checking input as it is typed. */
-  async validate(changes: Record<string, unknown>): Promise<ConfigChangeResponse> {
-    return this.core.doJSON<ConfigChangeResponse>("POST", "/v1/config/validate", undefined, JSON.stringify({ changes }), "application/json");
-  }
-
-  /** Re-read every source, for a config file edited by hand. */
-  async reload(): Promise<ConfigChangeResponse> {
-    return this.core.doJSON<ConfigChangeResponse>("POST", "/v1/config/reload");
+  /** Apply a complete manifest if the revision returned by plan is still current. */
+  async apply(values: Record<string, unknown>, expectedRevision: string): Promise<ConfigManifestApplyResponse> {
+    return this.core.doJSON<ConfigManifestApplyResponse>(
+      "POST",
+      "/v1/config/apply",
+      undefined,
+      JSON.stringify({ values, expectedRevision }),
+      "application/json",
+    );
   }
 }
 

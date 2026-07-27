@@ -32,6 +32,7 @@ import { readThemeFromCookieHeader, type AdminTheme } from "./lib/theme";
 import { Files } from "./pages/Files";
 import { filterNodes, sortNodes, type Sort, type SortField } from "./components/Table";
 import { Overview } from "./pages/Overview";
+import { S3 } from "./pages/S3";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { System } from "./pages/System";
@@ -76,9 +77,9 @@ export const app = new Hono()
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./system.js", import.meta.url)));
   })
-  .get("/settings.js", (c) => {
+  .get("/s3.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
-    return new Response(Bun.file(new URL("./settings.js", import.meta.url)));
+    return new Response(Bun.file(new URL("./s3.js", import.meta.url)));
   })
   .get("/theme.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
@@ -380,6 +381,20 @@ export const app = new Hono()
     }),
   )
   .get(
+    "/s3",
+    ...ssr(async (c) => {
+      setPage(c, "S3");
+      const data = await loadS3();
+      return () => (
+        <S3
+          {...data}
+          error={queryError(c.req.query("error"), data.error)}
+          notice={c.req.query("notice")}
+        />
+      );
+    }),
+  )
+  .get(
     "/settings",
     ...ssr(async (c) => {
       setPage(c, "Settings");
@@ -394,40 +409,6 @@ export const app = new Hono()
       );
     }),
   )
-  .post("/settings/apply", async (c) => {
-    const body = await c.req.parseBody();
-    const path = field(body, "path");
-    try {
-      const value = parseSettingValue(field(body, "type"), field(body, "value"));
-      const out = await client().config.patch({ [path]: value });
-      const pending = out.restartRequired?.length ? " A restart is required for it to take effect." : "";
-      return c.redirect(settingsURL(undefined, `${path} updated.${pending}`), 303);
-    } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
-    }
-  })
-  .post("/settings/reset", async (c) => {
-    const body = await c.req.parseBody();
-    const path = field(body, "path");
-    try {
-      // null clears the override so the key falls back to the file or default.
-      await client().config.patch({ [path]: null });
-      return c.redirect(settingsURL(undefined, `${path} reset to its configured value.`), 303);
-    } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
-    }
-  })
-  .post("/api/config/validate", async (c) => {
-    // Used by the editors to check a value before closing, so a cross-field
-    // rule does not surface only after a redirect has discarded the input.
-    try {
-      const body = await c.req.json();
-      await client().config.validate({ [String(body.path)]: body.value });
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: errorMessage(err) }, 400);
-    }
-  })
   .post("/api/s3keys/create", async (c) => {
     // Deliberately JSON rather than a form post with a redirect: the secret is
     // returned here, and a redirect would put it in the URL, the browser
@@ -451,7 +432,7 @@ export const app = new Hono()
       return c.json({ error: errorMessage(err) }, 400);
     }
   })
-  .post("/settings/s3keys/create", async (c) => {
+  .post("/s3/keys/create", async (c) => {
     const body = await c.req.parseBody();
     try {
       const rate = Number.parseInt(field(body, "requestsPerSecond"), 10);
@@ -460,39 +441,39 @@ export const app = new Hono()
         ...(Number.isFinite(rate) && rate > 0 ? { requestsPerSecond: rate } : {}),
       });
       // The secret cannot be read again, so it goes in the notice verbatim.
-      return c.redirect(settingsURL(undefined, `Key ${created.accessKey} created. Secret (shown once): ${created.secretKey}`), 303);
+      return c.redirect(s3URL(undefined, `Key ${created.accessKey} created. Secret (shown once): ${created.secretKey}`), 303);
     } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
+      return c.redirect(s3URL(errorMessage(err)), 303);
     }
   })
-  .post("/settings/s3keys/rotate", async (c) => {
+  .post("/s3/keys/rotate", async (c) => {
     const body = await c.req.parseBody();
     try {
       const rotated = await client().s3Keys.rotate(field(body, "accessKey"));
-      return c.redirect(settingsURL(undefined, `Key ${rotated.accessKey} rotated. New secret (shown once): ${rotated.secretKey}`), 303);
+      return c.redirect(s3URL(undefined, `Key ${rotated.accessKey} rotated. New secret (shown once): ${rotated.secretKey}`), 303);
     } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
+      return c.redirect(s3URL(errorMessage(err)), 303);
     }
   })
-  .post("/settings/s3keys/toggle", async (c) => {
+  .post("/s3/keys/toggle", async (c) => {
     const body = await c.req.parseBody();
     const accessKey = field(body, "accessKey");
     try {
       const disabled = field(body, "disabled") === "true";
       await client().s3Keys.update(accessKey, { disabled });
-      return c.redirect(settingsURL(undefined, `${accessKey} ${disabled ? "disabled" : "enabled"}.`), 303);
+      return c.redirect(s3URL(undefined, `${accessKey} ${disabled ? "disabled" : "enabled"}.`), 303);
     } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
+      return c.redirect(s3URL(errorMessage(err)), 303);
     }
   })
-  .post("/settings/s3keys/delete", async (c) => {
+  .post("/s3/keys/delete", async (c) => {
     const body = await c.req.parseBody();
     const accessKey = field(body, "accessKey");
     try {
       await client().s3Keys.delete(accessKey);
-      return c.redirect(settingsURL(undefined, `${accessKey} deleted.`), 303);
+      return c.redirect(s3URL(undefined, `${accessKey} deleted.`), 303);
     } catch (err) {
-      return c.redirect(settingsURL(errorMessage(err)), 303);
+      return c.redirect(s3URL(errorMessage(err)), 303);
     }
   })
   .get("/api/runtime", async (c) => {
@@ -621,64 +602,16 @@ function assetResponse(relative: string, contentType: string): Response {
   });
 }
 
-function settingsURL(error?: string, notice?: string): string {
+function s3URL(error?: string, notice?: string): string {
   const q = new URLSearchParams();
   if (error) q.set("error", error);
   if (notice) q.set("notice", notice);
   const suffix = q.toString();
-  return `/settings${suffix ? `?${suffix}` : ""}`;
+  return `/s3${suffix ? `?${suffix}` : ""}`;
 }
 
 function splitCSV(raw: string): string[] {
   return raw.split(",").map((entry) => entry.trim()).filter(Boolean);
-}
-
-/**
- * Turns a form string into the JSON type the config API expects.
- *
- * The server validates regardless; this only makes sure a number arrives as a
- * number rather than as a string that would fail a type check downstream.
- */
-function parseSettingValue(type: string, raw: string): unknown {
-  if (type === "retentionBuckets") return parseRetention(raw);
-  if (type === "bool") return raw === "true";
-  if (type === "int") {
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) throw new Error(`${raw} is not a number`);
-    return parsed;
-  }
-  if (type === "stringList") return splitCSV(raw);
-  return raw;
-}
-
-/**
- * Parses the retention rules from the CLI's documented syntax.
- *
- * The keys are the mapstructure names the server expects, not the camelCase the
- * API returns: reading and writing this value use different shapes, and pushing
- * the response shape back would silently produce empty buckets.
- */
-function parseRetention(raw: string): { keep_for: string; max_count: number }[] {
-  const rules = raw
-    .split(/[\n;]/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (rules.length === 0) throw new Error("at least one rule is required, or clear the override to restore the default");
-
-  return rules.map((rule) => {
-    const fields = new Map(
-      rule.split(",").map((part) => {
-        const [key, value] = part.split("=");
-        return [key?.trim() ?? "", value?.trim() ?? ""];
-      }),
-    );
-    const keepFor = fields.get("keep_for");
-    const maxCount = fields.get("max_count");
-    if (!keepFor) throw new Error(`rule "${rule}" is missing keep_for`);
-    const count = Number(maxCount ?? -1);
-    if (!Number.isInteger(count)) throw new Error(`rule "${rule}" has a non-integer max_count`);
-    return { keep_for: keepFor, max_count: count };
-  });
 }
 
 /**
@@ -704,25 +637,60 @@ async function loadLive() {
 async function loadSettings() {
   const fg = client();
   try {
-    const [schema, values, stats] = await Promise.all([fg.config.schema(), fg.config.values(), loadStats()]);
-    const s3Enabled = values.values.find((entry) => entry.path === "s3.enabled")?.value === true;
-    // Listing keys fails when the S3 listener is off; that is expected, not an error.
+    const [schema, values, stats, health] = await Promise.all([fg.config.schema(), fg.config.values(), loadStats(), loadHealth()]);
+    return {
+      schema: schema.keys.filter((entry) => !entry.path.startsWith("s3.")),
+      values: {
+        ...values,
+        values: values.values.filter((entry) => !entry.path.startsWith("s3.")),
+        restartRequired: values.restartRequired?.filter((entry) => !entry.path.startsWith("s3.")),
+      },
+      mounts: stats.mounts.length,
+      health,
+    };
+  } catch (err) {
+    return {
+      schema: [],
+      values: { generatedAt: 0, values: [] },
+      mounts: 0,
+      health: "fail" as const,
+      error: errorMessage(err),
+    };
+  }
+}
+
+async function loadS3() {
+  const fg = client();
+  try {
+    const [schema, values, stats, activity, health] = await Promise.all([
+      fg.config.schema(),
+      fg.config.values(),
+      loadStats(),
+      fg.activity.list({ limit: 1000, q: "s3." }).catch(() => undefined),
+      loadHealth(),
+    ]);
+    const s3Enabled = values.values.find((entry) => entry.path === "s3.enabled")?.effective === true;
+    // Listing keys is unavailable when the S3 listener is off; the page still
+    // renders its effective config and tells the operator how to enable it.
     const keys = s3Enabled ? await fg.s3Keys.list().then((out) => out.items).catch(() => []) : [];
     return {
-      schema: schema.keys,
-      values,
+      schema: schema.keys.filter((entry) => entry.path.startsWith("s3.")),
+      values: {
+        ...values,
+        values: values.values.filter((entry) => entry.path.startsWith("s3.")),
+        restartRequired: values.restartRequired?.filter((entry) => entry.path.startsWith("s3.")),
+      },
       keys,
-      s3Enabled,
+      activity,
       mounts: stats.mounts.length,
       mountNames: stats.mounts.map((mount) => mount.name),
-      health: await loadHealth(),
+      health,
     };
   } catch (err) {
     return {
       schema: [],
       values: { generatedAt: 0, values: [] },
       keys: [],
-      s3Enabled: false,
       mounts: 0,
       mountNames: [] as string[],
       health: "fail" as const,

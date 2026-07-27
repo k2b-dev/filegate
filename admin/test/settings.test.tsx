@@ -8,6 +8,7 @@ const schema: ConfigKeySchema[] = [
     path: "server.access_log_enabled",
     type: "bool",
     scope: "runtime",
+    managedBy: "manifest",
     usage: "enable REST and S3 access logs",
     secret: false,
   },
@@ -15,38 +16,16 @@ const schema: ConfigKeySchema[] = [
     path: "server.http2_cleartext",
     type: "bool",
     scope: "static",
+    managedBy: "manifest",
     usage: "accept unencrypted HTTP/2",
     reason: "the listener protocol set is fixed at startup",
-    secret: false,
-  },
-  {
-    path: "detection.backend",
-    type: "string",
-    scope: "static",
-    usage: "change detector backend",
-    reason: "selects a different detector implementation",
-    choices: ["auto", "poll", "btrfs"],
-    secret: false,
-  },
-  {
-    path: "versioning.enabled",
-    type: "string",
-    scope: "runtime",
-    usage: "versioning mode",
-    choices: ["auto", "on", "off"],
-    secret: false,
-  },
-  {
-    path: "server.cors.allowed_origins",
-    type: "stringList",
-    scope: "runtime",
-    usage: "CORS allowed origins",
     secret: false,
   },
   {
     path: "versioning.retention_buckets",
     type: "retentionBuckets",
     scope: "runtime",
+    managedBy: "manifest",
     usage: "version retention policy",
     secret: false,
   },
@@ -54,6 +33,7 @@ const schema: ConfigKeySchema[] = [
     path: "auth.bearer_token",
     type: "string",
     scope: "static",
+    managedBy: "bootstrap",
     usage: "REST bearer token",
     reason: "break-glass credential",
     secret: true,
@@ -61,92 +41,105 @@ const schema: ConfigKeySchema[] = [
 ];
 
 const values: ConfigValue[] = [
-  { path: "server.access_log_enabled", value: true, source: "runtime", scope: "runtime" },
-  { path: "server.http2_cleartext", value: false, source: "default", scope: "static" },
-  { path: "detection.backend", value: "auto", source: "default", scope: "static" },
-  { path: "versioning.enabled", value: "auto", source: "default", scope: "runtime" },
   {
-    path: "server.cors.allowed_origins",
-    value: ["https://admin.example", "https://files.example"],
-    source: "file",
+    path: "server.access_log_enabled",
+    effective: true,
+    desired: true,
+    source: "manifest",
     scope: "runtime",
+    managedBy: "manifest",
+  },
+  {
+    path: "server.http2_cleartext",
+    effective: false,
+    desired: true,
+    source: "manifest",
+    scope: "static",
+    managedBy: "manifest",
   },
   {
     path: "versioning.retention_buckets",
-    value: [
+    effective: [
       { keepFor: "1h0m0s", maxCount: -1 },
       { keepFor: "24h0m0s", maxCount: 4 },
     ],
-    source: "runtime",
+    desired: [
+      { keepFor: "1h0m0s", maxCount: -1 },
+      { keepFor: "24h0m0s", maxCount: 4 },
+    ],
+    source: "manifest",
     scope: "runtime",
+    managedBy: "manifest",
   },
-  { path: "auth.bearer_token", value: { configured: true }, source: "env", scope: "static" },
+  {
+    path: "auth.bearer_token",
+    effective: { configured: true },
+    desired: { configured: true },
+    source: "env",
+    scope: "static",
+    managedBy: "bootstrap",
+  },
 ];
 
 function renderSettings(): string {
   return renderToString(() => (
     <Settings
       schema={schema}
-      values={{ generatedAt: 1, values }}
-      keys={[]}
-      s3Enabled={false}
-      mountNames={["data"]}
+      values={{
+        generatedAt: 1,
+        manifest: { revision: "0123456789abcdef", appliedAt: 1720000000000, appliedBy: "alice" },
+        values,
+        restartRequired: [{ path: "server.http2_cleartext", effective: "false", desired: "true" }],
+      }}
       mounts={1}
       health="ok"
     />
   ));
 }
 
-describe("typed settings controls", () => {
-  test("renders runtime booleans as native submit switches", () => {
+describe("read-only settings", () => {
+  test("shows manifest identity and apply workflow", () => {
     const html = renderSettings();
 
-    expect(html).toContain('role="switch" aria-checked="true"');
-    expect(html).toContain('name="value" value="false"');
+    expect(html).toContain("Configuration manifest");
+    expect(html).toContain("0123456789ab");
+    expect(html).toContain("alice");
+    expect(html).toContain("filegate config plan");
+    expect(html).toContain("filegate config apply");
+  });
+
+  test("renders config values without mutation controls", () => {
+    const html = renderSettings();
+
     expect(html).toContain("Access log enabled");
-    expect(html).toContain("Live override");
+    expect(html).toContain("Applied manifest");
     expect(html).toContain("Applies live");
+    expect(html).not.toContain("/settings/apply");
+    expect(html).not.toContain("/settings/reset");
+    expect(html).not.toContain("data-setting-edit");
+    expect(html).not.toContain("data-setting-choice");
+    expect(html).not.toContain('role="switch"');
+    expect(html).not.toContain("S3 access keys");
+    expect(html).not.toContain("s3.");
   });
 
-  test("renders static values without interactive affordances", () => {
+  test("shows desired and effective values for static changes", () => {
     const html = renderSettings();
 
-    expect(html.match(/role="switch"/g)).toHaveLength(1);
-    expect(html).not.toContain("aria-readonly");
-    expect(html).not.toContain("setting-choice-readonly");
+    expect(html).toContain("Restart required");
     expect(html).toContain("HTTP/2 cleartext");
-    expect(html).toContain('<strong class="setting-state-value">Off</strong>');
-    expect(html).toContain('<strong class="setting-state-value is-choice">auto</strong>');
-    expect(html).toContain("Restart to change");
+    expect(html).toContain("After restart");
+    expect(html).toContain("false → true");
   });
 
-  test("uses schema choices and structured value previews", () => {
+  test("renders structured values and secret presence clearly", () => {
     const html = renderSettings();
 
-    expect(html).toContain('data-setting-choice');
-    expect(html).toContain('<option value="auto" selected>auto</option>');
-    expect(html).toContain("https://admin.example");
-    expect(html).toContain("https://files.example");
-    expect(html).toContain("setting-list-value");
-    expect(html).toContain("up to 4");
+    expect(html).toContain("keep all within");
+    expect(html).toContain("keep 4 within");
     expect(html).not.toContain("[object Object]");
-  });
-
-  test("renders provenance and scope as quiet metadata, not badges", () => {
-    const html = renderSettings();
-
-    expect(html).toContain("Config file");
-    expect(html).toContain("Applies live");
-    expect(html).not.toContain("source-default");
-    expect(html).not.toContain("source-runtime");
-    expect(html).not.toContain("Restart-bound");
-  });
-
-  test("shows secret presence without exposing a value editor", () => {
-    const html = renderSettings();
-
     expect(html).toContain("Bearer token");
     expect(html).toContain("Configured");
-    expect(html).not.toContain('data-setting-edit="auth.bearer_token"');
+    expect(html).toContain("Bootstrap-owned");
   });
 });

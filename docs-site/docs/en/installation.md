@@ -64,7 +64,7 @@ sudo rpm -Uvh /tmp/filegate.rpm
 | Data directory | `/var/lib/filegate` | Service | Default service data path. |
 | Default mount | `/var/lib/filegate/data` | Storage | Served when no mount is configured. |
 | Index | `/var/lib/filegate/index` | Service | Rebuildable metadata index. |
-| Runtime config store | `/var/lib/filegate/config` | Service | Settings changed at runtime, S3 access keys, and the generated API token. Not rebuildable — back it up. |
+| Runtime config store | `/var/lib/filegate/config` | Service | Applied manifest, S3 access keys, and the generated API token. Not rebuildable — back it up. |
 | Log directory | `/var/log/filegate` | Service | Default service log path. |
 
 The package creates or preserves `/etc/filegate/conf.yaml`. Existing config files are not overwritten during upgrades.
@@ -125,8 +125,15 @@ changes. It is a static setting, so it needs a restart, and it is not a
 performance setting — measurements put the two protocols within a few percent at
 the median, well inside the noise of a single configuration.
 
+```yaml
+version: 1
+config:
+  server:
+    http2_cleartext: true
+```
+
 ```sh
-sudo fg config set --config /etc/filegate/conf.yaml --server-http2-cleartext
+fg config apply -f filegate.manifest.yaml --config /etc/filegate/conf.yaml
 sudo systemctl restart filegate
 ```
 
@@ -176,7 +183,7 @@ docker run --rm -d \
   serve
 ```
 
-Beyond evaluation, mount `/var/lib/filegate/config` as a volume too. It holds the S3 access keys and every setting changed through the admin UI, and a container that recreates it starts over with none of them.
+Beyond evaluation, mount `/var/lib/filegate/config` as a volume too. It holds the applied manifest, S3 access keys, and generated API token; a container that recreates it loses that state.
 
 ## Development build
 

@@ -22,9 +22,9 @@ func loadConfig(configFile string) (domain.Config, error) {
 	return finishConfig(v)
 }
 
-// newConfigViper registers every default and reads the static sources (config
-// file and environment). Runtime overrides are layered on top by the caller via
-// viper's explicit Set, which outranks both.
+// newConfigViper registers every default and reads the bootstrap sources
+// (config file and environment). A complete applied manifest is layered on top
+// by the resolver.
 // registerConfigDefaults declares the built-in value of every key. It is a
 // named function rather than an inline block so the schema endpoint can resolve
 // the same defaults without reading any file or environment.

@@ -125,6 +125,47 @@ func TestAuthMiddlewareFailsClosedWhenTokenNotConfigured(t *testing.T) {
 	}
 }
 
+func TestConfigRoutesExposeManifestWorkflowOnly(t *testing.T) {
+	stub := &configServiceStub{}
+	r, _, cleanup := newTestRouterWithCustomLimits(t, t.TempDir(), t.TempDir(), RouterOptions{
+		BearerToken:           "test-token",
+		JobWorkers:            1,
+		JobQueueSize:          8,
+		UploadExpiry:          time.Hour,
+		UploadCleanupInterval: time.Hour,
+		MaxChunkBytes:         1 << 20,
+		MaxUploadBytes:        10 << 20,
+		ConfigService:         stub,
+	})
+	defer cleanup()
+
+	plan := authedRequest(http.MethodPost, "/v1/config/plan")
+	plan.Body = io.NopCloser(strings.NewReader(`{"values":{}}`))
+	plan.Header.Set("Content-Type", "application/json")
+	out := httptest.NewRecorder()
+	r.ServeHTTP(out, plan)
+	if out.Code != http.StatusOK {
+		t.Fatalf("plan status=%d body=%s", out.Code, out.Body.String())
+	}
+
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPatch, "/v1/config"},
+		{http.MethodPost, "/v1/config/validate"},
+		{http.MethodPost, "/v1/config/reload"},
+	} {
+		req := authedRequest(route.method, route.path)
+		req.Body = io.NopCloser(strings.NewReader(`{"changes":{"upload.expiry":"1h"}}`))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s status=%d, want removed route", route.method, route.path, rec.Code)
+		}
+	}
+}
+
 func TestPathTraversalBlocked(t *testing.T) {
 	r, _, cleanup := newTestRouter(t)
 	defer cleanup()

@@ -6,10 +6,17 @@ import (
 	"slices"
 	"testing"
 
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/infra/runtimecfg"
 )
 
-func newTestManager(t *testing.T, yaml string) *ConfigManager {
+type testManager struct {
+	manager    *ConfigManager
+	store      *runtimecfg.Store
+	configFile string
+}
+
+func newTestManager(t *testing.T, extraYAML string) testManager {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -18,7 +25,7 @@ func newTestManager(t *testing.T, yaml string) *ConfigManager {
 		t.Fatalf("mkdir: %v", err)
 	}
 	configFile := filepath.Join(dir, "conf.yaml")
-	body := "auth:\n  bearer_token: file-token\nstorage:\n  base_paths:\n    - " + base + "\n" + yaml
+	body := "auth:\n  bearer_token: file-token\nstorage:\n  base_paths:\n    - " + base + "\n" + extraYAML
 	if err := os.WriteFile(configFile, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -29,176 +36,277 @@ func newTestManager(t *testing.T, yaml string) *ConfigManager {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	resolved, err := resolveConfig(configFile, store.Overrides())
+	resolved, err := resolveConfig(configFile, nil)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	return newConfigManager(configFile, store, resolved)
+	return testManager{
+		manager:    newConfigManager(configFile, store, resolved, resolved, nil),
+		store:      store,
+		configFile: configFile,
+	}
 }
 
-func TestRuntimeChangeIsVisibleInTheSnapshot(t *testing.T) {
-	m := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
+func TestRuntimeManifestChangeIsPublishedImmediately(t *testing.T) {
+	fixture := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
+	m := fixture.manager
 
-	if got := m.Holder().Get().Upload.MaxUploadBytes; got != 1000 {
-		t.Fatalf("boot value = %d, want 1000 from the file", got)
-	}
-
-	restarts, err := m.Apply(map[string]any{"upload.max_upload_bytes": 2000})
+	applied, err := m.ApplyManifest(map[string]any{"upload.max_upload_bytes": 2000}, "", "alice")
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if len(restarts) != 0 {
-		t.Errorf("runtime key reported as restart-required: %+v", restarts)
+	if len(applied.RestartRequired) != 0 {
+		t.Errorf("runtime key reported as restart-required: %+v", applied.RestartRequired)
 	}
 	if got := m.Holder().Get().Upload.MaxUploadBytes; got != 2000 {
-		t.Errorf("live value = %d, want 2000 without a restart", got)
+		t.Errorf("effective value = %d, want 2000", got)
+	}
+	if applied.Manifest.AppliedBy != "alice" || applied.Manifest.Revision == "" {
+		t.Errorf("manifest metadata = %+v", applied.Manifest)
 	}
 }
 
-// The failure a generic config API falls into: accept a static key, answer
-// success, change nothing, say nothing.
-func TestStaticChangeIsReportedAsRestartRequired(t *testing.T) {
-	m := newTestManager(t, "")
+func TestStaticManifestChangeStaysDesiredUntilRestart(t *testing.T) {
+	fixture := newTestManager(t, "")
+	m := fixture.manager
+	running := m.Holder().Get().Server.Listen
 
-	restarts, err := m.Apply(map[string]any{"server.listen": ":9999"})
+	applied, err := m.ApplyManifest(map[string]any{"server.listen": ":9999"}, "", "alice")
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if len(restarts) != 1 || restarts[0].Path != "server.listen" {
-		t.Fatalf("restarts = %+v, want exactly server.listen", restarts)
+	if len(applied.RestartRequired) != 1 || applied.RestartRequired[0].Path != "server.listen" {
+		t.Fatalf("restarts = %+v, want server.listen", applied.RestartRequired)
 	}
-	if restarts[0].Running == restarts[0].Desired {
-		t.Errorf("restart entry does not show the difference: %+v", restarts[0])
+	if got := m.Holder().Get().Server.Listen; got != running {
+		t.Errorf("effective static value = %q, want running %q", got, running)
 	}
-	// The process keeps serving on the old address until it restarts.
-	if got := m.Holder().Get().Server.Listen; got != ":9999" {
-		t.Logf("snapshot carries the desired value %q; the listener still uses the booted one", got)
-	}
-}
-
-func TestInvalidChangeIsRejectedAndLeavesTheSnapshotIntact(t *testing.T) {
-	m := newTestManager(t, "")
-	before := m.Holder().Get().Detection.Backend
-
-	if _, err := m.Apply(map[string]any{"detection.backend": "telepathy"}); err == nil {
-		t.Fatal("invalid backend was accepted")
-	}
-	if got := m.Holder().Get().Detection.Backend; got != before {
-		t.Errorf("snapshot changed to %q despite the rejection", got)
-	}
-
-	if _, err := m.Apply(map[string]any{"nonsense.key": 1}); err == nil {
-		t.Error("unknown key was accepted")
+	values := m.Values()
+	entry := valueByPath(t, values, "server.listen")
+	if entry.Effective != running || entry.Desired != ":9999" {
+		t.Errorf("value = %+v", entry)
 	}
 }
 
-func TestOverridesOutrankTheFileAndSurviveReload(t *testing.T) {
-	m := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
-
-	if _, err := m.Apply(map[string]any{"upload.max_upload_bytes": 3000}); err != nil {
+func TestAppliedStaticManifestBecomesEffectiveAtNextStartup(t *testing.T) {
+	fixture := newTestManager(t, "")
+	applied, err := fixture.manager.ApplyManifest(map[string]any{"server.listen": ":9999"}, "", "alice")
+	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if _, err := m.Reload(); err != nil {
-		t.Fatalf("reload: %v", err)
+	stored, exists, err := fixture.store.Manifest()
+	if err != nil || !exists {
+		t.Fatalf("stored manifest: exists=%v err=%v", exists, err)
 	}
-	if got := m.Holder().Get().Upload.MaxUploadBytes; got != 3000 {
-		t.Errorf("after reload = %d, want the override to still outrank the file", got)
+	resolved, err := resolveConfig(fixture.configFile, stored.Values)
+	if err != nil {
+		t.Fatalf("resolve startup: %v", err)
 	}
+	baseline, err := resolveConfig(fixture.configFile, nil)
+	if err != nil {
+		t.Fatalf("resolve baseline: %v", err)
+	}
+	restarted := newConfigManager(fixture.configFile, fixture.store, baseline, resolved, &stored)
+	if got := restarted.Holder().Get().Server.Listen; got != ":9999" {
+		t.Errorf("after restart = %q, want :9999", got)
+	}
+	if restarted.Values().Manifest.Revision != applied.Manifest.Revision {
+		t.Errorf("startup lost manifest metadata")
+	}
+	if len(restarted.Values().RestartRequired) != 0 {
+		t.Errorf("startup still reports restart required: %+v", restarted.Values().RestartRequired)
+	}
+}
 
-	// Clearing falls back to the file, not to the built-in default.
-	if _, err := m.Apply(map[string]any{"upload.max_upload_bytes": nil}); err != nil {
-		t.Fatalf("clear: %v", err)
+func TestManifestResolutionKeepsGeneratedBootstrapToken(t *testing.T) {
+	fixture := newTestManager(t, "")
+	fixture.manager.baseline.Config.Auth.BearerToken = "generated-token"
+	fixture.manager.desired.Auth.BearerToken = "generated-token"
+	effective := fixture.manager.Holder().Get()
+	effective.Auth.BearerToken = "generated-token"
+	fixture.manager.Holder().Set(effective)
+
+	applied, err := fixture.manager.ApplyManifest(map[string]any{"server.access_log_enabled": true}, "", "alice")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(applied.RestartRequired) != 0 {
+		t.Errorf("bootstrap token became a pending manifest change: %+v", applied.RestartRequired)
+	}
+	if got := fixture.manager.Values(); valueByPath(t, got, "auth.bearer_token").Desired.(map[string]any)["configured"] != true {
+		t.Error("generated bootstrap token disappeared from desired config")
+	}
+}
+
+func TestManifestReplacementRemovesManagedPathAndFallsBack(t *testing.T) {
+	fixture := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
+	m := fixture.manager
+
+	first, err := m.ApplyManifest(map[string]any{"upload.max_upload_bytes": 3000}, "", "alice")
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	second, err := m.ApplyManifest(map[string]any{"server.access_log_enabled": true}, first.Manifest.Revision, "alice")
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
 	}
 	if got := m.Holder().Get().Upload.MaxUploadBytes; got != 1000 {
-		t.Errorf("after clearing = %d, want the file value 1000", got)
+		t.Errorf("removed value = %d, want file fallback 1000", got)
+	}
+	if len(second.Changes) != 2 || second.Changes[0].Operation != "add" || second.Changes[1].Operation != "remove" {
+		t.Errorf("replacement changes = %+v", second.Changes)
+	}
+	stored, _, _ := fixture.store.Manifest()
+	if _, exists := stored.Values["upload.max_upload_bytes"]; exists {
+		t.Error("removed path is still persisted")
 	}
 }
 
-func TestSourcesDistinguishDefaultFileEnvAndRuntime(t *testing.T) {
+func TestInvalidManifestDoesNotPersistOrPublish(t *testing.T) {
+	fixture := newTestManager(t, "")
+	before := fixture.manager.Holder().Get()
+
+	for name, values := range map[string]map[string]any{
+		"unknown":   {"nonsense.key": 1},
+		"invalid":   {"detection.backend": "telepathy"},
+		"null":      {"upload.expiry": nil},
+		"bootstrap": {"storage.runtime_config_path": "/tmp/elsewhere"},
+		"secret":    {"auth.bearer_token": "do-not-store"},
+		"resource":  {"s3.keys": []any{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := fixture.manager.ApplyManifest(values, "", "alice"); err == nil {
+				t.Fatal("invalid manifest was accepted")
+			}
+		})
+	}
+	if got := fixture.manager.Holder().Get(); got.Detection.Backend != before.Detection.Backend {
+		t.Errorf("effective config changed despite rejection")
+	}
+	if _, exists, err := fixture.store.Manifest(); err != nil || exists {
+		t.Errorf("invalid manifest persisted: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestApplyRejectsStalePlanRevision(t *testing.T) {
+	fixture := newTestManager(t, "")
+	first, err := fixture.manager.ApplyManifest(map[string]any{"server.access_log_enabled": true}, "", "alice")
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if _, err := fixture.manager.ApplyManifest(map[string]any{"server.access_log_enabled": false}, "", "bob"); err == nil {
+		t.Fatal("stale empty revision was accepted")
+	}
+	if got := fixture.manager.Values().Manifest.Revision; got != first.Manifest.Revision {
+		t.Errorf("revision changed after conflict: %q", got)
+	}
+}
+
+func TestPlanIsDeterministicAndDoesNotApply(t *testing.T) {
+	fixture := newTestManager(t, "")
+	before := fixture.manager.Holder().Get().Upload.MaxUploadBytes
+	values := map[string]any{"upload.max_upload_bytes": 4242, "server.access_log_enabled": true}
+
+	first, err := fixture.manager.PlanManifest(values)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	second, err := fixture.manager.PlanManifest(map[string]any{"server.access_log_enabled": true, "upload.max_upload_bytes": 4242})
+	if err != nil {
+		t.Fatalf("second plan: %v", err)
+	}
+	if first.ProposedRevision != second.ProposedRevision {
+		t.Errorf("revision depends on map order: %q != %q", first.ProposedRevision, second.ProposedRevision)
+	}
+	if got := fixture.manager.Holder().Get().Upload.MaxUploadBytes; got != before {
+		t.Errorf("plan published value %d", got)
+	}
+	if _, exists, _ := fixture.store.Manifest(); exists {
+		t.Error("plan persisted a manifest")
+	}
+}
+
+func TestSourcesDistinguishDefaultFileEnvAndManifest(t *testing.T) {
 	t.Setenv("FILEGATE_UPLOAD_EXPIRY", "2h")
-	m := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
+	fixture := newTestManager(t, "upload:\n  max_upload_bytes: 1000\n")
+	m := fixture.manager
 
-	sources := m.Sources()
-	if got := sources["upload.max_upload_bytes"]; got != SourceFile {
-		t.Errorf("file-set key reported as %q, want file", got)
+	if got := m.Sources()["upload.max_upload_bytes"]; got != SourceFile {
+		t.Errorf("file source = %q", got)
 	}
-	if got := sources["upload.expiry"]; got != SourceEnv {
-		t.Errorf("env-set key reported as %q, want env", got)
+	if got := m.Sources()["upload.expiry"]; got != SourceEnv {
+		t.Errorf("env source = %q", got)
 	}
-	if got := sources["upload.min_free_bytes"]; got != SourceDefault {
-		t.Errorf("untouched key reported as %q, want default", got)
+	if got := m.Sources()["upload.min_free_bytes"]; got != SourceDefault {
+		t.Errorf("default source = %q", got)
 	}
-
-	if _, err := m.Apply(map[string]any{"upload.min_free_bytes": 999}); err != nil {
+	if _, err := m.ApplyManifest(map[string]any{"upload.min_free_bytes": 999}, "", "alice"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if got := m.Sources()["upload.min_free_bytes"]; got != SourceRuntime {
-		t.Errorf("after an override the source is %q, want runtime", got)
-	}
-}
-
-func TestValidateDoesNotApply(t *testing.T) {
-	m := newTestManager(t, "")
-	before := m.Holder().Get().Upload.MaxUploadBytes
-
-	if err := m.Validate(map[string]any{"upload.max_upload_bytes": 4242}); err != nil {
-		t.Fatalf("validate rejected a valid change: %v", err)
-	}
-	if got := m.Holder().Get().Upload.MaxUploadBytes; got != before {
-		t.Errorf("validate applied the change: %d", got)
-	}
-	if err := m.Validate(map[string]any{"detection.backend": "telepathy"}); err == nil {
-		t.Error("validate accepted an invalid backend")
+	if got := m.Sources()["upload.min_free_bytes"]; got != SourceManifest {
+		t.Errorf("manifest source = %q", got)
 	}
 }
 
 func TestSecretsNeverRenderTheirValue(t *testing.T) {
-	m := newTestManager(t, "")
-	cfg := m.Holder().Get()
-
+	fixture := newTestManager(t, "")
+	values := fixture.manager.Values()
 	for _, spec := range allConfigFlagSpecs() {
 		if !spec.Secret {
 			continue
 		}
-		rendered := configValueForAPI(&cfg, spec)
-		shaped, ok := rendered.(map[string]any)
-		if !ok {
-			t.Errorf("%s rendered as %T, want a presence flag", spec.Path, rendered)
-			continue
+		entry := valueByPath(t, values, spec.Path)
+		for label, rendered := range map[string]any{"effective": entry.Effective, "desired": entry.Desired} {
+			shaped, ok := rendered.(map[string]any)
+			if !ok {
+				t.Errorf("%s %s rendered as %T", spec.Path, label, rendered)
+				continue
+			}
+			if _, present := shaped["configured"]; !present {
+				t.Errorf("%s %s missing configured flag", spec.Path, label)
+			}
 		}
-		if _, present := shaped["configured"]; !present {
-			t.Errorf("%s rendered without a configured flag: %v", spec.Path, shaped)
-		}
-	}
-
-	// The token really is set in the fixture, so this proves the flag reflects
-	// reality rather than always reporting false.
-	tokenSpec, _ := specByPath("auth.bearer_token")
-	if got := configValueForAPI(&cfg, tokenSpec).(map[string]any)["configured"]; got != true {
-		t.Errorf("bearer token reported as not configured despite being set")
 	}
 }
 
-func TestSchemaPublishesClosedStringChoices(t *testing.T) {
+func TestSchemaPublishesChoicesAndManagementBoundary(t *testing.T) {
 	choicesByPath := map[string][]string{
 		"detection.backend":  {"auto", "poll", "btrfs"},
 		"versioning.enabled": {"auto", "on", "off"},
 	}
+	managedByPath := map[string]string{
+		"upload.expiry":               apiv1.ConfigManagedByManifest,
+		"storage.runtime_config_path": apiv1.ConfigManagedByBootstrap,
+		"auth.bearer_token":           apiv1.ConfigManagedByBootstrap,
+		"s3.keys":                     apiv1.ConfigManagedByResource,
+	}
 
 	for _, key := range configSchema() {
-		want, ok := choicesByPath[key.Path]
-		if !ok {
-			if len(key.Choices) != 0 {
-				t.Errorf("%s choices = %v, want none", key.Path, key.Choices)
+		if want, ok := choicesByPath[key.Path]; ok {
+			if !slices.Equal(key.Choices, want) {
+				t.Errorf("%s choices = %v, want %v", key.Path, key.Choices, want)
 			}
-			continue
+			delete(choicesByPath, key.Path)
 		}
-		if !slices.Equal(key.Choices, want) {
-			t.Errorf("%s choices = %v, want %v", key.Path, key.Choices, want)
+		if want, ok := managedByPath[key.Path]; ok {
+			if key.ManagedBy != want {
+				t.Errorf("%s managedBy = %q, want %q", key.Path, key.ManagedBy, want)
+			}
+			delete(managedByPath, key.Path)
 		}
-		delete(choicesByPath, key.Path)
 	}
-	if len(choicesByPath) != 0 {
-		t.Errorf("schema is missing choice keys: %v", choicesByPath)
+	if len(choicesByPath) != 0 || len(managedByPath) != 0 {
+		t.Errorf("schema missing keys: choices=%v management=%v", choicesByPath, managedByPath)
 	}
+}
+
+func valueByPath(t *testing.T, response apiv1.ConfigValuesResponse, path string) apiv1.ConfigValue {
+	t.Helper()
+	for _, value := range response.Values {
+		if value.Path == path {
+			return value
+		}
+	}
+	t.Fatalf("value %q not found", path)
+	return apiv1.ConfigValue{}
 }

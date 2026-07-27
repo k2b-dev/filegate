@@ -3,7 +3,7 @@ import { Icon, IconLabel } from "./Icons";
 import { Toasts } from "./Toasts";
 
 type LayoutProps = {
-  active: "overview" | "files" | "search" | "system" | "settings";
+  active: "overview" | "files" | "s3" | "search" | "system" | "settings";
   title: string;
   description: string;
   mounts: number;
@@ -39,6 +39,7 @@ function healthTitle(status?: string): string {
 const nav = [
   ["overview", "Overview", "/", "dashboard"],
   ["files", "Files", "/files", "folder"],
+  ["s3", "S3", "/s3", "cloud-data-connection"],
   ["search", "Search", "/search", "search"],
   ["system", "System", "/system", "activity"],
   ["settings", "Settings", "/settings", "settings"],

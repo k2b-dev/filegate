@@ -31,7 +31,7 @@ The practical consequence: anyone holding the bearer token can read and delete e
 | Surface | Scope | Credential |
 |---|---:|---|
 | REST API | `/v1/*` routes | Bearer token from `auth.bearer_token`, or the one generated at first start. |
-| Config API | `/v1/config*` routes | Same bearer token. Can change runtime configuration. |
+| Config API | `/v1/config*` routes | Same bearer token. Can plan and replace manifest-owned desired state. |
 | Health | `/health` | No credential. |
 | Metrics | Configured metrics path | `metrics.token`, falling back to the REST bearer token. |
 | S3 API | S3 listener | SigV4 access key and secret key. |
@@ -41,7 +41,7 @@ The practical consequence: anyone holding the bearer token can read and delete e
 
 A REST bearer token always exists. When `auth.bearer_token` is unset, the first start generates one, stores it in the runtime config store, and prints it once. There is no unauthenticated REST deployment.
 
-The config routes deserve separate thought. An actor who can `PATCH /v1/config` can widen CORS, disable access logs, or raise upload limits. They carry the authority of the bearer token, so the token's blast radius includes the service's own settings.
+The config routes deserve separate thought. An actor who can `POST /v1/config/apply` can widen CORS, disable access logs, raise upload limits, and stage static changes for the next restart. Revision preconditions prevent accidental concurrent overwrites; they are not an authorization boundary. The bearer token's blast radius includes the service's own settings.
 
 ## Actor logging
 
@@ -82,7 +82,7 @@ server:
 
 Wildcard origin with `allow_credentials: true` is rejected.
 
-CORS is a runtime setting, so it can be changed through the admin UI and applies to the next request without a restart.
+CORS is a runtime setting, so a manifest apply publishes it to the next request without a restart.
 
 ## Trusted proxies
 

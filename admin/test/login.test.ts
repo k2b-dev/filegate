@@ -93,6 +93,14 @@ describe("token login", () => {
     expect(res.status).toBe(200);
   });
 
+  test("the S3 page exists and old Settings key routes do not", async () => {
+    const login = await request("/login", { ip: "10.0.1.5", ...loginBody(adminToken) });
+    const cookie = sessionCookie(login);
+
+    expect((await request("/s3", { ip: "10.0.1.5", cookie })).status).toBe(200);
+    expect((await request("/settings/s3keys/toggle", { ip: "10.0.1.5", cookie, method: "POST" })).status).toBe(404);
+  });
+
   test("logout clears the cookie", async () => {
     const login = await request("/login", { ip: "10.0.1.4", ...loginBody(adminToken) });
     const res = await request("/logout", { ip: "10.0.1.4", method: "POST", cookie: sessionCookie(login) });

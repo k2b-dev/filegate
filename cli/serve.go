@@ -102,13 +102,62 @@ func newDaemonServeCmd() *cobra.Command {
 				return fmt.Errorf("filegate v2 currently supports linux only")
 			}
 
-			cfg, err := loadConfig(configFile)
+			bootstrapCfg, err := loadConfig(configFile)
 			if err != nil {
 				return err
 			}
+			if err := applyChangedConfigFlags(cmd.Flags(), &bootstrapCfg); err != nil {
+				return err
+			}
+
+			// The bootstrap sources locate the authoritative runtime store.
+			// Everything else may then be supplied by the last-applied
+			// manifest kept in that store.
+			runtimeStore, err := runtimecfg.Open(bootstrapCfg.Storage.RuntimeConfigPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = runtimeStore.Close() }()
+
+			appliedManifest, hasManifest, err := runtimeStore.Manifest()
+			if err != nil {
+				return err
+			}
+			if hasManifest && appliedManifest.Revision != manifestRevision(appliedManifest.Values) {
+				return fmt.Errorf("stored config manifest revision does not match its values")
+			}
+			baseline, err := resolveConfig(configFile, nil)
+			if err != nil {
+				return err
+			}
+			if err := applyChangedConfigFlags(cmd.Flags(), &baseline.Config); err != nil {
+				return err
+			}
+
+			// A fresh install has no token configured; generate and store one
+			// so the service is reachable without editing any file first. The
+			// generated token is part of the bootstrap baseline for every
+			// later manifest plan, not a manifest-managed value.
+			token, err := bootstrapBearerToken(runtimeStore, baseline.Config.Auth.BearerToken)
+			if err != nil {
+				return err
+			}
+			baseline.Config.Auth.BearerToken = token
+
+			manifestValues := map[string]any{}
+			if hasManifest {
+				manifestValues = appliedManifest.Values
+			}
+			resolved, err := resolveConfig(configFile, manifestValues)
+			if err != nil {
+				return err
+			}
+			cfg := resolved.Config
 			if err := applyChangedConfigFlags(cmd.Flags(), &cfg); err != nil {
 				return err
 			}
+			cfg.Auth.BearerToken = token
+			resolved.Config = cfg
 
 			// Probe every mount before opening the index. Catches
 			// the operator who mounted ext4 without user_xattr,
@@ -131,33 +180,11 @@ func newDaemonServeCmd() *cobra.Command {
 					return err
 				}
 			}
-			// The runtime store is opened before anything else durable so a
-			// bad path fails fast, and it is validated to sit outside the
-			// index directory, which index rebuilds delete.
-			runtimeStore, err := runtimecfg.Open(cfg.Storage.RuntimeConfigPath)
-			if err != nil {
-				return err
+			var manifestPtr *runtimecfg.AppliedManifest
+			if hasManifest {
+				manifestPtr = &appliedManifest
 			}
-			defer func() { _ = runtimeStore.Close() }()
-
-			// Re-resolve now that the store is available, so runtime overrides
-			// stored by a previous run apply from this boot onward.
-			resolved, err := resolveConfig(configFile, runtimeStore.Overrides())
-			if err != nil {
-				return err
-			}
-			cfg = resolved.Config
-
-			// A fresh install has no token configured; generate and store one
-			// so the service is reachable without editing any file first.
-			token, tErr := bootstrapBearerToken(runtimeStore, cfg.Auth.BearerToken)
-			if tErr != nil {
-				return tErr
-			}
-			cfg.Auth.BearerToken = token
-			resolved.Config = cfg
-
-			configManager := newConfigManager(configFile, runtimeStore, resolved)
+			configManager := newConfigManager(configFile, runtimeStore, baseline, resolved, manifestPtr)
 			// Created before the router because the router exposes it; the S3
 			// adapter is attached later, once its listener is built.
 			s3Keys := newS3KeyService(runtimeStore)

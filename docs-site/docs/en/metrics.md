@@ -22,11 +22,22 @@ This page is for operators who monitor Filegate runtime state, storage pressure,
 
 ## Enable Prometheus metrics
 
+Put the route settings in the manifest:
+
+```yaml
+version: 1
+config:
+  metrics:
+    enabled: true
+    path: /metrics
+```
+
+Store the secret in the bootstrap config, then apply and restart because the metrics route is static:
+
 ```sh
-sudo fg config set --config /etc/filegate/conf.yaml \
-  --metrics-enabled \
-  --metrics-path /metrics \
-  --metrics-token '<scrape-token>'
+sudo fg config set --config /etc/filegate/conf.yaml --metrics-token '<scrape-token>'
+fg config apply -f filegate.manifest.yaml --config /etc/filegate/conf.yaml
+sudo systemctl restart filegate
 ```
 
 If `metrics.token` is set, scrapers must use `Authorization: Bearer <metrics-token>`. If it is empty, Filegate falls back to the REST bearer token. If neither token is set in an S3-only deployment, the metrics endpoint is open on the configured listener.

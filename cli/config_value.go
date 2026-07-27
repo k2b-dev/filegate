@@ -33,6 +33,30 @@ func configValueByPath(cfg *domain.Config, path string) (any, bool) {
 	return current.Interface(), true
 }
 
+// copyConfigValue copies one typed field between config snapshots. It is used
+// when publishing a manifest: runtime fields move to the live snapshot while
+// static fields keep their already-running value until restart.
+func copyConfigValue(dst, src *domain.Config, path string) bool {
+	dstValue := reflect.ValueOf(dst).Elem()
+	srcValue := reflect.ValueOf(src).Elem()
+	for _, segment := range strings.Split(path, ".") {
+		var ok bool
+		dstValue, ok = fieldByMapstructure(dstValue, segment)
+		if !ok {
+			return false
+		}
+		srcValue, ok = fieldByMapstructure(srcValue, segment)
+		if !ok {
+			return false
+		}
+	}
+	if !dstValue.CanSet() || dstValue.Type() != srcValue.Type() {
+		return false
+	}
+	dstValue.Set(srcValue)
+	return true
+}
+
 func fieldByMapstructure(value reflect.Value, name string) (reflect.Value, bool) {
 	structType := value.Type()
 	for i := range structType.NumField() {

@@ -1,5 +1,5 @@
-// Package runtimecfg persists configuration overrides and runtime resources
-// such as S3 access keys.
+// Package runtimecfg persists the last-applied configuration manifest and
+// runtime resources such as S3 access keys.
 //
 // It deliberately opens its own Pebble instance, separate from the metadata
 // index. The index is a derived artifact that can be rebuilt from the
@@ -24,12 +24,25 @@ import (
 var ErrNotFound = errors.New("runtimecfg: not found")
 
 const (
-	prefixOverride  = "o/"
+	keyManifest     = "config/manifest"
 	prefixResource  = "r/"
 	prefixBootstrap = "meta/bootstrapped/"
 )
 
-// Store is the durable home for runtime configuration.
+// AppliedManifest is the complete desired state accepted by the daemon.
+//
+// Values are dotted config paths in their canonical JSON representation. The
+// revision is a digest of Values, not a sequence number, so the same manifest
+// always has the same identity.
+type AppliedManifest struct {
+	Values    map[string]any `json:"values"`
+	Revision  string         `json:"revision"`
+	AppliedAt int64          `json:"appliedAt"`
+	AppliedBy string         `json:"appliedBy"`
+}
+
+// Store is the durable home for declarative configuration and runtime
+// resources.
 type Store struct {
 	db *pebble.DB
 
@@ -38,11 +51,6 @@ type Store struct {
 	// than relying on every caller to track it.
 	closeOnce sync.Once
 	closeErr  error
-
-	// Overrides are read on every request once the snapshot is wired up, so
-	// they are cached in memory and only re-read when something writes.
-	mu        sync.RWMutex
-	overrides map[string]json.RawMessage
 }
 
 // Open creates or opens the store at path.
@@ -51,12 +59,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("runtimecfg: open %q: %w", path, err)
 	}
-	s := &Store{db: db}
-	if err := s.reloadOverrides(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return s, nil
+	return &Store{db: db}, nil
 }
 
 func (s *Store) Close() error {
@@ -65,21 +68,6 @@ func (s *Store) Close() error {
 	}
 	s.closeOnce.Do(func() { s.closeErr = s.db.Close() })
 	return s.closeErr
-}
-
-func (s *Store) reloadOverrides() error {
-	loaded := make(map[string]json.RawMessage)
-	if err := s.each(prefixOverride, func(key string, value []byte) error {
-		loaded[key] = append(json.RawMessage(nil), value...)
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.overrides = loaded
-	s.mu.Unlock()
-	return nil
 }
 
 func (s *Store) each(prefix string, fn func(key string, value []byte) error) error {
@@ -116,49 +104,38 @@ func prefixUpperBound(prefix string) string {
 	return ""
 }
 
-// Overrides returns every stored config override, keyed by dotted config path.
-//
-// Only overrides are stored, never the fully resolved configuration: a value
-// nobody has touched keeps following its built-in default, including when that
-// default changes in a later release.
-func (s *Store) Overrides() map[string]json.RawMessage {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	out := make(map[string]json.RawMessage, len(s.overrides))
-	for key, value := range s.overrides {
-		out[key] = value
+// Manifest returns the last complete manifest. A missing manifest is a normal
+// first-boot state.
+func (s *Store) Manifest() (AppliedManifest, bool, error) {
+	value, closer, err := s.db.Get([]byte(keyManifest))
+	if errors.Is(err, pebble.ErrNotFound) {
+		return AppliedManifest{}, false, nil
 	}
-	return out
+	if err != nil {
+		return AppliedManifest{}, false, err
+	}
+	defer func() { _ = closer.Close() }()
+
+	var manifest AppliedManifest
+	if err := json.Unmarshal(value, &manifest); err != nil {
+		return AppliedManifest{}, false, fmt.Errorf("runtimecfg: decode manifest: %w", err)
+	}
+	if manifest.Values == nil {
+		manifest.Values = map[string]any{}
+	}
+	return manifest, true, nil
 }
 
-// SetOverrides writes config overrides atomically. A nil value clears the key,
-// which makes it fall back to the static source or the built-in default.
-func (s *Store) SetOverrides(values map[string]any) error {
-	batch := s.db.NewBatch()
-	defer func() { _ = batch.Close() }()
-
-	for path, value := range values {
-		key := []byte(prefixOverride + path)
-		if value == nil {
-			if err := batch.Delete(key, nil); err != nil {
-				return err
-			}
-			continue
-		}
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("runtimecfg: encode %q: %w", path, err)
-		}
-		if err := batch.Set(key, encoded, nil); err != nil {
-			return err
-		}
+// SetManifest atomically replaces the complete desired state.
+func (s *Store) SetManifest(manifest AppliedManifest) error {
+	if manifest.Values == nil {
+		manifest.Values = map[string]any{}
 	}
-
-	if err := batch.Commit(pebble.Sync); err != nil {
-		return err
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("runtimecfg: encode manifest: %w", err)
 	}
-	return s.reloadOverrides()
+	return s.db.Set([]byte(keyManifest), encoded, pebble.Sync)
 }
 
 // PutResource stores one runtime resource, such as an S3 access key.
