@@ -42,6 +42,7 @@ Everything on the Settings page carries the authority of the Filegate bearer tok
 |---|---:|---:|---|
 | `FILEGATE_URL` | Admin server process | Yes | REST API URL reachable from the admin app. |
 | `FILEGATE_TOKEN` | Admin server process | Yes | Filegate bearer token kept server-side. |
+| `ADMIN_INSTANCE_NAME` | Admin interface | No | Instance name shown in the shell, login page and browser title. Defaults to `Filegate Admin`. |
 | `ADMIN_TOKEN` | Browser login | See note | Admin login token. Must differ from `FILEGATE_TOKEN`. Required unless OIDC is configured. |
 | `ADMIN_SESSION_SECRET` | Browser session cookie | No | Session signing secret. Generated at boot when unset; sessions then survive neither a restart nor a second replica. |
 | `PORT` | Admin server process | No | HTTP listen port. Defaults to `3000`. |
@@ -107,6 +108,7 @@ cd admin
 bun install
 FILEGATE_URL=http://127.0.0.1:8080 \
 FILEGATE_TOKEN=dev-token \
+ADMIN_INSTANCE_NAME=fg-1-eu \
 ADMIN_TOKEN=admin-token \
 bun run dev
 ```

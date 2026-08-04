@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js";
+import { adminName } from "../lib/branding";
 import { Icon, IconLabel } from "./Icons";
 import { Toasts } from "./Toasts";
 
@@ -56,7 +57,9 @@ export function Layout(props: LayoutProps) {
   return (
     <>
       <header class="topbar" style="view-transition-name: fg-topbar">
-        <div class="service">Filegate Admin</div>
+        <div class="service" title={adminName}>
+          {adminName}
+        </div>
         <div class="top-meta">
           <span class={`status ${healthClass(props.health)}`} title={healthTitle(props.health)}>
             <Icon name={healthIcon(props.health)} />
@@ -121,7 +124,7 @@ export function LoginPage(props: { error?: string; methods: { token: boolean; oi
     <main class="login">
       <div class="panel" style="view-transition-name: fg-login-panel">
         <div class="panel-head">
-          <h2>Filegate Admin</h2>
+          <h2>{adminName}</h2>
         </div>
         <div class="panel-body">
           {props.error && <div class="error">{props.error}</div>}

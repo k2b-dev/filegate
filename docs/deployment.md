@@ -147,6 +147,7 @@ Filegate REST binary. Run it next to Filegate and give it:
 
 - `FILEGATE_URL` — the REST API URL the admin server can reach
 - `FILEGATE_TOKEN` — the Filegate bearer token kept server-side
+- `ADMIN_INSTANCE_NAME` — optional instance name shown in the admin interface
 - `ADMIN_TOKEN` — optional separate login token for browser users
 
 Uploads use Filegate upload sessions with direct session tokens, so large file

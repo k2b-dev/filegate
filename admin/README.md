@@ -12,6 +12,7 @@ cd admin
 bun install
 FILEGATE_URL=http://127.0.0.1:18080 \
 FILEGATE_TOKEN=dev-token \
+ADMIN_INSTANCE_NAME=fg-1-eu \
 ADMIN_TOKEN=dev-admin \
 ADMIN_SESSION_SECRET=dev-session-secret \
 bun run dev
@@ -25,6 +26,7 @@ Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
 |---|---:|---|
 | `FILEGATE_URL` | yes | REST API base URL, reachable from the admin server. |
 | `FILEGATE_TOKEN` | yes | Filegate bearer token, kept server-side. |
+| `ADMIN_INSTANCE_NAME` | no | Instance name shown in the admin shell, login page and browser title. Defaults to `Filegate Admin`. |
 | `ADMIN_TOKEN` | see note | Admin login token. Must differ from `FILEGATE_TOKEN`. Required unless OIDC is configured, where it stays useful as a break-glass login. |
 | `ADMIN_SESSION_SECRET` | no | Session signing secret. Generated at boot when unset, which means sessions survive neither a restart nor a second replica. Set it in production. |
 | `PORT` | no | Listen port, default `3000`. |

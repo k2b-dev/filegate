@@ -20,8 +20,13 @@ function setTheme(theme: AdminTheme) {
 
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? darkColor : lightColor);
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]")) {
-    button.textContent = theme === "dark" ? "Light" : "Dark";
-    button.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} mode`);
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    const icon = document.createElement("i");
+    icon.className = `ti ti-${theme === "dark" ? "sun" : "moon"}`;
+    icon.setAttribute("aria-hidden", "true");
+    button.replaceChildren(icon);
+    button.setAttribute("aria-label", `Switch to ${nextTheme} mode`);
+    button.title = `Switch to ${nextTheme} mode`;
   }
 }
 
