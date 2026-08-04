@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 )
 
 func TestNewRequiresBaseURL(t *testing.T) {
@@ -461,5 +463,38 @@ func TestAPIErrorPopulatesConflictDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Body, "existingId") {
 		t.Fatalf("raw Body should still contain payload, got %q", apiErr.Body)
+	}
+}
+
+func TestSystemUploadSessionsSendsPhaseAsQuery(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A "?" folded into the path is escaped to %3F and matches no
+		// route, so assert on the decoded path and the parsed query.
+		if got, want := r.URL.Path, "/v1/uploads/sessions"; got != want {
+			t.Errorf("path=%q want=%q", got, want)
+		}
+		if got, want := r.URL.Query().Get("phase"), "in_progress"; got != want {
+			t.Errorf("phase=%q want=%q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiv1.UploadSessionListResponse{
+			Items: []apiv1.UploadSessionSummary{{ID: "upl_1", Phase: "in_progress"}},
+			Total: 1,
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(Config{BaseURL: server.URL, Token: "t"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	out, err := client.System.UploadSessions(context.Background(), "in_progress")
+	if err != nil {
+		t.Fatalf("upload sessions: %v", err)
+	}
+	if out.Total != 1 || len(out.Items) != 1 {
+		t.Fatalf("unexpected response %+v", out)
 	}
 }

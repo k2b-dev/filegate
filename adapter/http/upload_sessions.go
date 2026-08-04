@@ -14,7 +14,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,14 +50,10 @@ var (
 type uploadSessionManager struct {
 	svc *domain.Service
 
-	secret    []byte
-	publicURL string
-	trusted   []netip.Prefix
+	secret []byte
+	live   liveConfig
 
-	maxSegmentBytes int64
-	maxUploadBytes  int64
 	maxWrites       int
-	minFreeBytes    int64
 	expiry          time.Duration
 	cleanupInterval time.Duration
 
@@ -81,19 +76,11 @@ type uploadSessionToken struct {
 
 func newUploadSessionManager(
 	svc *domain.Service,
-	bearerToken, publicURL string,
-	maxSegmentBytes, maxUploadBytes int64,
+	bearerToken string,
+	live liveConfig,
 	maxConcurrentWrites int,
-	minFreeBytes int64,
 	expiry, cleanupInterval time.Duration,
-	trusted []netip.Prefix,
 ) *uploadSessionManager {
-	if maxSegmentBytes <= 0 {
-		maxSegmentBytes = 50 << 20
-	}
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 50 << 30
-	}
 	if maxConcurrentWrites <= 0 {
 		maxConcurrentWrites = runtime.NumCPU() * 8
 		if maxConcurrentWrites < 32 {
@@ -103,18 +90,11 @@ func newUploadSessionManager(
 			maxConcurrentWrites = 512
 		}
 	}
-	if minFreeBytes < 0 {
-		minFreeBytes = 0
-	}
 	m := &uploadSessionManager{
 		svc:             svc,
 		secret:          []byte(strings.TrimSpace(bearerToken)),
-		publicURL:       strings.TrimRight(strings.TrimSpace(publicURL), "/"),
-		trusted:         append([]netip.Prefix(nil), trusted...),
-		maxSegmentBytes: maxSegmentBytes,
-		maxUploadBytes:  maxUploadBytes,
+		live:            live,
 		maxWrites:       maxConcurrentWrites,
-		minFreeBytes:    minFreeBytes,
 		expiry:          expiry,
 		cleanupInterval: cleanupInterval,
 		locks:           xsync.NewMap[string, *sync.Mutex](),
@@ -242,31 +222,33 @@ func (m *uploadSessionManager) cleanupExpired() error {
 	return nil
 }
 
+// removeSessionArtifacts deletes a session's staged segments and its assembled
+// file.
+//
+// The paths are derived rather than looked up or globbed. A segment file only
+// ever lives at segmentPath(session, i) for an index the PUT handler validated
+// into [0, TotalSegments), and the partial writes it makes carry a
+// .upload-segment-* name that never matched the old glob anyway. Deriving them
+// drops an index read and, more importantly, a directory scan: the stage
+// directory is shared by every session on the mount, so globbing it once per
+// commit turned a five-thousand-file upload into five thousand scans of a
+// five-thousand-entry directory.
+//
+// The directories are deliberately not fsynced. The only thing that would
+// guarantee is that the deletion of temporary staging files survives a crash,
+// and a resurrected staging file is harmless: a committed session answers from
+// its commit record without consulting segments, an aborted one is closed to
+// writes, and the cleanup loop sweeps whatever is left. Two directory fsyncs per
+// commit is a real cost paid for keeping garbage deleted.
 func (m *uploadSessionManager) removeSessionArtifacts(session domain.UploadSession) error {
-	segments, _ := m.svc.ListUploadSegments(session.ID)
-	for _, segment := range segments {
-		_ = os.Remove(segment.Path)
-	}
-	if session.StageDir != "" {
-		for _, path := range orphanSegmentPaths(session) {
-			_ = os.Remove(path)
-		}
-		_ = os.Remove(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir, session.ID+".complete"))
-		_ = filesystem.SyncDir(session.StageDir)
-		_ = filesystem.SyncDir(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir))
-	}
-	return nil
-}
-
-func orphanSegmentPaths(session domain.UploadSession) []string {
 	if session.StageDir == "" || session.ID == "" {
 		return nil
 	}
-	paths, err := filepath.Glob(filepath.Join(session.StageDir, session.ID+"-*.part"))
-	if err != nil {
-		return nil
+	for i := 0; i < session.TotalSegments; i++ {
+		_ = os.Remove(segmentPath(session, i))
 	}
-	return paths
+	_ = os.Remove(filepath.Join(filepath.Dir(session.StageDir), uploadSessionCompleteSubdir, session.ID+".complete"))
+	return nil
 }
 
 func generateUploadSessionID() (string, error) {
@@ -444,8 +426,8 @@ func (m *uploadSessionManager) directForRequest(r *http.Request, sessionID strin
 }
 
 func (m *uploadSessionManager) baseURLForRequest(r *http.Request) (string, error) {
-	if m.publicURL != "" {
-		return m.publicURL, nil
+	if publicURL := m.live.publicURL(); publicURL != "" {
+		return publicURL, nil
 	}
 	host := r.Host
 	proto := ""
@@ -469,7 +451,7 @@ func (m *uploadSessionManager) baseURLForRequest(r *http.Request) (string, error
 }
 
 func (m *uploadSessionManager) peerTrusted(remoteAddr string) bool {
-	return peerTrusted(remoteAddr, m.trusted)
+	return peerTrusted(remoteAddr, m.live.trustedProxies())
 }
 
 func cleanSessionUploadPath(raw string) (string, error) {
@@ -581,7 +563,8 @@ func (m *uploadSessionManager) createSession(r *http.Request, body apiv1.UploadS
 	if err != nil {
 		return apiv1.UploadSessionResponse{}, err
 	}
-	if body.Size <= 0 || body.Size > m.maxUploadBytes {
+	maxUploadBytes := m.live.maxSessionUploadBytes()
+	if body.Size <= 0 || body.Size > maxUploadBytes {
 		return apiv1.UploadSessionResponse{}, domain.ErrInvalidArgument
 	}
 	if !checksumRE.MatchString(strings.TrimSpace(body.Checksum)) {
@@ -591,10 +574,11 @@ func (m *uploadSessionManager) createSession(r *http.Request, body apiv1.UploadS
 	if segmentSize <= 0 {
 		segmentSize = fallbackSegmentSize
 	}
+	maxSegmentBytes := m.live.maxChunkBytes()
 	if segmentSize <= 0 {
-		segmentSize = m.maxSegmentBytes
+		segmentSize = maxSegmentBytes
 	}
-	if segmentSize <= 0 || segmentSize > m.maxSegmentBytes {
+	if segmentSize <= 0 || segmentSize > maxSegmentBytes {
 		return apiv1.UploadSessionResponse{}, domain.ErrInvalidArgument
 	}
 	mode, err := domain.ParseConflictMode(body.OnConflict, domain.FileConflictModes)
@@ -671,8 +655,8 @@ func (m *uploadSessionManager) ensureSpace(stageRoot string, bytesNeeded int64) 
 		return err
 	}
 	needed := uint64(bytesNeeded)
-	if m.minFreeBytes > 0 {
-		needed += uint64(m.minFreeBytes)
+	if minFreeBytes := m.live.uploadMinFreeBytes(); minFreeBytes > 0 {
+		needed += uint64(minFreeBytes)
 	}
 	if free < needed {
 		return domain.ErrInsufficientStorage
@@ -1089,8 +1073,20 @@ func (m *uploadSessionManager) handleCommit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	completePath := filepath.Join(completeDir, session.ID+".complete")
-	if err := assembleUploadSession(*session, byIndex, completePath); err != nil {
-		statusFromErr(w, err)
+	// An earlier commit attempt may have assembled the file and then failed
+	// further along -- on a conflict at the destination, say. Reassembling is
+	// not merely wasted work here: the single-segment path moves the staged
+	// segment into place, so the input no longer exists. A recorded segment is
+	// immutable (re-uploading different bytes is refused with a conflict), so
+	// an assembled file can only hold the bytes the session declared, and the
+	// checksum below verifies it either way.
+	if _, statErr := os.Stat(completePath); errors.Is(statErr, os.ErrNotExist) {
+		if err := assembleUploadSession(*session, byIndex, completePath); err != nil {
+			statusFromErr(w, err)
+			return
+		}
+	} else if statErr != nil {
+		statusFromErr(w, statErr)
 		return
 	}
 	hashes, size, err := hashWholeFile(completePath)
@@ -1206,31 +1202,70 @@ func (m *uploadSessionManager) ensureSessionParent(session domain.UploadSession)
 	if len(parts) <= 2 {
 		return session.ParentID, noop, nil
 	}
+
+	// Almost every commit lands in a directory that already exists, because an
+	// earlier file in the same upload created it. One lookup settles that. The
+	// loop below reaches the same answer by re-creating every level in turn, and
+	// each of those levels costs a path lock, a filesystem walk of its own
+	// prefix and an index read -- work that scales with tree depth and was being
+	// paid once per file. Nothing is created here, so the rollback stays a
+	// no-op, which is what it should be for a directory this commit found.
+	parentPath := strings.Join(parts[:len(parts)-1], "/")
+	if id, err := m.svc.ResolvePath(parentPath); err == nil {
+		return id, noop, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.FileID{}, noop, err
+	}
+
 	root, _, err := m.mountRootByName(parts[0])
 	if err != nil {
 		return domain.FileID{}, noop, err
 	}
 	parentRelParts := parts[1 : len(parts)-1]
-	created := make([]domain.FileID, 0, len(parentRelParts))
-	var parentID domain.FileID
+
+	// Note which levels are absent before creating anything, so the rollback
+	// only ever removes directories this commit introduced. These are reads;
+	// the mkdir below is the single write.
+	missing := make([]string, 0, len(parentRelParts))
 	for i := range parentRelParts {
-		rel := strings.Join(parentRelParts[:i+1], "/")
-		virtualPath := parts[0] + "/" + rel
-		_, existedErr := m.svc.ResolvePath(virtualPath)
-		meta, err := m.svc.MkdirRelative(root.ID, rel, true, nil, domain.ConflictSkip)
-		if err != nil {
-			rollbackEmptyDirs(m.svc, created)
+		levelPath := parts[0] + "/" + strings.Join(parentRelParts[:i+1], "/")
+		if _, err := m.svc.ResolvePath(levelPath); errors.Is(err, domain.ErrNotFound) {
+			missing = append(missing, levelPath)
+		} else if err != nil {
 			return domain.FileID{}, noop, err
 		}
-		if errors.Is(existedErr, domain.ErrNotFound) {
-			created = append(created, meta.ID)
-		} else if existedErr != nil {
-			rollbackEmptyDirs(m.svc, created)
-			return domain.FileID{}, noop, existedErr
-		}
-		parentID = meta.ID
 	}
-	return parentID, func() { rollbackEmptyDirs(m.svc, created) }, nil
+
+	// One recursive mkdir for the whole chain. Calling it once per level made
+	// the same directories, but each call re-acquired a path lock and re-walked
+	// its own prefix, so a chain of depth d cost d locks and d prefix walks
+	// instead of one -- the dominant cost of committing into a deep tree.
+	// Levels that were absent and now exist belong to this commit, and that has
+	// to be evaluated on the failure path too: a recursive mkdir can create a
+	// prefix and then stop at a level where a file sits where a directory
+	// belongs, leaving those directories behind with nobody to remove them.
+	// A level that still does not resolve is simply left out; the worst outcome
+	// is an empty directory nobody cleans up.
+	createdIDs := func() []domain.FileID {
+		out := make([]domain.FileID, 0, len(missing))
+		for _, levelPath := range missing {
+			id, err := m.svc.ResolvePath(levelPath)
+			if err != nil {
+				continue
+			}
+			out = append(out, id)
+		}
+		return out
+	}
+
+	meta, err := m.svc.MkdirRelative(root.ID, strings.Join(parentRelParts, "/"), true, nil, domain.ConflictSkip)
+	if err != nil {
+		rollbackEmptyDirs(m.svc, createdIDs())
+		return domain.FileID{}, noop, err
+	}
+
+	created := createdIDs()
+	return meta.ID, func() { rollbackEmptyDirs(m.svc, created) }, nil
 }
 
 func rollbackEmptyDirs(svc *domain.Service, ids []domain.FileID) {
@@ -1247,7 +1282,52 @@ func rollbackEmptyDirs(svc *domain.Service, ids []domain.FileID) {
 	}
 }
 
+// adoptSingleSegment moves a lone staged segment into place instead of copying
+// it, reporting whether the move was used.
+//
+// Most small-file uploads are exactly one segment, and for those the copy was
+// the entire cost of commit: the segment is read back, written out a second
+// time, then read a third time to hash. A rename produces the same file for one
+// directory update. The staged segment and the complete directory are siblings
+// under the same session root, so the rename stays within one filesystem.
+//
+// The per-segment checksum comparison the copy loop performs is not lost. The
+// caller hashes the assembled file and rejects the commit unless the size and
+// SHA-256 match the session, and with one segment those are the same bytes the
+// loop would have covered.
+//
+// A false return means fall back to copying. Rename can fail for reasons this
+// code should not have to enumerate -- a segment staged on another device, a
+// filesystem that refuses the operation -- and the copy path reports the real
+// error if the input is genuinely unusable.
+func adoptSingleSegment(session domain.UploadSession, segments map[int]domain.UploadSegment, completePath string) (bool, error) {
+	segment, ok := segments[0]
+	if !ok {
+		return false, domain.ErrInvalidArgument
+	}
+	if segment.Size != session.Size {
+		return false, fmt.Errorf("segment size mismatch")
+	}
+	if err := os.Rename(segment.Path, completePath); err != nil {
+		return false, nil
+	}
+	if err := filesystem.SyncDir(filepath.Dir(completePath)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func assembleUploadSession(session domain.UploadSession, segments map[int]domain.UploadSegment, completePath string) error {
+	if session.TotalSegments == 1 {
+		moved, err := adoptSingleSegment(session, segments, completePath)
+		if err != nil {
+			return err
+		}
+		if moved {
+			return nil
+		}
+	}
+
 	tmp := completePath + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -1335,4 +1415,20 @@ func (m *uploadSessionManager) handleAbort(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeSlotsInUse reports how many concurrent segment-write slots are held. The
+// limit is already published via /v1/capabilities; this is the usage side of it.
+func (m *uploadSessionManager) writeSlotsInUse() int {
+	if m == nil {
+		return 0
+	}
+	return len(m.writeSlots)
+}
+
+func (m *uploadSessionManager) writeSlotsLimit() int {
+	if m == nil {
+		return 0
+	}
+	return cap(m.writeSlots)
 }

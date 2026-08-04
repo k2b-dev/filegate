@@ -158,6 +158,17 @@ type ServerConfig struct {
 	// closed via http.Server.Close — clients see RST, the
 	// crash-recovery sweep handles any half-committed state.
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+	// HTTP2Cleartext accepts unencrypted HTTP/2 on the REST
+	// listener, alongside HTTP/1.1 on the same port. Off by
+	// default: h2c only engages for a client that opens with the
+	// HTTP/2 preface, but accepting a second protocol on a
+	// listener is an operator's decision, not a default.
+	//
+	// This is for a reverse proxy configured to speak h2 to its
+	// backends. Browsers cannot use it — they require TLS for
+	// HTTP/2, and the edge terminates that. It buys no measurable
+	// throughput either; see bench/results.
+	HTTP2Cleartext bool `mapstructure:"http2_cleartext"`
 }
 
 // CORSConfig controls optional browser cross-origin access for the REST
@@ -180,6 +191,11 @@ type AuthConfig struct {
 type StorageConfig struct {
 	BasePaths []string `mapstructure:"base_paths"`
 	IndexPath string   `mapstructure:"index_path"`
+	// RuntimeConfigPath holds the applied manifest and runtime resources
+	// such as S3 access keys. It must not sit inside IndexPath: rebuilding
+	// the index removes that directory outright, and the index is a derived
+	// artifact while this store is authoritative.
+	RuntimeConfigPath string `mapstructure:"runtime_config_path"`
 }
 
 // DetectionConfig controls the filesystem change detection backend.

@@ -1,0 +1,50 @@
+# Isolated stack for the many-small-files upload benchmarks.
+#
+# Deliberately separate from compose.test.yml: it uses its own ports, its own
+# volumes and a TLS edge, because the HTTP/2 lever from the smart-batched-uploads
+# ticket cannot be measured against the Filegate listener directly (it serves
+# cleartext HTTP/1.1 only). Caddy terminates TLS and speaks h2 or h1 depending
+# on what the client negotiates, which is also how Filegate is deployed.
+services:
+  filegate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    user: "0:0"
+    ports:
+      - "4911:8080"
+    environment:
+      FILEGATE_AUTH_BEARER_TOKEN: "bench-token"
+      FILEGATE_SERVER_LISTEN: ":8080"
+      # h2c on, so the harness can compare protocols without a TLS edge in between.
+      FILEGATE_SERVER_HTTP2_CLEARTEXT: "true"
+      FILEGATE_SERVER_PUBLIC_URL: "http://filegate:8080"
+      FILEGATE_STORAGE_BASE_PATHS: "/data"
+      FILEGATE_STORAGE_INDEX_PATH: "/var/lib/filegate/index"
+      # The external-change detector rescans the whole tree on every tick. On a
+      # corpus of tens of thousands of files that scan lands inside the measured
+      # window and swamps the upload path, so it is parked far outside the run.
+      # Detector cost is a separate question from upload throughput.
+      FILEGATE_DETECTION_POLL_INTERVAL: "${FILEGATE_BENCH_POLL_INTERVAL:-24h}"
+      FILEGATE_UPLOAD_EXPIRY: "1h"
+      FILEGATE_UPLOAD_CLEANUP_INTERVAL: "10m"
+      FILEGATE_UPLOAD_MAX_CHUNK_BYTES: "67108864"     # 64 MiB
+      FILEGATE_UPLOAD_MAX_UPLOAD_BYTES: "10737418240" # 10 GiB
+    volumes:
+      - filegate-bench-data:/data
+      - filegate-bench-index:/var/lib/filegate/index
+
+  edge:
+    image: caddy:2-alpine
+    depends_on:
+      - filegate
+    ports:
+      - "4913:443"
+    volumes:
+      - ./Caddyfile.bench:/etc/caddy/Caddyfile:ro
+      - filegate-bench-caddy:/data
+
+volumes:
+  filegate-bench-data:
+  filegate-bench-index:
+  filegate-bench-caddy:

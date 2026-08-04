@@ -19,6 +19,68 @@ func setID(path string, id domain.FileID) error {
 	return nil
 }
 
+// setIDIfAbsent writes the ID only when the path has none, and reports whether
+// this call was the one that wrote it.
+//
+// XATTR_CREATE makes that an atomic test-and-set in the kernel, which is what
+// first-time indexing needs: two goroutines reaching an unindexed directory at
+// the same moment would otherwise each mint a fresh ID, both write it, and each
+// continue with its own value. The index then carries a child edge pointing at
+// an ID the xattr no longer holds, and resolving that path answers not-found.
+//
+// A second in-process path lock would deadlock here: MkdirRelative already
+// holds the path lock for the leaf it is creating, and this runs underneath it.
+// The advisory inode lock below is reserved for malformed-xattr recovery.
+func setIDIfAbsent(path string, id domain.FileID) (domain.FileID, bool, error) {
+	err := unix.Setxattr(path, domain.XAttrIDKey(), id[:], unix.XATTR_CREATE)
+	if err == nil {
+		return id, true, nil
+	}
+	if !errors.Is(err, unix.EEXIST) {
+		return domain.FileID{}, false, fmt.Errorf("setxattr %s: %w", path, err)
+	}
+
+	// Someone else won. Their value is the one on disk, so adopt it rather
+	// than returning an ID nothing else will ever agree with.
+	existing, getErr := getID(path)
+	if getErr == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(getErr, os.ErrNotExist) {
+		return domain.FileID{}, false, fmt.Errorf("setxattr %s raced and the winning value is unreadable: %w", path, getErr)
+	}
+	return repairMalformedID(path, id)
+}
+
+// repairMalformedID serializes the uncommon recovery path where the xattr
+// exists but does not contain a Filegate ID. XATTR_CREATE cannot replace that
+// payload, while an unconditional write without the lock could let concurrent
+// indexers continue with different freshly minted IDs.
+func repairMalformedID(path string, id domain.FileID) (domain.FileID, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return domain.FileID{}, false, fmt.Errorf("open %s to repair xattr: %w", path, err)
+	}
+	defer file.Close()
+
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		return domain.FileID{}, false, fmt.Errorf("lock %s to repair xattr: %w", path, err)
+	}
+	defer func() { _ = unix.Flock(int(file.Fd()), unix.LOCK_UN) }()
+
+	existing, getErr := getID(path)
+	if getErr == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(getErr, os.ErrNotExist) {
+		return domain.FileID{}, false, fmt.Errorf("read %s while repairing xattr: %w", path, getErr)
+	}
+	if err := setID(path, id); err != nil {
+		return domain.FileID{}, false, err
+	}
+	return id, true, nil
+}
+
 func getID(path string) (domain.FileID, error) {
 	var id domain.FileID
 	buf := make([]byte, 16)

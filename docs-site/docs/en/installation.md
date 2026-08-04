@@ -62,6 +62,9 @@ sudo rpm -Uvh /tmp/filegate.rpm
 | Config file | `/etc/filegate/conf.yaml` | Service | Main configuration file. |
 | systemd unit | `/lib/systemd/system/filegate.service` | Service | Filegate service unit. |
 | Data directory | `/var/lib/filegate` | Service | Default service data path. |
+| Default mount | `/var/lib/filegate/data` | Storage | Served when no mount is configured. |
+| Index | `/var/lib/filegate/index` | Service | Rebuildable metadata index. |
+| Runtime config store | `/var/lib/filegate/config` | Service | Applied manifest, S3 access keys, and the generated API token. Not rebuildable — back it up. |
 | Log directory | `/var/log/filegate` | Service | Default service log path. |
 
 The package creates or preserves `/etc/filegate/conf.yaml`. Existing config files are not overwritten during upgrades.
@@ -105,6 +108,44 @@ Verify the REST listener:
 curl -fsS http://127.0.0.1:8080/health
 ```
 
+## Behind a reverse proxy
+
+Filegate never terminates TLS. HTTPS, and browser-facing HTTP/2, belong at a
+reverse proxy in front of it; there is no TLS configuration to enable.
+
+The listener serves cleartext HTTP/1.1. That is what every mainstream proxy speaks
+to its backends — nginx does not support HTTP/2 upstreams at all, and Caddy,
+Traefik and Envoy default to HTTP/1.1 — so no configuration is needed for the
+usual setup.
+
+Set `server.http2_cleartext` when your proxy or service mesh is configured to
+speak h2 to its backends. HTTP/1.1 and h2c then share the same port: the server
+switches only for a connection that opens with the HTTP/2 preface, so nothing else
+changes. It is a static setting, so it needs a restart, and it is not a
+performance setting — measurements put the two protocols within a few percent at
+the median, well inside the noise of a single configuration.
+
+```yaml
+version: 1
+config:
+  server:
+    http2_cleartext: true
+```
+
+```sh
+fg config apply -f filegate.manifest.yaml --config /etc/filegate/conf.yaml
+sudo systemctl restart filegate
+```
+
+The startup log states what the listener accepted:
+
+```txt
+[filegate] listening on :8080 (HTTP/1.1, h2c)
+```
+
+The S3 listener is HTTP/1.1 only. S3 clients sign and stream over HTTP/1.1 in
+practice.
+
 ## Upgrade Filegate
 
 Stop Filegate before installing a newer package:
@@ -141,6 +182,8 @@ docker run --rm -d \
   ghcr.io/valentinkolb/filegate:latest \
   serve
 ```
+
+Beyond evaluation, mount `/var/lib/filegate/config` as a volume too. It holds the applied manifest, S3 access keys, and generated API token; a container that recreates it loses that state.
 
 ## Development build
 

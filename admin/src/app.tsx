@@ -6,6 +6,9 @@ import {
   type BrowserUploadAllowResult,
   type BrowserUploadConflictMode,
   type CapabilitiesResponse,
+  type GlobSearchResponse,
+  type VersionResponse,
+  type HealthStatus,
   type DirectUploadURLResponse,
   type FileConflictMode,
   type MkdirConflictMode,
@@ -16,17 +19,22 @@ import {
   type UploadSessionCreateRequest,
   type UploadSessionDirectRequest,
 } from "@valentinkolb/filegate";
-import { Hono } from "hono";
-import { login, logout, requireAuth } from "./lib/auth";
+import { Hono, type Context } from "hono";
+import { withActor } from "./lib/actor";
+import { resolveFileView } from "./lib/view";
+import { authMethods, login, logout, oidcBegin, oidcCallback, requireAuth } from "./lib/auth";
 import { client, isList, parentPath, resolveDirectory } from "./lib/filegate";
 import { env } from "./lib/env";
-import { errorMessage, redirectFiles, selectedFiles } from "./lib/format";
+import { errorMessage, formatRetryAfter, redirectFiles, selectedFiles } from "./lib/format";
 import { config, routes, ssr } from "./config";
 import { LoginPage } from "./components/Layout";
 import { readThemeFromCookieHeader, type AdminTheme } from "./lib/theme";
 import { Files } from "./pages/Files";
+import { filterNodes, sortNodes, type Sort, type SortField } from "./components/Table";
 import { Overview } from "./pages/Overview";
+import { S3 } from "./pages/S3";
 import { Search } from "./pages/Search";
+import { Settings } from "./pages/Settings";
 import { System } from "./pages/System";
 
 type Crumb = { name: string; path?: string };
@@ -55,6 +63,24 @@ export const app = new Hono()
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./prompts.js", import.meta.url)));
   })
+  .get("/toast.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./toast.js", import.meta.url)));
+  })
+  // Headers go on the Response, not the context: returning a fresh Response
+  // discards anything set via c.header. The Content-Type survives elsewhere in
+  // this file only because Bun.file infers it from the extension, which masks
+  // the same mistake for the other static routes.
+  .get("/tabler-icons.css", () => assetResponse("./tabler-icons.css", "text/css; charset=utf-8"))
+  .get("/fonts/tabler-icons.woff2", () => assetResponse("./fonts/tabler-icons.woff2", "font/woff2"))
+  .get("/system.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./system.js", import.meta.url)));
+  })
+  .get("/s3.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    return new Response(Bun.file(new URL("./s3.js", import.meta.url)));
+  })
   .get("/theme.js", (c) => {
     c.header("Content-Type", "text/javascript; charset=utf-8");
     return new Response(Bun.file(new URL("./theme.js", import.meta.url)));
@@ -64,19 +90,23 @@ export const app = new Hono()
     "/login",
     ...ssr(async (c) => {
       setPage(c, "Sign in");
-      const hasError = c.req.query("error") === "invalid";
-      return () => <LoginPage error={hasError ? "Invalid admin token" : undefined} />;
+      const error = loginError(c.req.query("error"), c.req.query("retry"), c.req.query("reason"));
+      const methods = authMethods();
+      return () => <LoginPage error={error} methods={methods} />;
     }),
   )
   .post("/login", login)
+  .get("/auth/login", oidcBegin)
+  .get("/auth/callback", oidcCallback)
   .use("*", requireAuth())
+  .use("*", withActor())
   .post("/logout", logout)
   .get(
     "/",
     ...ssr(async (c) => {
       setPage(c, "Overview");
       const data = await loadBase();
-      return () => <Overview stats={data.stats} roots={data.roots} error={queryError(c.req.query("error"), data.error)} />;
+      return () => <Overview stats={data.stats} health={data.health} roots={data.roots} error={queryError(c.req.query("error"), data.error)} />;
     }),
   )
   .get(
@@ -85,7 +115,26 @@ export const app = new Hono()
       setPage(c, "Files");
       const data = await loadFiles(c.req.query("path") || "", c.req.query("id") || "");
       const loadError = "error" in data ? data.error : undefined;
-      return () => <Files {...data} error={queryError(c.req.query("error"), loadError)} notice={c.req.query("notice")} />;
+      const view = resolveFileView(c);
+      const sort = parseSort(c.req.query("sort"), c.req.query("dir"));
+      const filter = c.req.query("filter")?.trim() ?? "";
+      // Sorting and filtering happen here rather than in the server: the whole
+      // directory is already loaded for the listing, so a round trip per sort
+      // click would buy nothing.
+      const totalBeforeFilter = data.children.length;
+      const children = sortNodes(filterNodes(data.children, filter), sort);
+      return () => (
+        <Files
+          {...data}
+          children={children}
+          totalBeforeFilter={totalBeforeFilter}
+          sort={sort}
+          filter={filter}
+          view={view}
+          error={queryError(c.req.query("error"), loadError)}
+          notice={c.req.query("notice")}
+        />
+      );
     }),
   )
   .post("/files/mkdir", async (c) => {
@@ -94,7 +143,7 @@ export const app = new Hono()
     try {
       const parent = await resolveDirectory(path);
       await client().nodes.mkdir(parent.id, { path: field(body, "name"), recursive: true, onConflict: mkdirConflictMode(field(body, "onConflict")) });
-      return c.redirect(redirectFiles(path), 303);
+      return c.redirect(redirectFiles(path, undefined, "Folder created."), 303);
     } catch (err) {
       return c.redirect(redirectFiles(path, errorMessage(err)), 303);
     }
@@ -122,9 +171,36 @@ export const app = new Hono()
     try {
       const node = await client().nodes.get(field(body, "id"));
       await client().nodes.delete(node.id);
-      return c.redirect(redirectFiles(parentPath(node.path)), 303);
+      return c.redirect(redirectFiles(parentPath(node.path), undefined, `${node.name} deleted.`), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(redirectFiles(field(body, "parentPath"), errorMessage(err)), 303);
+    }
+  })
+  .get("/files/thumbnail", async (c) => {
+    // The browser has no Filegate token, so thumbnails proxy through here.
+    // Conditional headers pass through both ways so the browser cache still
+    // works and repeat views cost a 304 rather than a re-encode.
+    const id = c.req.query("id")?.trim();
+    if (!id) return c.notFound();
+    const size = thumbnailSize(c.req.query("size"));
+    try {
+      const upstream = await client().nodes.thumbnailRaw(id, { size, ifNoneMatch: c.req.header("if-none-match") });
+      if (upstream.status === 304) return new Response(null, { status: 304, headers: passthroughCacheHeaders(upstream) });
+      if (!upstream.ok) {
+        // 415 unsupported, 413 too large, 503 queue full. The grid falls back
+        // to the file icon, so answering 404 is enough and keeps the browser
+        // from caching a failure as an image.
+        return c.notFound();
+      }
+      return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") ?? "image/jpeg",
+          ...passthroughCacheHeaders(upstream),
+        },
+      });
+    } catch {
+      return c.notFound();
     }
   })
   .get("/files/download", async (c) => {
@@ -137,25 +213,106 @@ export const app = new Hono()
       });
       return c.redirect(out.downloadUrl, 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(redirectFiles(c.req.query("parentPath") || "", errorMessage(err)), 303);
     }
   })
   .post("/files/rename", async (c) => {
     const body = await c.req.parseBody();
     try {
       const updated = await client().nodes.patch(field(body, "id"), { name: field(body, "name") });
-      return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
+      return c.redirect(selectedFiles(parentPath(updated.path), updated.id, undefined, `Renamed to ${updated.name}.`), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .post("/files/metadata", async (c) => {
     const body = await c.req.parseBody();
     try {
       const updated = await client().nodes.patch(field(body, "id"), { ownership: ownershipFromForm(body) }, field(body, "recursiveOwnership") === "true");
-      return c.redirect(selectedFiles(parentPath(updated.path), updated.id), 303);
+      return c.redirect(selectedFiles(parentPath(updated.path), updated.id, undefined, "Metadata updated."), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
+    }
+  })
+  .post("/files/versions/snapshot", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, "Snapshot created.", () => client().versions.snapshot(field(body, "id"), field(body, "label") || undefined));
+  })
+  .post("/files/versions/pin", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, "Version pinned.", () => client().versions.pin(field(body, "id"), field(body, "versionId"), field(body, "label") || undefined));
+  })
+  .post("/files/versions/unpin", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, "Version unpinned.", () => client().versions.unpin(field(body, "id"), field(body, "versionId")));
+  })
+  .post("/files/versions/delete", async (c) => {
+    const body = await c.req.parseBody();
+    return versionAction(c, body, "Version deleted.", () => client().versions.delete(field(body, "id"), field(body, "versionId")));
+  })
+  .post("/files/versions/restore", async (c) => {
+    const body = await c.req.parseBody();
+    const asNewFile = field(body, "asNewFile") === "true";
+    try {
+      const out = await client().versions.restore(field(body, "id"), field(body, "versionId"), {
+        asNewFile,
+        name: field(body, "name") || undefined,
+      });
+      // An as-new restore produces a different node, so select that one.
+      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id, undefined, restoreNotice(out.asNew)), 303);
+    } catch (err) {
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
+    }
+  })
+  .get("/files/versions/download", async (c) => {
+    const id = c.req.query("id")?.trim();
+    const versionId = c.req.query("versionId")?.trim();
+    if (!id || !versionId) return c.redirect(redirectFiles("", "file and version are required"), 303);
+    try {
+      // Version bytes have no signed direct-URL endpoint, so unlike normal
+      // downloads this one streams through the admin server.
+      const upstream = await client().versions.contentRaw(id, versionId);
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
+          "Content-Disposition": upstream.headers.get("content-disposition") ?? `attachment; filename="${versionId}.bin"`,
+        },
+      });
+    } catch (err) {
+      return c.redirect(redirectFiles(c.req.query("parentPath") || "", errorMessage(err)), 303);
+    }
+  })
+  .post("/files/bulk/delete", async (c) => {
+    const body = await c.req.parseBody();
+    const parentPath = field(body, "parentPath");
+    const ids = splitCSV(field(body, "ids"));
+    if (ids.length === 0) return c.redirect(redirectFiles(parentPath, "no items selected"), 303);
+
+    const outcome = await runBulk(ids, (id) => client().nodes.delete(id));
+    return c.redirect(redirectFiles(parentPath) + bulkQuery(parentPath, "Deleted", outcome), 303);
+  })
+  .post("/files/bulk/move", async (c) => {
+    const body = await c.req.parseBody();
+    const parentPath = field(body, "parentPath");
+    const ids = splitCSV(field(body, "ids"));
+    if (ids.length === 0) return c.redirect(redirectFiles(parentPath, "no items selected"), 303);
+
+    try {
+      const target = await resolveDirectory(field(body, "targetParentPath"));
+      const outcome = await runBulk(ids, async (id) => {
+        const node = await client().nodes.get(id);
+        await client().transfers.create({
+          op: "move",
+          sourceId: id,
+          targetParentId: target.id,
+          targetName: node.name,
+          onConflict: conflictMode(field(body, "onConflict")),
+        });
+      });
+      return c.redirect(redirectFiles(parentPath) + bulkQuery(parentPath, "Moved", outcome), 303);
+    } catch (err) {
+      return c.redirect(redirectFiles(parentPath, errorMessage(err)), 303);
     }
   })
   .post("/files/transfer", async (c) => {
@@ -169,22 +326,31 @@ export const app = new Hono()
         targetName: field(body, "targetName"),
         onConflict: conflictMode(field(body, "onConflict")),
       });
-      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id), 303);
+      const verb = field(body, "op") === "copy" ? "Copied" : "Moved";
+      return c.redirect(selectedFiles(parentPath(out.node.path), out.node.id, undefined, `${verb} ${out.node.name}.`), 303);
     } catch (err) {
-      return c.redirect(redirectFiles("", errorMessage(err)), 303);
+      return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
     }
   })
   .get(
     "/search",
     ...ssr(async (c) => {
       setPage(c, "Search");
-      const stats = await loadStats();
+      const base = await loadBase();
       const pattern = c.req.query("pattern") || "";
       const hidden = c.req.query("hidden") === "true";
-      const results = pattern
-        ? await client().search.glob({ pattern, limit: 100, showHidden: hidden, files: true, directories: true })
-        : undefined;
-      return () => <Search stats={stats} pattern={pattern} hidden={hidden} results={results} />;
+      let results: GlobSearchResponse | undefined;
+      let error = base.error;
+      try {
+        results = pattern
+          ? await client().search.glob({ pattern, limit: 100, showHidden: hidden, files: true, directories: true })
+          : undefined;
+      } catch (err) {
+        // A bad glob pattern is user error, not an outage; either way it must
+        // not escape as a raw 500.
+        error = errorMessage(err);
+      }
+      return () => <Search stats={base.stats} health={base.health} pattern={pattern} hidden={hidden} results={results} error={error} />;
     }),
   )
   .get(
@@ -197,16 +363,371 @@ export const app = new Hono()
         outcome: c.req.query("outcome"),
         page: c.req.query("page"),
       });
-      const [stats, activity] = await Promise.all([loadStats(), loadActivity(activityQuery)]);
-      return () => <System stats={stats} activity={activity} activityQuery={activityQuery} error={c.req.query("error")} notice={c.req.query("notice")} />;
+      const [base, activity, live] = await Promise.all([loadBase(), loadActivity(activityQuery), loadLive()]);
+      return () => (
+        <System
+          stats={base.stats}
+          health={base.health}
+          activity={activity}
+          activityQuery={activityQuery}
+          runtime={live.runtime}
+          healthDetail={live.health}
+          sessions={live.sessions}
+          canPrune={live.canPrune}
+          error={queryError(c.req.query("error"), base.error)}
+          notice={c.req.query("notice")}
+        />
+      );
     }),
   )
+  .get(
+    "/s3",
+    ...ssr(async (c) => {
+      setPage(c, "S3");
+      const data = await loadS3();
+      return () => (
+        <S3
+          {...data}
+          error={queryError(c.req.query("error"), data.error)}
+          notice={c.req.query("notice")}
+        />
+      );
+    }),
+  )
+  .get(
+    "/settings",
+    ...ssr(async (c) => {
+      setPage(c, "Settings");
+      const data = await loadSettings();
+      return () => (
+        <Settings
+          {...data}
+          mounts={data.mounts}
+          error={queryError(c.req.query("error"), data.error)}
+          notice={c.req.query("notice")}
+        />
+      );
+    }),
+  )
+  .post("/api/s3keys/create", async (c) => {
+    // Deliberately JSON rather than a form post with a redirect: the secret is
+    // returned here, and a redirect would put it in the URL, the browser
+    // history and every access log along the way.
+    try {
+      const body = await c.req.json();
+      const rate = Number.parseInt(String(body.requestsPerSecond ?? ""), 10);
+      const created = await client().s3Keys.create({
+        buckets: Array.isArray(body.buckets) ? body.buckets.map(String) : [],
+        ...(Number.isFinite(rate) && rate > 0 ? { requestsPerSecond: rate } : {}),
+      });
+      return c.json(created, 201);
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 400);
+    }
+  })
+  .post("/api/s3keys/:accessKey/rotate", async (c) => {
+    try {
+      return c.json(await client().s3Keys.rotate(c.req.param("accessKey")));
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 400);
+    }
+  })
+  .post("/s3/keys/create", async (c) => {
+    const body = await c.req.parseBody();
+    try {
+      const rate = Number.parseInt(field(body, "requestsPerSecond"), 10);
+      const created = await client().s3Keys.create({
+        buckets: splitCSV(field(body, "buckets")),
+        ...(Number.isFinite(rate) && rate > 0 ? { requestsPerSecond: rate } : {}),
+      });
+      // The secret cannot be read again, so it goes in the notice verbatim.
+      return c.redirect(s3URL(undefined, `Key ${created.accessKey} created. Secret (shown once): ${created.secretKey}`), 303);
+    } catch (err) {
+      return c.redirect(s3URL(errorMessage(err)), 303);
+    }
+  })
+  .post("/s3/keys/rotate", async (c) => {
+    const body = await c.req.parseBody();
+    try {
+      const rotated = await client().s3Keys.rotate(field(body, "accessKey"));
+      return c.redirect(s3URL(undefined, `Key ${rotated.accessKey} rotated. New secret (shown once): ${rotated.secretKey}`), 303);
+    } catch (err) {
+      return c.redirect(s3URL(errorMessage(err)), 303);
+    }
+  })
+  .post("/s3/keys/toggle", async (c) => {
+    const body = await c.req.parseBody();
+    const accessKey = field(body, "accessKey");
+    try {
+      const disabled = field(body, "disabled") === "true";
+      await client().s3Keys.update(accessKey, { disabled });
+      return c.redirect(s3URL(undefined, `${accessKey} ${disabled ? "disabled" : "enabled"}.`), 303);
+    } catch (err) {
+      return c.redirect(s3URL(errorMessage(err)), 303);
+    }
+  })
+  .post("/s3/keys/delete", async (c) => {
+    const body = await c.req.parseBody();
+    const accessKey = field(body, "accessKey");
+    try {
+      await client().s3Keys.delete(accessKey);
+      return c.redirect(s3URL(undefined, `${accessKey} deleted.`), 303);
+    } catch (err) {
+      return c.redirect(s3URL(errorMessage(err)), 303);
+    }
+  })
+  .get("/api/runtime", async (c) => {
+    // One request for everything the dashboard polls, so a slow page does not
+    // fan out into three round trips per tick.
+    try {
+      const fg = client();
+      const [runtime, health, sessions] = await Promise.all([
+        fg.system.runtime(),
+        fg.system.health().catch(() => undefined),
+        fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
+      ]);
+      return c.json({ runtime, health, sessions: sessions?.items ?? [] });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 502);
+    }
+  })
+  .post("/system/prune", async (c) => {
+    try {
+      const out = await client().system.prune();
+      const summary = `Pruned in ${out.durationMs} ms: scanned ${out.filesScanned} files, deleted ${out.versionsDeleted} versions, purged ${out.orphansPurged} orphans, removed ${out.blobsDeleted} blobs.`;
+      return c.redirect("/system?notice=" + encodeURIComponent(summary), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
+    }
+  })
+  .post("/system/sessions/abort", async (c) => {
+    const body = await c.req.parseBody();
+    const sessionId = field(body, "sessionId");
+    try {
+      await client().uploads.sessions.abort({ sessionId });
+      return c.redirect("/system?notice=" + encodeURIComponent(`Upload session ${sessionId} aborted; its staged bytes are released.`), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
+    }
+  })
   .post("/system/rescan", async (c) => {
-    void client()
-      .index.rescan()
-      .catch((err) => console.error("index rescan failed:", errorMessage(err)));
-    return c.redirect("/system?notice=rescan+started", 303);
+    try {
+      await client().index.rescan();
+      return c.redirect("/system?notice=" + encodeURIComponent("Index rescan started"), 303);
+    } catch (err) {
+      return c.redirect("/system?error=" + encodeURIComponent(errorMessage(err)), 303);
+    }
   });
+
+const oidcErrors: Record<string, string> = {
+  state: "The sign-in attempt expired or was started elsewhere. Please try again.",
+  nonce: "The sign-in response did not match this attempt. Please try again.",
+  group: "Your account is not a member of a group allowed to use this admin.",
+  provider: "The identity provider declined the sign-in.",
+  discovery: "The identity provider could not be reached. Check the server logs.",
+  token: "The identity provider response could not be verified. Check the server logs.",
+};
+
+/** Thumbnail sizes the server accepts; anything else is rejected upstream. */
+function thumbnailSize(raw: string | undefined): 128 | 256 | 512 {
+  if (raw === "128") return 128;
+  if (raw === "512") return 512;
+  return 256;
+}
+
+function passthroughCacheHeaders(upstream: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of ["etag", "cache-control", "last-modified"]) {
+    const value = upstream.headers.get(name);
+    if (value) out[name] = value;
+  }
+  return out;
+}
+
+type BulkOutcome = { done: number; failures: string[] };
+
+/**
+ * Applies an operation to each selected node independently.
+ *
+ * Per-item results matter here: reporting one aggregate success or failure for
+ * twenty files tells an operator nothing about which ones need attention. Items
+ * run sequentially so a bulk delete cannot saturate the server.
+ */
+async function runBulk(ids: string[], op: (id: string) => Promise<unknown>): Promise<BulkOutcome> {
+  const outcome: BulkOutcome = { done: 0, failures: [] };
+  for (const id of ids) {
+    try {
+      await op(id);
+      outcome.done++;
+    } catch (err) {
+      outcome.failures.push(`${id.slice(0, 8)}: ${errorMessage(err)}`);
+    }
+  }
+  return outcome;
+}
+
+function bulkQuery(parentPath: string, verb: string, outcome: BulkOutcome): string {
+  const q = new URLSearchParams();
+  if (parentPath) q.set("path", parentPath);
+  if (outcome.failures.length === 0) {
+    q.set("notice", `${verb} ${outcome.done} item${outcome.done === 1 ? "" : "s"}.`);
+  } else {
+    q.set("notice", `${verb} ${outcome.done}, ${outcome.failures.length} failed.`);
+    // Only the first failures; a long list would not survive a URL anyway.
+    q.set("error", outcome.failures.slice(0, 3).join("; "));
+  }
+  return `?${q}`;
+}
+
+function parseSort(field?: string, dir?: string): Sort {
+  const allowed: SortField[] = ["name", "size", "modified"];
+  return {
+    field: allowed.find((candidate) => candidate === field) ?? "name",
+    direction: dir === "desc" ? "desc" : "asc",
+  };
+}
+
+/**
+ * Serves a build artifact with a long immutable cache.
+ *
+ * Safe because these are rebuilt under the same name only when the app is
+ * rebuilt and redeployed, and the icon font is versioned by its content.
+ */
+function assetResponse(relative: string, contentType: string): Response {
+  return new Response(Bun.file(new URL(relative, import.meta.url)), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+function s3URL(error?: string, notice?: string): string {
+  const q = new URLSearchParams();
+  if (error) q.set("error", error);
+  if (notice) q.set("notice", notice);
+  const suffix = q.toString();
+  return `/s3${suffix ? `?${suffix}` : ""}`;
+}
+
+function splitCSV(raw: string): string[] {
+  return raw.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+/**
+ * Live operational state for the System page.
+ *
+ * Rendered server-side for the first frame so the page is complete without
+ * JavaScript; the poll only keeps it current. Each part degrades on its own,
+ * because a stalled detector must not blank the panels that would explain it.
+ */
+async function loadLive() {
+  const fg = client();
+  const [runtime, health, sessions] = await Promise.all([
+    fg.system.runtime().catch(() => undefined),
+    fg.system.health().catch(() => undefined),
+    fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
+  ]);
+  // Only offer the button where a round can actually happen; with versioning
+  // off the endpoint answers 501 and a button would be a dead end.
+  const canPrune = (runtime?.lifecycle?.prunerIntervalMs ?? 0) > 0;
+  return { runtime, health, sessions: sessions?.items ?? [], canPrune };
+}
+
+async function loadSettings() {
+  const fg = client();
+  try {
+    const [schema, values, stats, health] = await Promise.all([fg.config.schema(), fg.config.values(), loadStats(), loadHealth()]);
+    return {
+      schema: schema.keys.filter((entry) => !entry.path.startsWith("s3.")),
+      values: {
+        ...values,
+        values: values.values.filter((entry) => !entry.path.startsWith("s3.")),
+        restartRequired: values.restartRequired?.filter((entry) => !entry.path.startsWith("s3.")),
+      },
+      mounts: stats.mounts.length,
+      health,
+    };
+  } catch (err) {
+    return {
+      schema: [],
+      values: { generatedAt: 0, values: [] },
+      mounts: 0,
+      health: "fail" as const,
+      error: errorMessage(err),
+    };
+  }
+}
+
+async function loadS3() {
+  const fg = client();
+  try {
+    const [schema, values, stats, activity, health] = await Promise.all([
+      fg.config.schema(),
+      fg.config.values(),
+      loadStats(),
+      fg.activity.list({ limit: 1000, q: "s3." }).catch(() => undefined),
+      loadHealth(),
+    ]);
+    const s3Enabled = values.values.find((entry) => entry.path === "s3.enabled")?.effective === true;
+    // Listing keys is unavailable when the S3 listener is off; the page still
+    // renders its effective config and tells the operator how to enable it.
+    const keys = s3Enabled ? await fg.s3Keys.list().then((out) => out.items).catch(() => []) : [];
+    return {
+      schema: schema.keys.filter((entry) => entry.path.startsWith("s3.")),
+      values: {
+        ...values,
+        values: values.values.filter((entry) => entry.path.startsWith("s3.")),
+        restartRequired: values.restartRequired?.filter((entry) => entry.path.startsWith("s3.")),
+      },
+      keys,
+      activity,
+      mounts: stats.mounts.length,
+      mountNames: stats.mounts.map((mount) => mount.name),
+      health,
+    };
+  } catch (err) {
+    return {
+      schema: [],
+      values: { generatedAt: 0, values: [] },
+      keys: [],
+      mounts: 0,
+      mountNames: [] as string[],
+      health: "fail" as const,
+      error: errorMessage(err),
+    };
+  }
+}
+
+function restoreNotice(asNew: boolean): string {
+  return asNew ? "Version restored as a new file" : "Version restored in place; the previous content was snapshotted first";
+}
+
+async function versionAction(
+  c: Context,
+  body: Record<string, string | File>,
+  notice: string,
+  run: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    await run();
+    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), undefined, notice), 303);
+  } catch (err) {
+    return c.redirect(selectedFiles(field(body, "parentPath"), field(body, "id"), errorMessage(err)), 303);
+  }
+}
+
+function loginError(code: string | undefined, retry: string | undefined, reason: string | undefined): string | undefined {
+  if (code === "invalid") return "Invalid admin token";
+  if (code === "throttled") {
+    const wait = formatRetryAfter(Number(retry));
+    return wait ? `Too many sign-in attempts. Try again in ${wait}.` : "Too many sign-in attempts. Try again later.";
+  }
+  if (code === "oidc") {
+    return (reason && oidcErrors[reason]) || "Single sign-on failed. Check the server logs.";
+  }
+  return undefined;
+}
 
 function setPage(c: { get(key: "page"): { title?: string; theme?: AdminTheme }; req: { header(name: string): string | undefined } }, title: string) {
   const page = c.get("page");
@@ -214,12 +735,27 @@ function setPage(c: { get(key: "page"): { title?: string; theme?: AdminTheme }; 
   page.theme = readThemeFromCookieHeader(c.req.header("cookie"));
 }
 
-async function loadBase(): Promise<{ stats: StatsResponse; roots: Node[]; error?: string }> {
+async function loadBase(): Promise<{ stats: StatsResponse; roots: Node[]; health: HealthStatus; error?: string }> {
+  const health = await loadHealth();
   try {
     const [stats, roots] = await Promise.all([loadStats(), loadRoots()]);
-    return { stats, roots };
+    return { stats, roots, health };
   } catch (err) {
-    return { stats: emptyStats, roots: [], error: errorMessage(err) };
+    return { stats: emptyStats, roots: [], health: health === "ok" ? "fail" : health, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Real service health for the topbar indicator, which used to be a hardcoded
+ * green dot that stayed green through a total outage. Filegate answers 503 with
+ * a body when a check fails, so a thrown error here means unreachable, not
+ * merely degraded.
+ */
+async function loadHealth(): Promise<HealthStatus> {
+  try {
+    return (await client().system.health()).status;
+  } catch {
+    return "fail";
   }
 }
 
@@ -228,7 +764,7 @@ async function loadFiles(path: string, selectedId: string) {
   if (base.error) return { ...base, crumbs: buildCrumbs(""), children: [] as Node[] };
   try {
     if (!path.trim()) {
-      return { stats: base.stats, crumbs: buildCrumbs(""), children: base.roots };
+      return { stats: base.stats, health: base.health, crumbs: buildCrumbs(""), children: base.roots };
     }
 
     let current = await getNodeByPath(path);
@@ -238,15 +774,35 @@ async function loadFiles(path: string, selectedId: string) {
       current = await getNodeByPath(parentPath(current.path));
     }
     if (selectedId) selected = await client().nodes.get(selectedId, { computeRecursiveSizes: true });
+    const target = selected ?? current;
     return {
       stats: base.stats,
+      health: base.health,
       crumbs: buildCrumbs(current.path),
       current,
-      selected: selected ?? current,
-      children: current.children ?? [],
+      selected: target,
+      ...(await loadAllChildren(current).then((listing) => ({ children: listing.children, truncated: listing.truncated }))),
+      versions: await loadVersions(target),
     };
   } catch (err) {
     return { ...base, crumbs: buildCrumbs(""), children: base.roots, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Version history for a file.
+ *
+ * Every versions endpoint answers 404 "versioning not supported on this mount"
+ * when the mount cannot do it, which the SDK documents as the capability check,
+ * so that case is reported as unsupported rather than as an error.
+ */
+async function loadVersions(node?: Node): Promise<{ items?: VersionResponse[]; unsupported?: boolean } | undefined> {
+  if (!node || node.type !== "file") return undefined;
+  try {
+    return { items: await client().versions.listAll(node.id) };
+  } catch (err) {
+    if (err instanceof FilegateError && err.status === 404) return { unsupported: true };
+    return { items: [] };
   }
 }
 
@@ -284,10 +840,42 @@ async function loadRoots(): Promise<Node[]> {
   return isList(roots) ? roots.items : [];
 }
 
+const listingPageSize = 200;
+/**
+ * Upper bound on children fetched for one directory view.
+ *
+ * The previous code took only the first page and rendered it as if it were the
+ * whole directory, so anything past 100 entries silently vanished and the item
+ * count lied about it. Following the cursor fixes that; this cap keeps a
+ * directory with a million entries from stalling the page, and the caller
+ * reports when it bites instead of quietly truncating again.
+ */
+const listingMaxChildren = 5000;
+
 async function getNodeByPath(path: string): Promise<Node> {
-  const out: Node | NodeListResponse = await client().paths.get(path, { pageSize: 100, computeRecursiveSizes: true });
+  const out: Node | NodeListResponse = await client().paths.get(path, { pageSize: listingPageSize, computeRecursiveSizes: true });
   if (isList(out)) throw new Error("path required");
   return out;
+}
+
+/** Walks the child cursor so the view reflects the whole directory. */
+async function loadAllChildren(node: Node): Promise<{ children: Node[]; truncated: boolean }> {
+  const children = [...(node.children ?? [])];
+  let cursor = node.nextCursor;
+
+  while (cursor && children.length < listingMaxChildren) {
+    const page: Node | NodeListResponse = await client().paths.get(node.path, {
+      pageSize: listingPageSize,
+      cursor,
+      computeRecursiveSizes: true,
+    });
+    if (isList(page)) break;
+    children.push(...(page.children ?? []));
+    if (!page.nextCursor || page.nextCursor === cursor) break;
+    cursor = page.nextCursor;
+  }
+
+  return { children, truncated: !!cursor && children.length >= listingMaxChildren };
 }
 
 function buildCrumbs(path: string): Crumb[] {

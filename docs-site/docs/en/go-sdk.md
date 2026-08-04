@@ -48,6 +48,56 @@ func main() {
 | `sdk/filegate/directuploads` | Browser or external direct upload helpers | Signed direct upload flows. |
 | `sdk/filegate/segments` | Upload segment planning | Segment math and checksum-related helpers. |
 | `sdk/filegate/relay` | Application server relay patterns | Server-side helpers for proxying or authorizing browser transfers. |
+| `sdk/filegate/uploadtree` | Whole folders | Batch uploads over many one-file sessions. |
+
+## Uploading a folder
+
+`sdk/filegate/uploadtree` is the Go counterpart to the browser `upload()` helper
+in the TypeScript SDK. It walks a local directory, hashes with bounded
+concurrency, creates sessions in batches, uploads segments under one global
+concurrency limit, retries transient failures, and reports one progress view for
+the whole run.
+
+```go
+sources, err := uploadtree.FromDir("/srv/photos", "data/photos")
+if err != nil {
+	log.Fatal(err)
+}
+
+res, err := uploadtree.Upload(ctx, client, sources, uploadtree.Options{
+	OnConflict:  filegate.ConflictOverwrite,
+	Resume:      true, // adopt sessions an interrupted run left behind
+	Concurrency: uploadtree.Concurrency{Hash: 4, Files: 8, Segments: 8},
+	OnEvent: func(e uploadtree.Event) {
+		if e.Type == uploadtree.EventFileDone {
+			log.Printf("%d/%d %s", e.Progress.FilesDone, e.Progress.Files, e.Path)
+		}
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+log.Printf("done=%d failed=%d skipped=%d", res.Done, res.Failed, res.Skipped)
+```
+
+A single file failing does not stop the run; its error is in `res.Files`.
+
+### Small files skip the session protocol
+
+Files at or below `DirectThresholdBytes` take one `PUT /v1/paths` instead of
+create, segment and commit. It defaults to `SegmentSize`, so a file that would
+have been a single segment goes direct without any configuration.
+
+That default is worth understanding rather than overriding. A session costs three
+round trips and several fsyncs per file, and for a file that fits in one segment
+its resumability amounts to retrying that one segment. Measurements in
+`bench/results/2026-07-26-commit-cost.md` put the one-shot path at 2.4x the
+throughput of sessions on a 5000-file corpus averaging 16 KiB.
+
+Set `DirectThresholdBytes` to a negative value to send everything through
+sessions; `0` means "use the default", because `Options`' zero value has to stay
+valid. The TypeScript `upload()` helper takes the same default and uses `0` as
+its opt-out.
 
 ## API coverage
 

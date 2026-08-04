@@ -46,6 +46,49 @@ export type {
 
 export type { FileConflictMode, FingerprintMode, MkdirConflictMode, UploadSessionConflictMode } from "./types.js";
 
+export type {
+  ConfigKeySchema,
+  ConfigManagedBy,
+  ConfigManifestApplyResponse,
+  ConfigManifestChange,
+  ConfigManifestPlanResponse,
+  ConfigManifestStatus,
+  RetentionBucket,
+  ConfigRestartRequired,
+  ConfigSchemaResponse,
+  ConfigScope,
+  ConfigSource,
+  ConfigValue,
+  ConfigValuesResponse,
+  S3Key,
+  S3KeyCreated,
+  S3KeyCreateRequest,
+  S3KeyListResponse,
+  S3KeyUpdateRequest,
+} from "./types.js";
+
+export type {
+  BuildInfo,
+  CacheRuntime,
+  DetectorInfo,
+  DetectorRuntime,
+  HealthCheck,
+  HealthResponse,
+  HealthStatus,
+  JobsRuntime,
+  LifecycleRuntime,
+  PruneResponse,
+  LimitsInfo,
+  MountInfo,
+  SystemInfoResponse,
+  SystemRuntimeResponse,
+  UploadSessionListResponse,
+  UploadSessionPhase,
+  UploadSessionSummary,
+  UploadSessionsRuntime,
+  VersioningInfo,
+} from "./types.js";
+
 // Pure helpers are intentionally NOT re-exported here. Import them from the
 // dedicated entrypoint to keep tree-shaking honest:
 //   import { uploads } from "@valentinkolb/filegate/utils";

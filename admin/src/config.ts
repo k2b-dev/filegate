@@ -1,10 +1,21 @@
 import { createConfig } from "@valentinkolb/ssr";
 import { createSSRHandler, routes } from "@valentinkolb/ssr/hono";
+import { adminName } from "./lib/branding";
 
 type PageOptions = {
   title?: string;
   theme?: "light" | "dark";
 };
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === "&") return "&amp;";
+    if (character === "<") return "&lt;";
+    if (character === ">") return "&gt;";
+    if (character === '"') return "&quot;";
+    return "&#39;";
+  });
+}
 
 export const { config, plugin, html } = createConfig<PageOptions>({
   dev: process.env.NODE_ENV === "development",
@@ -16,9 +27,11 @@ export const { config, plugin, html } = createConfig<PageOptions>({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="view-transition" content="same-origin">
 <meta name="theme-color" content="${theme === "dark" ? "#0f141b" : "#f2f3f5"}">
-<title>Filegate Admin${title ? ` - ${title}` : ""}</title>
+<title>${escapeHtml(`${adminName}${title ? ` - ${title}` : ""}`)}</title>
+<link rel="preload" href="/fonts/tabler-icons.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/tabler-icons.css">
 <link rel="stylesheet" href="/styles.css">
-<script src="/theme.js" defer></script>
+<script type="module" src="/theme.js"></script>
 </head>
 <body>${body}${scripts}</body>
 </html>`,

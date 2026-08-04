@@ -23,6 +23,7 @@ import (
 )
 
 type config struct {
+	Mode      string
 	BaseURL   string
 	Token     string
 	Scenario  string
@@ -32,6 +33,8 @@ type config struct {
 	PathBase  string
 	OutputCSV string
 	SampleCap int
+
+	Tree treeConfig
 }
 
 type runResult struct {
@@ -65,6 +68,24 @@ type workerStats struct {
 
 func main() {
 	cfg := parseFlags()
+
+	if cfg.Mode == "tree" {
+		if err := validateTreeConfig(cfg.Tree); err != nil {
+			fatalf("invalid config: %v", err)
+		}
+		result, err := runTree(cfg.Tree)
+		if err != nil {
+			fatalf("benchmark failed: %v", err)
+		}
+		printTreeResult(result)
+		if cfg.Tree.OutputCSV != "" {
+			if err := appendTreeCSV(cfg.Tree.OutputCSV, result); err != nil {
+				fatalf("write csv: %v", err)
+			}
+		}
+		return
+	}
+
 	if err := validateConfig(cfg); err != nil {
 		fatalf("invalid config: %v", err)
 	}
@@ -84,6 +105,7 @@ func main() {
 
 func parseFlags() config {
 	var cfg config
+	flag.StringVar(&cfg.Mode, "mode", "loadgen", "mode: loadgen (steady-state request rate)|tree (upload a whole corpus once)")
 	flag.StringVar(&cfg.BaseURL, "base-url", "http://127.0.0.1:8080", "filegate base URL")
 	flag.StringVar(&cfg.Token, "token", "", "bearer token")
 	flag.StringVar(&cfg.Scenario, "scenario", "metadata-path", "scenario: metadata-path|metadata-id|read-4k|read-1m|write-4k|write-1m|mixed")
@@ -93,7 +115,30 @@ func parseFlags() config {
 	flag.StringVar(&cfg.PathBase, "path-base", "data/bench", "virtual base path for benchmark assets")
 	flag.StringVar(&cfg.OutputCSV, "output-csv", "", "append result row to CSV file")
 	flag.IntVar(&cfg.SampleCap, "sample-cap", 200000, "max latency samples used for percentile estimates")
+
+	flag.StringVar(&cfg.Tree.Shape, "tree-shape", "logs", "tree corpus shape: photos|logs|node-modules")
+	flag.Float64Var(&cfg.Tree.Scale, "tree-scale", 1, "multiplier on the shape's default file count")
+	flag.Int64Var(&cfg.Tree.Seed, "tree-seed", 42, "corpus RNG seed; equal seeds upload identical bytes")
+	flag.StringVar(&cfg.Tree.Label, "tree-label", "", "free-form label recorded in the CSV row")
+	flag.StringVar(&cfg.Tree.Transport, "tree-transport", "session", "upload path: put|direct|session")
+	flag.IntVar(&cfg.Tree.FileConcurrency, "tree-files", 8, "files uploaded in parallel")
+	flag.IntVar(&cfg.Tree.HashConcurrency, "tree-hash", 4, "files hashed in parallel")
+	flag.IntVar(&cfg.Tree.SegmentConcurrency, "tree-segments", 8, "global segment PUTs in flight")
+	flag.IntVar(&cfg.Tree.CreateConcurrency, "tree-create", 4, "session-create calls in flight")
+	flag.Int64Var(&cfg.Tree.SegmentSize, "tree-segment-size", 8<<20, "segment size in bytes")
+	flag.IntVar(&cfg.Tree.BatchSize, "tree-batch", 32, "sessions created per request (1 disables :batch)")
+	flag.IntVar(&cfg.Tree.FlushMs, "tree-flush-ms", 20, "batch flush window in milliseconds")
+	flag.BoolVar(&cfg.Tree.KeepAlive, "keep-alive", true, "reuse connections")
+	flag.BoolVar(&cfg.Tree.HTTP2, "http2", false, "negotiate HTTP/2 (requires a TLS endpoint)")
+	flag.BoolVar(&cfg.Tree.Insecure, "insecure", false, "skip TLS verification (bench proxy uses a self-signed cert)")
+
 	flag.Parse()
+
+	cfg.Tree.BaseURL = cfg.BaseURL
+	cfg.Tree.Token = cfg.Token
+	cfg.Tree.PathBase = cfg.PathBase
+	cfg.Tree.Timeout = cfg.Timeout
+	cfg.Tree.OutputCSV = cfg.OutputCSV
 	return cfg
 }
 

@@ -280,6 +280,17 @@ export interface BrowserUploadAllowResponse {
 export interface BrowserUploadConfig {
   segmentSize?: number;
   chunkSize?: number;
+  /**
+   * Files at or below this size go through one PUT instead of a session.
+   *
+   * Defaults to `segmentSize`: a file that would have been a single segment
+   * gains nothing from a session, which costs three requests instead of one and
+   * whose resumability amounts to retrying the same lone segment. Pass `0` to
+   * send everything through sessions.
+   *
+   * Ignored when `onConflict` is `skip-identical`, which needs the checksum a
+   * session computes.
+   */
   directThresholdBytes?: number;
   onConflict?: BrowserUploadConflictMode;
   concurrency?: {
@@ -357,7 +368,7 @@ const SHA256_K = [
 export async function upload(req: BrowserUploadRequest): Promise<BrowserUploadResult> {
   const segmentSize = req.config?.segmentSize ?? 8 * 1024 * 1024;
   const chunkSize = req.config?.chunkSize ?? 4 * 1024 * 1024;
-  const directThresholdBytes = req.config?.directThresholdBytes;
+  const directThresholdBytes = req.config?.directThresholdBytes ?? segmentSize;
   const hashLimit = req.config?.concurrency?.hash ?? 2;
   const fileLimit = req.config?.concurrency?.files ?? 6;
   const segmentLimit = req.config?.concurrency?.segments ?? 6;
@@ -519,7 +530,7 @@ export async function upload(req: BrowserUploadRequest): Promise<BrowserUploadRe
 
   const sessionWorks: UploadWork[] = [];
   for (const work of works) {
-    if (onConflict !== "skip-identical" && directThresholdBytes !== undefined && work.file.size > 0 && work.file.size <= directThresholdBytes) {
+    if (onConflict !== "skip-identical" && directThresholdBytes > 0 && work.file.size > 0 && work.file.size <= directThresholdBytes) {
       enqueueAllow({ ...work, kind: "direct" });
     } else {
       sessionWorks.push(work);

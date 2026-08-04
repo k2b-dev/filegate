@@ -255,3 +255,19 @@ func (t *thumbnailer) generateOne(absPath string, size int, mtime int64) (thumbn
 	}
 	return item, nil
 }
+
+// schedulerStats exposes thumbnail worker-pool pressure for /v1/system/runtime.
+func (t *thumbnailer) schedulerStats() jobs.Stats {
+	if t == nil {
+		return jobs.Stats{}
+	}
+	return t.scheduler.Stats()
+}
+
+// cacheStats exposes thumbnail cache occupancy and effectiveness.
+func (t *thumbnailer) cacheStats() cache.Stats {
+	if t == nil {
+		return cache.Stats{}
+	}
+	return t.cache.Stats()
+}

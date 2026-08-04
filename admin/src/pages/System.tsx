@@ -1,15 +1,29 @@
-import type { ActivityEvent, ActivityListResponse, StatsResponse } from "@valentinkolb/filegate";
+import type {
+  ActivityEvent,
+  ActivityListResponse,
+  HealthResponse,
+  StatsResponse,
+  SystemRuntimeResponse,
+  UploadSessionSummary,
+} from "@valentinkolb/filegate";
 import { charts } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
 import { env } from "../lib/env";
+import { Icon, IconLabel } from "../components/Icons";
+import { CachePanel, DetectorPanel, HealthPanel, LifecyclePanel, QueuePanel, UploadSessionPanel } from "./Live";
 import { formatBytes, formatUnix } from "../lib/format";
 
 type ActivityQuery = { q: string; operation: string; outcome: string; page: number; pageSize: number };
 
 export function System(props: {
   stats: StatsResponse;
+  health?: "ok" | "degraded" | "fail";
   activity?: ActivityListResponse;
   activityQuery: ActivityQuery;
+  runtime?: SystemRuntimeResponse;
+  healthDetail?: HealthResponse;
+  sessions: UploadSessionSummary[];
+  canPrune?: boolean;
   error?: string;
   notice?: string;
 }) {
@@ -31,6 +45,7 @@ export function System(props: {
       title="System"
       description="Runtime health, index state, storage pressure, and recent activity."
       mounts={props.stats.mounts.length}
+      health={props.health}
       error={props.error}
       notice={props.notice}
     >
@@ -66,6 +81,15 @@ export function System(props: {
             {formatCount(props.stats.cache.pathEntries)} / {formatCount(props.stats.cache.pathCapacity)}
           </div>
         </div>
+      </section>
+
+      <section class="metrics-grid live-grid" data-live-root>
+        <HealthPanel health={props.healthDetail} />
+        <DetectorPanel runtime={props.runtime} />
+        <QueuePanel runtime={props.runtime} />
+        <CachePanel runtime={props.runtime} />
+        <LifecyclePanel runtime={props.runtime} canPrune={props.canPrune} />
+        <UploadSessionPanel runtime={props.runtime} sessions={props.sessions} />
       </section>
 
       <section class="metrics-grid">
@@ -257,7 +281,7 @@ export function System(props: {
             <p>{activitySummary(props.activity, props.activityQuery)}</p>
           </div>
           <a class="btn" href={activityURL(props.activityQuery, page)}>
-            Reload activity
+            <IconLabel icon="refresh">Reload activity</IconLabel>
           </a>
         </div>
         <form class="toolbar activity-filters" method="get" action="/system#activity">
@@ -279,10 +303,10 @@ export function System(props: {
             ))}
           </select>
           <button class="btn primary" type="submit">
-            Apply
+            <IconLabel icon="filter">Apply</IconLabel>
           </button>
           <a class="btn" href="/system#activity">
-            Reset
+            <IconLabel icon="filter-off">Reset</IconLabel>
           </a>
         </form>
         <div class="table-wrap">
@@ -321,7 +345,7 @@ export function System(props: {
         </div>
         <div class="activity-pager">
           <a class={`btn${page <= 1 ? " disabled" : ""}`} href={page <= 1 ? activityURL(props.activityQuery, 1) : activityURL(props.activityQuery, page - 1)}>
-            Previous
+            <IconLabel icon="chevron-left">Previous</IconLabel>
           </a>
           <span>
             Page {page} of {totalPages}
@@ -334,6 +358,7 @@ export function System(props: {
           </a>
         </div>
       </section>
+      <script type="module" src="/system.js" />
     </Layout>
   );
 }

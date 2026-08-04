@@ -136,7 +136,7 @@ func TestVersioningSoak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 	prunerDone := make(chan struct{})
-	go runVersioningPruner(ctx, svc, cfg.PrunerInterval, nil, prunerDone)
+	go runVersioningPruner(ctx, svc, cfg.PrunerInterval, nil, &lifecycleState{}, prunerDone)
 
 	var (
 		writes    atomic.Int64

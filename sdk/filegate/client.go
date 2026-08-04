@@ -44,6 +44,7 @@ type Filegate struct {
 	Search       SearchClient
 	Index        IndexClient
 	Stats        StatsClient
+	System       SystemClient
 	Capabilities CapabilitiesClient
 	Versions     VersionsClient
 	Downloads    DownloadsClient
@@ -95,6 +96,7 @@ func New(cfg Config) (*Filegate, error) {
 	client.Search = SearchClient{core: core}
 	client.Index = IndexClient{core: core}
 	client.Stats = StatsClient{core: core}
+	client.System = SystemClient{core: core}
 	client.Capabilities = CapabilitiesClient{core: core}
 	client.Versions = VersionsClient{core: core}
 	client.Downloads = DownloadsClient{core: core}

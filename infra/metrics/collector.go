@@ -25,6 +25,22 @@ type Snapshot struct {
 	PathCacheEntries int
 	IndexDBBytes     int64
 	Mounts           []MountSnapshot
+
+	// PathCacheHits and PathCacheMisses are cumulative since process start.
+	// Occupancy alone cannot distinguish an undersized cache from a cold one.
+	PathCacheHits   uint64
+	PathCacheMisses uint64
+
+	// Worker-pool saturation is deliberately absent: the scheduler lives
+	// inside the HTTP router, which this provider cannot reach without an
+	// awkward back-channel. It is available on GET /v1/system/runtime.
+	//
+	// DetectorStaleSeconds is the time since the last completed detection
+	// round. Growing far past the scan interval means detection stopped and
+	// the index is silently drifting from the filesystem.
+	DetectorStaleSeconds float64
+	DetectorCycles       uint64
+	DetectorErrors       uint64
 }
 
 // MountSnapshot is per-mount disk usage. UsedBytes + FreeBytes come
@@ -47,6 +63,11 @@ type domainCollector struct {
 	cacheEntr *prometheus.Desc
 	mountUsed *prometheus.Desc // {mount}
 	mountFree *prometheus.Desc // {mount}
+
+	cacheLookups  *prometheus.Desc // {result=hit|miss}
+	detectorStale *prometheus.Desc
+	detectorCycle *prometheus.Desc
+	detectorErrs  *prometheus.Desc
 }
 
 func newDomainCollector(p StatsProvider) *domainCollector {
@@ -72,6 +93,22 @@ func newDomainCollector(p StatsProvider) *domainCollector {
 			"filegate_mount_free_bytes",
 			"Free bytes on the filesystem backing a mount.",
 			[]string{"mount"}, nil),
+		cacheLookups: prometheus.NewDesc(
+			"filegate_path_cache_lookups_total",
+			"Path cache lookups by result since process start.",
+			[]string{"result"}, nil),
+		detectorStale: prometheus.NewDesc(
+			"filegate_detector_stale_seconds",
+			"Seconds since the detector last completed a scan round.",
+			nil, nil),
+		detectorCycle: prometheus.NewDesc(
+			"filegate_detector_cycles_total",
+			"Detection scan rounds completed since process start.",
+			nil, nil),
+		detectorErrs: prometheus.NewDesc(
+			"filegate_detector_errors_total",
+			"Detection scan errors since process start.",
+			nil, nil),
 	}
 }
 
@@ -81,6 +118,10 @@ func (c *domainCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.cacheEntr
 	ch <- c.mountUsed
 	ch <- c.mountFree
+	ch <- c.cacheLookups
+	ch <- c.detectorStale
+	ch <- c.detectorCycle
+	ch <- c.detectorErrs
 }
 
 func (c *domainCollector) Collect(ch chan<- prometheus.Metric) {
@@ -98,4 +139,10 @@ func (c *domainCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.mountUsed, prometheus.GaugeValue, float64(m.UsedBytes), m.Name)
 		ch <- prometheus.MustNewConstMetric(c.mountFree, prometheus.GaugeValue, float64(m.FreeBytes), m.Name)
 	}
+
+	ch <- prometheus.MustNewConstMetric(c.cacheLookups, prometheus.CounterValue, float64(snap.PathCacheHits), "hit")
+	ch <- prometheus.MustNewConstMetric(c.cacheLookups, prometheus.CounterValue, float64(snap.PathCacheMisses), "miss")
+	ch <- prometheus.MustNewConstMetric(c.detectorStale, prometheus.GaugeValue, snap.DetectorStaleSeconds)
+	ch <- prometheus.MustNewConstMetric(c.detectorCycle, prometheus.CounterValue, float64(snap.DetectorCycles))
+	ch <- prometheus.MustNewConstMetric(c.detectorErrs, prometheus.CounterValue, float64(snap.DetectorErrors))
 }

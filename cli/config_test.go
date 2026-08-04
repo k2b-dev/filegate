@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/valentinkolb/filegate/domain"
+	"github.com/valentinkolb/filegate/infra/runtimecfg"
 )
 
 func TestLoadConfigJobDefaults(t *testing.T) {
@@ -285,27 +286,60 @@ func TestLoadConfigMetricsDefaults(t *testing.T) {
 	}
 }
 
-// TestLoadConfigBearerOptionalForS3Only pins that an empty
-// auth.bearer_token is allowed when s3.enabled=true (S3-only
-// deployment, REST locked down), and rejected otherwise. This is what
-// makes the documented open /metrics mode reachable.
-func TestLoadConfigBearerOptionalForS3Only(t *testing.T) {
-	t.Run("empty bearer + s3 enabled = ok", func(t *testing.T) {
-		t.Setenv("FILEGATE_STORAGE_BASE_PATHS", t.TempDir())
-		t.Setenv("FILEGATE_AUTH_BEARER_TOKEN", "")
-		t.Setenv("FILEGATE_S3_ENABLED", "true")
-		if _, err := loadConfig(""); err != nil {
-			t.Errorf("S3-only with empty bearer should load, got %v", err)
-		}
-	})
-	t.Run("empty bearer + s3 disabled = error", func(t *testing.T) {
-		t.Setenv("FILEGATE_STORAGE_BASE_PATHS", t.TempDir())
-		t.Setenv("FILEGATE_AUTH_BEARER_TOKEN", "")
-		t.Setenv("FILEGATE_S3_ENABLED", "false")
-		if _, err := loadConfig(""); err == nil {
-			t.Errorf("empty bearer without S3 should error")
-		}
-	})
+// TestLoadConfigBearerIsOptional pins the current contract: an empty
+// auth.bearer_token loads fine, with or without S3.
+//
+// This replaces an earlier rule that required a token unless s3.enabled was
+// set. Serve now generates and stores one on first boot, so a fresh install
+// needs no configuration at all. Rejecting an empty value here would make that
+// impossible. The REST auth middleware still fails closed while no token
+// exists, so loading is not the same as opening the API.
+func TestLoadConfigBearerIsOptional(t *testing.T) {
+	for name, s3Enabled := range map[string]string{"s3 enabled": "true", "s3 disabled": "false"} {
+		t.Run("empty bearer + "+name, func(t *testing.T) {
+			t.Setenv("FILEGATE_STORAGE_BASE_PATHS", t.TempDir())
+			t.Setenv("FILEGATE_AUTH_BEARER_TOKEN", "")
+			t.Setenv("FILEGATE_S3_ENABLED", s3Enabled)
+			if _, err := loadConfig(""); err != nil {
+				t.Errorf("empty bearer should load, got %v", err)
+			}
+		})
+	}
+}
+
+// A generated token must be stable: printing or regenerating it on every start
+// would make it useless as a credential.
+func TestBootstrapBearerTokenIsGeneratedOnceAndReused(t *testing.T) {
+	store, err := runtimecfg.Open(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	first, err := bootstrapBearerToken(store, "")
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if len(first) != 40 {
+		t.Errorf("token length = %d, want 40", len(first))
+	}
+
+	second, err := bootstrapBearerToken(store, "")
+	if err != nil {
+		t.Fatalf("second bootstrap: %v", err)
+	}
+	if second != first {
+		t.Errorf("token regenerated on the second call: %q then %q", first, second)
+	}
+
+	// A configured token always wins; the stored one is never substituted.
+	configured, err := bootstrapBearerToken(store, "operator-chosen")
+	if err != nil {
+		t.Fatalf("configured: %v", err)
+	}
+	if configured != "operator-chosen" {
+		t.Errorf("configured token = %q, want the operator value", configured)
+	}
 }
 
 func TestLoadConfigExplicitMissingFileReturnsError(t *testing.T) {

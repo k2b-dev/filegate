@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,9 +55,14 @@ type Service struct {
 	cache         *lru.Cache[string, pathCacheEntry]
 	idPathCache   *lru.Cache[FileID, string]
 	pathCacheSize int
-	dirSync       *coalescedDirSyncer
-	mu            sync.RWMutex
-	rescanMu      sync.Mutex
+
+	// Cumulative path-cache effectiveness. Occupancy alone cannot tell an
+	// undersized cache from a cold one; the hit ratio can.
+	pathCacheHits   atomic.Uint64
+	pathCacheMisses atomic.Uint64
+	dirSync         *coalescedDirSyncer
+	mu              sync.RWMutex
+	rescanMu        sync.Mutex
 
 	// Versioning subsystem. EnableVersioning wires these from cli config
 	// after NewService; default-zero means "feature off" so existing
@@ -344,7 +350,13 @@ func normalizeVirtualPathInput(virtualPath string) (string, []string, error) {
 }
 
 func (s *Service) resolvePathID(vp string, parts []string) (FileID, error) {
-	if cached, ok := s.cache.Get(vp); ok {
+	cached, cacheHit := s.cache.Get(vp)
+	if cacheHit {
+		s.pathCacheHits.Add(1)
+	} else {
+		s.pathCacheMisses.Add(1)
+	}
+	if cacheHit {
 		s.idPathCache.Add(cached.ID, "/"+vp)
 		return cached.ID, nil
 	}
@@ -751,11 +763,20 @@ func (s *Service) GetFile(id FileID) (*FileMeta, error) {
 func (s *Service) ensureIndexed(absPath string) (FileID, error) {
 	id, err := s.store.GetID(absPath)
 	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+		// Same reasoning as parentIDForSync: an xattr is not proof of an
+		// index row, so verify before handing the ID back. A path whose
+		// xattr survived without its entity -- a sync interrupted between
+		// the two writes, or a file copied in with the attribute intact --
+		// is repaired here rather than returned as a dangling reference.
+		if _, getErr := s.idx.GetEntity(id); getErr == nil {
+			return id, nil
+		} else if !errors.Is(getErr, ErrNotFound) {
+			return FileID{}, getErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return FileID{}, err
 	}
+
 	if err := s.syncSingle(absPath); err != nil {
 		return FileID{}, err
 	}
@@ -1655,6 +1676,10 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 	current := parentAbs
 	createdAny := false
 	firstCreated := ""
+	// The exact levels this call created, top down. The loop creates one level
+	// per iteration -- it walks down, so a segment's parent always exists by the
+	// time MkdirAll runs -- which makes this the precise chain to index.
+	createdChain := make([]string, 0, len(parts))
 	for i, seg := range parts {
 		isLeaf := i == len(parts)-1
 		next := filepath.Join(current, seg)
@@ -1705,6 +1730,7 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 		if firstCreated == "" {
 			firstCreated = next
 		}
+		createdChain = append(createdChain, next)
 		current = next
 	}
 
@@ -1714,7 +1740,8 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 		if err := s.applyOwnership(firstCreated, effectiveOwnership, true); err != nil {
 			return nil, err
 		}
-		if err := s.syncSingle(targetAbs); err != nil {
+		// One batch for the whole chain instead of one synced write per level.
+		if err := s.indexNewDirChain(createdChain); err != nil {
 			return nil, err
 		}
 	}
@@ -2590,7 +2617,7 @@ func (s *Service) resolveOrReissueID(absPath string, info os.FileInfo) (FileID, 
 		if !errors.Is(err, os.ErrNotExist) {
 			return FileID{}, err
 		}
-		return s.mintAndSetID(absPath)
+		return s.claimID(absPath)
 	}
 
 	device, inode, _ := fileInodeIdentity(info)
@@ -2638,9 +2665,30 @@ func (s *Service) resolveOrReissueID(absPath string, info os.FileInfo) (FileID, 
 	return id, nil
 }
 
-// mintAndSetID generates a fresh UUID v7, writes it to absPath's xattr,
-// and returns it. Used both for first-time indexing and for re-issue on
-// xattr-conflict.
+// claimID assigns an ID to a path that has none, tolerating a concurrent
+// claimant.
+//
+// First-time indexing is reachable from several requests at once -- two uploads
+// creating sibling directories both recurse into the shared parent -- and an
+// unconditional write there let each caller keep its own ID while the xattr
+// held only the last one. Whoever writes first wins and everyone adopts that
+// value.
+func (s *Service) claimID(absPath string) (FileID, error) {
+	id, err := newID()
+	if err != nil {
+		return FileID{}, err
+	}
+	settled, _, err := s.store.SetIDIfAbsent(absPath, id)
+	if err != nil {
+		return FileID{}, err
+	}
+	return settled, nil
+}
+
+// mintAndSetID generates a fresh UUID v7 and writes it to absPath's xattr
+// unconditionally. Only for deliberate re-issue on xattr conflict, where an
+// existing value is exactly what has to be replaced; first-time indexing goes
+// through claimID.
 func (s *Service) mintAndSetID(absPath string) (FileID, error) {
 	id, err := newID()
 	if err != nil {
@@ -2672,6 +2720,139 @@ func (s *Service) claimedAbsPath(e *Entity) (string, error) {
 		return "", err
 	}
 	return filepath.Join(parentAbs, e.Name), nil
+}
+
+// parentIDForSync returns the ID of parentAbs, indexing it first when it is
+// not already in the index.
+//
+// The parent has to be present in the INDEX, not merely carry an xattr. Those
+// are two separate writes, and a request that claimed the parent's ID a moment
+// ago has done the first but not yet the second -- two uploads creating
+// sibling directories under a freshly created shared parent hit that window
+// routinely. Trusting the xattr alone anchors the child to a parent whose
+// entity does not exist yet, and VirtualPath then walks into a dead end and
+// reports a directory that plainly exists as not found.
+func (s *Service) parentIDForSync(parentAbs string) (FileID, error) {
+	id, err := s.store.GetID(parentAbs)
+	if err == nil {
+		if _, getErr := s.idx.GetEntity(id); getErr == nil {
+			return id, nil
+		} else if !errors.Is(getErr, ErrNotFound) {
+			return FileID{}, getErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return FileID{}, err
+	}
+	if err := s.syncSingle(parentAbs); err != nil {
+		return FileID{}, err
+	}
+	return s.store.GetID(parentAbs)
+}
+
+// indexNewDirChain records a run of directories that were created together, in
+// one write.
+//
+// syncSingle indexes one path per call and reaches ancestors by recursing, which
+// costs a synced index write per level. For an upload committing into a tree that
+// does not exist yet, that is the dominant cost of the whole commit: measured at
+// roughly one 1.8 ms durable write per level, eight levels deep, against a 26 ms
+// commit.
+//
+// Nothing about a fresh chain needs separate writes. The levels were created
+// together and are only reachable through each other, so one atomic batch is
+// both cheaper and a stronger guarantee than a chain that can be observed
+// half-indexed.
+//
+// Directories only. Files carry S3 extension fields that syncSingle preserves by
+// reading the entity it is replacing, and a freshly created path has none.
+//
+// A crash before the batch commits leaves the directories on disk and absent
+// from the index, which is the state the index is designed to recover from: the
+// next resolve indexes them, and a rescan rebuilds them from the filesystem.
+func (s *Service) indexNewDirChain(absPaths []string) error {
+	// Only a contiguous run can be chained, and the caller cannot promise one.
+	// Concurrency punches holes in it: another request may create an intermediate
+	// level between the caller's lstat and its mkdir, so that level is skipped
+	// while levels above it were created. Chaining across such a gap would anchor
+	// a directory to its grandparent and lose a path component -- which is a
+	// corrupt index, not a slow one, so it is resolved here rather than trusted
+	// to the caller.
+	//
+	// Levels dropped from the run are not lost. The parent resolution below
+	// indexes whatever the first batched level hangs off, recursing upward as far
+	// as it needs to.
+	for i := len(absPaths) - 1; i > 0; i-- {
+		if filepath.Dir(absPaths[i]) != absPaths[i-1] {
+			absPaths = absPaths[i:]
+			break
+		}
+	}
+	if len(absPaths) == 0 {
+		return nil
+	}
+
+	// The chain hangs off a parent that must already be in the index, which is
+	// what parentIDForSync guarantees -- including indexing it first if some
+	// other request only just claimed its ID.
+	parentID, err := s.parentIDForSync(filepath.Dir(absPaths[0]))
+	if err != nil {
+		return err
+	}
+
+	type chainLevel struct {
+		entity   Entity
+		parentID FileID
+		name     string
+		entry    DirEntry
+	}
+	levels := make([]chainLevel, 0, len(absPaths))
+	for _, absPath := range absPaths {
+		info, err := os.Lstat(absPath)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return ErrInvalidArgument
+		}
+		id, err := s.resolveOrReissueID(absPath, info)
+		if err != nil {
+			return err
+		}
+		name := filepath.Base(absPath)
+		levels = append(levels, chainLevel{
+			entity:   buildEntityMetadata(id, parentID, name, absPath, info),
+			parentID: parentID,
+			name:     name,
+			entry: DirEntry{
+				ID:    id,
+				Name:  name,
+				IsDir: true,
+				Size:  info.Size(),
+				Mtime: info.ModTime().UnixMilli(),
+			},
+		})
+		parentID = id
+	}
+
+	if err := s.idx.Batch(func(b Batch) error {
+		for i := range levels {
+			b.PutEntity(levels[i].entity)
+			b.PutChild(levels[i].parentID, levels[i].name, levels[i].entry)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// The new levels were not cached -- they did not exist -- but the listing of
+	// the directory they were added to was.
+	for i := range levels {
+		s.invalidateCacheByID(levels[i].entity.ID)
+	}
+	if parentVP, err := s.VirtualPath(levels[0].parentID); err == nil {
+		s.InvalidatePathCache(parentVP)
+	}
+	return nil
 }
 
 func (s *Service) syncSingle(absPath string) error {
@@ -2706,17 +2887,9 @@ func (s *Service) syncSingle(absPath string) error {
 	}
 
 	parentAbs := filepath.Dir(absPath)
-	parentID, err := s.store.GetID(parentAbs)
+	parentID, err := s.parentIDForSync(parentAbs)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if err := s.syncSingle(parentAbs); err != nil {
-				return err
-			}
-			parentID, err = s.store.GetID(parentAbs)
-		}
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	name := filepath.Base(absPath)
@@ -3805,4 +3978,15 @@ func (s *Service) invalidateCacheByID(id FileID) {
 	if parent != "" {
 		s.cache.Remove(parent)
 	}
+}
+
+// PathCacheStats reports occupancy and cumulative effectiveness of the virtual
+// path cache. Hits and misses are cumulative since process start, so a caller
+// wanting a rate should sample twice.
+func (s *Service) PathCacheStats() (entries, capacity int, hits, misses uint64) {
+	s.mu.RLock()
+	entries = s.cache.Len()
+	capacity = s.pathCacheSize
+	s.mu.RUnlock()
+	return entries, capacity, s.pathCacheHits.Load(), s.pathCacheMisses.Load()
 }

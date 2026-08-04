@@ -1,4 +1,7 @@
-.PHONY: test test-race test-short test-detector-linux test-detector-soak test-detector-chaos test-detector-btrfs-real test-detector-btrfs-real-docker test-versioning-btrfs-real-docker test-versioning-soak fuzz-smoke bench-go bench-http bench-compose check
+.PHONY: docs-config test test-race test-short test-detector-linux test-detector-soak test-detector-chaos test-detector-btrfs-real test-detector-btrfs-real-docker test-versioning-btrfs-real-docker test-versioning-soak fuzz-smoke bench-go bench-http bench-compose bench-tree check
+
+docs-config:
+	go run ./cmd/filegate config schema --format markdown > docs-site/docs/en/reference/config.md
 
 test:
 	go test ./...
@@ -44,5 +47,8 @@ bench-http:
 
 bench-compose:
 	./bench/scripts/run-http-bench-compose.sh
+
+bench-tree:
+	./bench/scripts/run-tree-bench.sh
 
 check: test test-race test-detector-linux bench-go

@@ -1,3 +1,4 @@
+import { writeCookie } from "@valentinkolb/stdlib/browser";
 import { themeCookieName, type AdminTheme } from "./lib/theme";
 
 const maxAge = 60 * 60 * 24 * 365;
@@ -19,8 +20,13 @@ function setTheme(theme: AdminTheme) {
 
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? darkColor : lightColor);
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]")) {
-    button.textContent = theme === "dark" ? "Light" : "Dark";
-    button.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} mode`);
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    const icon = document.createElement("i");
+    icon.className = `ti ti-${theme === "dark" ? "sun" : "moon"}`;
+    icon.setAttribute("aria-hidden", "true");
+    button.replaceChildren(icon);
+    button.setAttribute("aria-label", `Switch to ${nextTheme} mode`);
+    button.title = `Switch to ${nextTheme} mode`;
   }
 }
 
@@ -31,3 +37,16 @@ document.addEventListener("click", (event) => {
 });
 
 setTheme(currentTheme());
+
+// The files layout toggle navigates with ?view=, and the server reads the
+// preference back from this cookie. It is written here because the SSR handler
+// builds its own Response and drops cookies set on the Hono context.
+const viewCookieName = "filegate_admin_view";
+
+function rememberViewFromURL(): void {
+  const requested = new URLSearchParams(location.search).get("view");
+  if (requested !== "list" && requested !== "grid") return;
+  writeCookie(viewCookieName, requested, 365 * 24 * 60 * 60);
+}
+
+rememberViewFromURL();

@@ -17,6 +17,7 @@ import (
 
 	httpadapter "github.com/valentinkolb/filegate/adapter/http"
 	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
+	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/activity"
 	"github.com/valentinkolb/filegate/infra/detect"
@@ -24,6 +25,7 @@ import (
 	"github.com/valentinkolb/filegate/infra/filesystem"
 	"github.com/valentinkolb/filegate/infra/metrics"
 	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	"github.com/valentinkolb/filegate/infra/runtimecfg"
 
 	"github.com/spf13/cobra"
 )
@@ -69,6 +71,27 @@ func wrapMetrics(h http.Handler, reg *metrics.Registry, adapter string, enabled 
 	})
 }
 
+// restListenerProtocols decides what the REST listener speaks.
+//
+// nil means the net/http default, which for a cleartext listener is HTTP/1.1.
+// With h2c enabled both run on the same port: the server only switches for a
+// connection that opens with the HTTP/2 preface, so HTTP/1.1 clients are
+// unaffected and no port or endpoint changes.
+//
+// The listener's timeouts keep their meaning across the switch. Go arms
+// ReadTimeout and WriteTimeout per stream for HTTP/2 rather than per connection,
+// and the listener sets IdleTimeout explicitly, so it does not fall back to
+// ReadTimeout and cut long-lived connections short.
+func restListenerProtocols(h2cEnabled bool) *http.Protocols {
+	if !h2cEnabled {
+		return nil
+	}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	return protocols
+}
+
 func newDaemonServeCmd() *cobra.Command {
 	var configFile string
 	cmd := &cobra.Command{
@@ -79,13 +102,62 @@ func newDaemonServeCmd() *cobra.Command {
 				return fmt.Errorf("filegate v2 currently supports linux only")
 			}
 
-			cfg, err := loadConfig(configFile)
+			bootstrapCfg, err := loadConfig(configFile)
 			if err != nil {
 				return err
 			}
+			if err := applyChangedConfigFlags(cmd.Flags(), &bootstrapCfg); err != nil {
+				return err
+			}
+
+			// The bootstrap sources locate the authoritative runtime store.
+			// Everything else may then be supplied by the last-applied
+			// manifest kept in that store.
+			runtimeStore, err := runtimecfg.Open(bootstrapCfg.Storage.RuntimeConfigPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = runtimeStore.Close() }()
+
+			appliedManifest, hasManifest, err := runtimeStore.Manifest()
+			if err != nil {
+				return err
+			}
+			if hasManifest && appliedManifest.Revision != manifestRevision(appliedManifest.Values) {
+				return fmt.Errorf("stored config manifest revision does not match its values")
+			}
+			baseline, err := resolveConfig(configFile, nil)
+			if err != nil {
+				return err
+			}
+			if err := applyChangedConfigFlags(cmd.Flags(), &baseline.Config); err != nil {
+				return err
+			}
+
+			// A fresh install has no token configured; generate and store one
+			// so the service is reachable without editing any file first. The
+			// generated token is part of the bootstrap baseline for every
+			// later manifest plan, not a manifest-managed value.
+			token, err := bootstrapBearerToken(runtimeStore, baseline.Config.Auth.BearerToken)
+			if err != nil {
+				return err
+			}
+			baseline.Config.Auth.BearerToken = token
+
+			manifestValues := map[string]any{}
+			if hasManifest {
+				manifestValues = appliedManifest.Values
+			}
+			resolved, err := resolveConfig(configFile, manifestValues)
+			if err != nil {
+				return err
+			}
+			cfg := resolved.Config
 			if err := applyChangedConfigFlags(cmd.Flags(), &cfg); err != nil {
 				return err
 			}
+			cfg.Auth.BearerToken = token
+			resolved.Config = cfg
 
 			// Probe every mount before opening the index. Catches
 			// the operator who mounted ext4 without user_xattr,
@@ -93,6 +165,9 @@ func newDaemonServeCmd() *cobra.Command {
 			// silently dropped to disk-full overnight. Failing here
 			// is way better than failing on the first PUT, when
 			// the symptom is a confusing 500 to a real client.
+			if err := ensureDefaultBasePath(cfg); err != nil {
+				return err
+			}
 			if err := checkMountsHealthOrFail(cfg.Storage.BasePaths); err != nil {
 				return err
 			}
@@ -105,6 +180,15 @@ func newDaemonServeCmd() *cobra.Command {
 					return err
 				}
 			}
+			var manifestPtr *runtimecfg.AppliedManifest
+			if hasManifest {
+				manifestPtr = &appliedManifest
+			}
+			configManager := newConfigManager(configFile, runtimeStore, baseline, resolved, manifestPtr)
+			// Created before the router because the router exposes it; the S3
+			// adapter is attached later, once its listener is built.
+			s3Keys := newS3KeyService(runtimeStore)
+
 			idx, svc, err := buildCore(cfg)
 			if err != nil {
 				return err
@@ -115,9 +199,21 @@ func newDaemonServeCmd() *cobra.Command {
 			// /metrics endpoint and the per-request middleware are
 			// gated on metrics.enabled. Pass it to the adapters and
 			// loops below.
+			// The detector is created further down, so the provider reads it
+			// through this holder rather than capturing a nil value.
+			var detectorRef detect.Runner
 			metricsReg := metrics.New(
 				metrics.BuildInfo{Version: buildVersion, Commit: buildCommit},
-				metricsStatsProvider{svc: svc, indexPath: cfg.Storage.IndexPath},
+				metricsStatsProvider{
+					svc:       svc,
+					indexPath: cfg.Storage.IndexPath,
+					detectorStats: func() detect.Stats {
+						if detectorRef == nil {
+							return detect.Stats{}
+						}
+						return detectorRef.Stats()
+					},
+				},
 			)
 			activityLog := activity.NewRing(cfg.Activity.RingBufferSize)
 
@@ -129,6 +225,7 @@ func newDaemonServeCmd() *cobra.Command {
 				_ = idx.Close()
 				return err
 			}
+			detectorRef = detector
 			log.Printf("[filegate] detection backend: %s", detector.Name())
 			detector.Start(ctx)
 			detectorDone := make(chan struct{})
@@ -137,13 +234,14 @@ func newDaemonServeCmd() *cobra.Command {
 				consumeDetectorEvents(ctx, svc, detector.Events(), metricsReg)
 			}()
 
+			lifecycle := &lifecycleState{}
 			versioningEnabled := versioningShouldEnable(cfg.Versioning, cfg.Storage.BasePaths)
 			svc.EnableVersioning(cfg.Versioning, versioningEnabled)
 			prunerDone := make(chan struct{})
 			if versioningEnabled {
 				log.Printf("[filegate] versioning: enabled (cooldown=%s, pruner_interval=%s)",
 					cfg.Versioning.Cooldown, cfg.Versioning.PrunerInterval)
-				go runVersioningPruner(ctx, svc, cfg.Versioning.PrunerInterval, metricsReg, prunerDone)
+				go runVersioningPruner(ctx, svc, cfg.Versioning.PrunerInterval, metricsReg, lifecycle, prunerDone)
 			} else {
 				close(prunerDone)
 				log.Printf("[filegate] versioning: disabled (config=%q, btrfs check failed for at least one mount)",
@@ -186,6 +284,30 @@ func newDaemonServeCmd() *cobra.Command {
 				MetricsPath:                cfg.Metrics.Path,
 				MetricsToken:               cfg.Metrics.Token,
 				ActivityLog:                activityLog,
+				Config:                     configManager.Holder(),
+				ConfigService:              configManager,
+				S3Keys:                     s3Keys,
+
+				BuildVersion:  buildVersion,
+				BuildCommit:   buildCommit,
+				BasePaths:     cfg.Storage.BasePaths,
+				PathCacheSize: cfg.Cache.PathCacheSize,
+				DetectorStats: detector.Stats,
+				Lifecycle: func() apiv1.LifecycleRuntime {
+					return lifecycle.Snapshot(cfg.Versioning.PrunerInterval)
+				},
+				PruneNow: func() (domain.PruneStats, error) {
+					if !versioningEnabled {
+						return domain.PruneStats{}, fmt.Errorf("versioning is disabled, so there is nothing to prune")
+					}
+					return lifecycle.Run(svc.PruneVersions)
+				},
+
+				VersioningEnabled:          versioningEnabled,
+				VersioningMode:             cfg.Versioning.Enabled,
+				VersioningCooldown:         cfg.Versioning.Cooldown,
+				VersioningPrunerInterval:   cfg.Versioning.PrunerInterval,
+				VersioningMaxPinnedPerFile: cfg.Versioning.MaxPinnedPerFile,
 			})
 			var routerCloser interface{ Close() error }
 			if closer, ok := router.(interface{ Close() error }); ok {
@@ -201,9 +323,14 @@ func newDaemonServeCmd() *cobra.Command {
 				IdleTimeout:       120 * time.Second,
 				MaxHeaderBytes:    1 << 20,
 			}
+			srv.Protocols = restListenerProtocols(cfg.Server.HTTP2Cleartext)
 			errCh := make(chan error, 2)
 			go func() {
-				log.Printf("[filegate] listening on %s", cfg.Server.Listen)
+				protocols := "HTTP/1.1"
+				if cfg.Server.HTTP2Cleartext {
+					protocols = "HTTP/1.1, h2c"
+				}
+				log.Printf("[filegate] listening on %s (%s)", cfg.Server.Listen, protocols)
 				errCh <- srv.ListenAndServe()
 			}()
 
@@ -244,6 +371,15 @@ func newDaemonServeCmd() *cobra.Command {
 					MaxConcurrentWrites: cfg.S3.MaxConcurrentWrites,
 					ActivityLog:         activityLog,
 				})
+				// Seed before attaching: attaching publishes, and publishing an
+				// empty store first would leave the adapter with no keys until
+				// the seed landed.
+				if hErr == nil {
+					hErr = s3Keys.SeedOnce(cfg.S3.AccessKey, cfg.S3.SecretKey, keys)
+				}
+				if hErr == nil {
+					hErr = s3Keys.AttachHandler(s3Handler)
+				}
 				if hErr != nil {
 					cancel()
 					detector.Close()

@@ -15,8 +15,20 @@ import (
 )
 
 func loadConfig(configFile string) (domain.Config, error) {
-	v := viper.New()
+	v, err := newConfigViper(configFile)
+	if err != nil {
+		return domain.Config{}, err
+	}
+	return finishConfig(v)
+}
 
+// newConfigViper registers every default and reads the bootstrap sources
+// (config file and environment). A complete applied manifest is layered on top
+// by the resolver.
+// registerConfigDefaults declares the built-in value of every key. It is a
+// named function rather than an inline block so the schema endpoint can resolve
+// the same defaults without reading any file or environment.
+func registerConfigDefaults(v *viper.Viper) {
 	v.SetDefault("server.listen", ":8080")
 	v.SetDefault("server.public_url", "")
 	v.SetDefault("server.trusted_proxies", []string{})
@@ -29,9 +41,14 @@ func loadConfig(configFile string) (domain.Config, error) {
 	v.SetDefault("server.write_timeout", "5m")
 	v.SetDefault("server.access_log_enabled", true)
 	v.SetDefault("server.shutdown_timeout", "60s")
+	v.SetDefault("server.http2_cleartext", false)
+	// Empty means "generate one on first boot"; see bootstrapBearerToken.
 	v.SetDefault("auth.bearer_token", "")
-	v.SetDefault("storage.base_paths", []string{})
+	// A default mount means a fresh install starts and can be configured from
+	// the UI, instead of refusing to boot until someone writes a config file.
+	v.SetDefault("storage.base_paths", []string{defaultBasePath})
 	v.SetDefault("storage.index_path", "/var/lib/filegate/index")
+	v.SetDefault("storage.runtime_config_path", "/var/lib/filegate/config")
 	v.SetDefault("detection.backend", "auto")
 	v.SetDefault("detection.poll_interval", "3s")
 	v.SetDefault("cache.path_cache_size", 100000)
@@ -94,6 +111,12 @@ func loadConfig(configFile string) (domain.Config, error) {
 	v.SetDefault("metrics.path", "/metrics")
 	v.SetDefault("metrics.token", "")
 	v.SetDefault("activity.ring_buffer_size", 500)
+}
+
+func newConfigViper(configFile string) (*viper.Viper, error) {
+	v := viper.New()
+
+	registerConfigDefaults(v)
 
 	configFile = strings.TrimSpace(configFile)
 	if configFile == "" {
@@ -103,7 +126,7 @@ func loadConfig(configFile string) (domain.Config, error) {
 	if configFile != "" {
 		v.SetConfigFile(configFile)
 		if err := v.ReadInConfig(); err != nil {
-			return domain.Config{}, err
+			return nil, err
 		}
 	} else {
 		for _, candidate := range defaultConfigCandidates() {
@@ -111,11 +134,11 @@ func loadConfig(configFile string) (domain.Config, error) {
 				if os.IsNotExist(err) {
 					continue
 				}
-				return domain.Config{}, err
+				return nil, err
 			}
 			v.SetConfigFile(candidate)
 			if err := v.ReadInConfig(); err != nil {
-				return domain.Config{}, err
+				return nil, err
 			}
 			break
 		}
@@ -125,6 +148,12 @@ func loadConfig(configFile string) (domain.Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	return v, nil
+}
+
+// finishConfig unmarshals and applies the post-processing that cannot be
+// expressed as viper defaults.
+func finishConfig(v *viper.Viper) (domain.Config, error) {
 	var cfg domain.Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return cfg, err
@@ -149,9 +178,10 @@ func loadConfig(configFile string) (domain.Config, error) {
 	// 401 for every /v1 route). Allowing an empty bearer token here is
 	// what makes the documented open /metrics mode reachable for an
 	// S3-only daemon on a trusted internal network.
-	if strings.TrimSpace(cfg.Auth.BearerToken) == "" && !cfg.S3.Enabled {
-		return cfg, fmt.Errorf("auth.bearer_token is required (unless s3.enabled=true for an S3-only deployment)")
-	}
+	// An empty token is no longer an error: serve generates one on first boot
+	// and stores it, so a fresh install needs no configuration at all. The REST
+	// auth middleware still fails closed until a token exists, so this cannot
+	// open the API by accident.
 	if err := validatePublicURL(cfg.Server.PublicURL); err != nil {
 		return cfg, err
 	}

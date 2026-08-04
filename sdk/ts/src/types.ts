@@ -347,3 +347,307 @@ export interface IndexResolveManyResponse {
   items: (Node | null)[];
   total: number;
 }
+
+/** Phase of a resumable upload session. */
+export type UploadSessionPhase = "in_progress" | "committing" | "committed" | "aborted";
+
+export interface BuildInfo {
+  version: string;
+  commit: string;
+  go: string;
+}
+
+/**
+ * A configured mount and the result of its health probe. `writable` and
+ * `xattrSupported` are the two properties whose absence breaks Filegate
+ * silently: no writes, and no stable file IDs.
+ */
+export interface MountInfo {
+  name: string;
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  xattrSupported: boolean;
+  freeBytes: number;
+  totalBytes: number;
+  errors?: string[];
+}
+
+export interface VersioningInfo {
+  enabled: boolean;
+  mode: string;
+  cooldownMs: number;
+  prunerIntervalMs: number;
+  maxPinnedPerFile: number;
+}
+
+/** Curated, non-secret configuration needed to interpret server rejections. */
+export interface LimitsInfo {
+  maxChunkBytes: number;
+  maxUploadBytes: number;
+  maxSessionUploadBytes: number;
+  maxConcurrentSegmentWrites: number;
+  uploadMinFreeBytes: number;
+  uploadExpiryMs: number;
+  uploadCleanupIntervalMs: number;
+  thumbnailMaxSourceBytes: number;
+  thumbnailMaxPixels: number;
+  pathCacheCapacity: number;
+  activityRingCapacity: number;
+}
+
+export interface DetectorInfo {
+  backend: string;
+  intervalMs: number;
+}
+
+export interface SystemInfoResponse {
+  generatedAt: number;
+  build: BuildInfo;
+  startedAt: number;
+  uptimeMs: number;
+  detector: DetectorInfo;
+  versioning: VersioningInfo;
+  limits: LimitsInfo;
+  mounts: MountInfo[];
+  indexPath: string;
+}
+
+/**
+ * Live detector state. `staleForMs` growing far past `intervalMs` means
+ * detection stopped, which causes silent index drift rather than an outage.
+ */
+export interface DetectorRuntime {
+  backend: string;
+  intervalMs: number;
+  cycles: number;
+  lastScanAt: number;
+  lastScanDurationMs: number;
+  staleForMs: number;
+  errors: number;
+  pendingBatches: number;
+  queueCapacity: number;
+  trackedDirs?: number;
+  trackedFiles?: number;
+  generations?: Record<string, number>;
+}
+
+/** Worker pool pressure. `queued` nearing `queueCapacity` precedes 503s. */
+export interface JobsRuntime {
+  workers: number;
+  queued: number;
+  queueCapacity: number;
+  inFlight: number;
+  rejected: number;
+  panics: number;
+}
+
+export interface CacheRuntime {
+  entries: number;
+  capacity: number;
+  hits: number;
+  misses: number;
+  hitRatio: number;
+}
+
+export interface UploadSessionsRuntime {
+  inProgress: number;
+  committing: number;
+  committed: number;
+  aborted: number;
+  writeSlotsInUse: number;
+  writeSlotsLimit: number;
+}
+
+/** Last background maintenance run. lastPruneAt of 0 means none completed yet. */
+export interface LifecycleRuntime {
+  prunerIntervalMs: number;
+  lastPruneAt: number;
+  lastPruneDurationMs: number;
+  nextPruneAt: number;
+  pruneRuns: number;
+  filesScanned: number;
+  versionsKept: number;
+  versionsDeleted: number;
+  orphansPurged: number;
+  blobsDeleted: number;
+  pruneErrors: number;
+  pruneError?: string;
+  /** Whether a round is in flight right now. */
+  pruneRunning: boolean;
+}
+
+/** Result of a manual retention round. */
+export interface PruneResponse {
+  filesScanned: number;
+  versionsKept: number;
+  versionsDeleted: number;
+  orphansPurged: number;
+  blobsDeleted: number;
+  errors: number;
+  durationMs: number;
+}
+
+export interface SystemRuntimeResponse {
+  generatedAt: number;
+  detector: DetectorRuntime;
+  jobs: JobsRuntime;
+  pathCache: CacheRuntime;
+  thumbnailCache: CacheRuntime;
+  uploadSessions: UploadSessionsRuntime;
+  lifecycle: LifecycleRuntime;
+}
+
+export type HealthStatus = "ok" | "degraded" | "fail";
+
+export interface HealthCheck {
+  name: string;
+  status: HealthStatus;
+  detail?: string;
+}
+
+export interface HealthResponse {
+  status: HealthStatus;
+  generatedAt: number;
+  checks: HealthCheck[];
+}
+
+export interface UploadSessionSummary {
+  id: string;
+  path: string;
+  size: number;
+  segmentSize: number;
+  totalSegments: number;
+  uploadedSegments: number;
+  uploadedBytes: number;
+  phase: UploadSessionPhase;
+  createdAt: number;
+  updatedAt: number;
+  ageMs: number;
+  contentType?: string;
+}
+
+export interface UploadSessionListResponse {
+  items: UploadSessionSummary[];
+  total: number;
+}
+
+/** One age window of the version retention policy. */
+export interface RetentionBucket {
+  /** Window measured back from now, as a duration string. */
+  keepFor: string;
+  /** Versions to keep inside the window; -1 is unlimited. */
+  maxCount: number;
+}
+
+export type ConfigScope = "static" | "runtime";
+export type ConfigSource = "default" | "file" | "env" | "manifest";
+export type ConfigManagedBy = "manifest" | "bootstrap" | "resource";
+
+export interface ConfigKeySchema {
+  path: string;
+  /** string, bool, int, duration, stringList, s3Keys or retentionBuckets. */
+  type: string;
+  scope: ConfigScope;
+  managedBy: ConfigManagedBy;
+  usage: string;
+  /** Why a static key cannot change while the server runs. */
+  reason?: string;
+  /** What a number counts: "bytes", "entries", "workers", "pixels", … Absent for non-numeric keys. */
+  unit?: string;
+  /** Complete allowed set when a string is a closed choice rather than free text. */
+  choices?: string[];
+  /** Secret values report presence only, never their content. */
+  secret: boolean;
+  default?: unknown;
+}
+
+export interface ConfigSchemaResponse {
+  keys: ConfigKeySchema[];
+}
+
+export interface ConfigValue {
+  path: string;
+  /** What the running process currently uses. */
+  effective: unknown;
+  /** What will be effective after any required restart. */
+  desired: unknown;
+  source: ConfigSource;
+  scope: ConfigScope;
+  managedBy: ConfigManagedBy;
+}
+
+export interface ConfigRestartRequired {
+  path: string;
+  effective: string;
+  desired: string;
+}
+
+export interface ConfigManifestStatus {
+  revision: string;
+  appliedAt: number;
+  appliedBy: string;
+}
+
+export interface ConfigValuesResponse {
+  generatedAt: number;
+  manifest?: ConfigManifestStatus;
+  values: ConfigValue[];
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface ConfigManifestChange {
+  path: string;
+  operation: "add" | "change" | "remove";
+  activation: ConfigScope;
+  from?: unknown;
+  to?: unknown;
+}
+
+export interface ConfigManifestPlanResponse {
+  currentRevision: string;
+  proposedRevision: string;
+  changes: ConfigManifestChange[];
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface ConfigManifestApplyResponse {
+  manifest: ConfigManifestStatus;
+  changes: ConfigManifestChange[];
+  restartRequired?: ConfigRestartRequired[];
+}
+
+export interface S3Key {
+  accessKey: string;
+  buckets: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+  disabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Carries the one-time secret; it cannot be read again afterwards. */
+export interface S3KeyCreated extends S3Key {
+  secretKey: string;
+}
+
+export interface S3KeyListResponse {
+  items: S3Key[];
+  total: number;
+}
+
+export interface S3KeyCreateRequest {
+  accessKey?: string;
+  /** Required. Use ["*"] to grant every mount. */
+  buckets: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+}
+
+export interface S3KeyUpdateRequest {
+  buckets?: string[];
+  requestsPerSecond?: number;
+  burst?: number;
+  disabled?: boolean;
+}

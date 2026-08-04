@@ -43,7 +43,19 @@ function button(text: string, value: string, variant?: PromptVariant): HTMLButto
   el.type = "button";
   el.className = `btn${variant === "danger" ? " danger" : value === "ok" ? " primary" : ""}`;
   el.dataset.promptValue = value;
-  el.textContent = text;
+
+  // The close affordance is a bare glyph, not a labelled action, so it keeps its
+  // own icon and no label.
+  if (text === "\u00d7") {
+    el.innerHTML = '<i class="ti ti-x" aria-hidden="true"></i>';
+    return el;
+  }
+  const icon = variant === "danger" ? "trash" : value === "ok" ? "check" : "x";
+  el.innerHTML = `<i class="ti ti-${icon}" aria-hidden="true"></i>`;
+  const label = document.createElement("span");
+  label.className = "btn-label";
+  label.textContent = text;
+  el.appendChild(label);
   return el;
 }
 
@@ -122,7 +134,7 @@ function openPrompt<T>(root: HTMLElement, resolveValue: (value: string | undefin
   });
 }
 
-const prompts = {
+export const prompts = {
   confirm(options: ConfirmOptions): Promise<boolean> {
     const { root, footer } = frame(options.title, options.message, options.badge);
     footer.append(button(options.cancelText ?? "Cancel", "cancel"), button(options.confirmText ?? "Confirm", "ok", options.variant));
@@ -176,7 +188,12 @@ const prompts = {
   },
 };
 
-function submitForm(action: string, values: Record<string, string>) {
+/** The folder currently being viewed, taken from the URL. */
+function currentFolderPath(): string {
+  return new URLSearchParams(location.search).get("path") ?? "";
+}
+
+export function submitForm(action: string, values: Record<string, string>) {
   const form = document.createElement("form");
   form.method = "post";
   form.action = action;
@@ -256,7 +273,7 @@ document.addEventListener("click", async (event) => {
       confirmText: "Rename",
       fields: [{ name: "name", label: "New name", value: rename.dataset.renameName || "", required: true }],
     });
-    if (values) submitForm("/files/rename", { id: rename.dataset.renameId || "", name: values.name || "" });
+    if (values) submitForm("/files/rename", { id: rename.dataset.renameId || "", parentPath: currentFolderPath(), name: values.name || "" });
     return;
   }
 
@@ -290,7 +307,7 @@ document.addEventListener("click", async (event) => {
           : []),
       ],
     });
-    if (values) submitForm("/files/metadata", { id: metadata.dataset.metadataId || "", ...values });
+    if (values) submitForm("/files/metadata", { id: metadata.dataset.metadataId || "", parentPath: currentFolderPath(), ...values });
     return;
   }
 
@@ -300,7 +317,7 @@ document.addEventListener("click", async (event) => {
   const values = await prompts.form({
     title: "Move or copy",
     badge: trigger.dataset.transferPath,
-    message: "Choose an existing target folder and the final resource name. Conflict behavior controls the final target: Error keeps the current state, Rename writes to the next free sibling name, Overwrite replaces the target.",
+    message: "Choose an existing target folder and the final resource name. The target must be a folder inside a mount, such as files or files/archive. Conflict behavior controls the final target: Error keeps the current state, Rename writes to the next free sibling name, Overwrite replaces the target.",
     confirmText: "Apply transfer",
     fields: [
       {
@@ -322,12 +339,205 @@ document.addEventListener("click", async (event) => {
           { value: "overwrite", label: "Overwrite" },
         ],
       },
-      { name: "targetParentPath", label: "Target parent path", placeholder: "backups/archive" },
+      {
+        name: "targetParentPath",
+        label: "Target parent path",
+        placeholder: "backups/archive",
+        value: trigger.dataset.transferParent || "",
+        required: true,
+      },
       { name: "targetName", label: "Target name", value: trigger.dataset.transferName || "", required: true },
     ],
   });
   if (!values) return;
-  submitForm("/files/transfer", { id: trigger.dataset.transferId || "", ...values });
+  submitForm("/files/transfer", { id: trigger.dataset.transferId || "", parentPath: currentFolderPath(), ...values });
 });
 
 document.documentElement.dataset.promptsReady = "true";
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.matches("[data-confirm-version-delete]")) return;
+  event.preventDefault();
+  const confirmed = await prompts.confirm({
+    title: "Delete version",
+    badge: form.dataset.confirmVersionDelete,
+    message: "Removes this stored version permanently. The current file is not affected.",
+    confirmText: "Delete version",
+    variant: "danger",
+  });
+  if (confirmed) form.submit();
+});
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const snapshot = target.closest<HTMLElement>("[data-snapshot-open]");
+  if (snapshot) {
+    const values = await prompts.form({
+      title: "Snapshot this file",
+      message: "Captures the current bytes as a new version. A label is optional and helps you find it later.",
+      confirmText: "Take snapshot",
+      fields: [{ name: "label", label: "Label", placeholder: "before migration" }],
+    });
+    if (values) {
+      submitForm("/files/versions/snapshot", {
+        id: snapshot.dataset.snapshotId || "",
+        parentPath: snapshot.dataset.snapshotParent || "",
+        label: values.label || "",
+      });
+    }
+    return;
+  }
+
+  const restore = target.closest<HTMLElement>("[data-restore-open]");
+  if (!restore) return;
+
+  const values = await prompts.form({
+    title: "Restore version",
+    badge: restore.dataset.restoreWhen,
+    message:
+      "In place replaces the current file. Filegate snapshots the present content first, but that snapshot is subject to the versioning cooldown: if a version was captured moments ago, the current bytes are replaced without a new one. As a new file writes a sibling and leaves the original untouched.",
+    confirmText: "Restore",
+    fields: [
+      {
+        name: "asNewFile",
+        label: "Restore mode",
+        value: "false",
+        options: [
+          { value: "false", label: "In place" },
+          { value: "true", label: "As a new file" },
+        ],
+      },
+      { name: "name", label: "New file name", placeholder: "leave empty for <name>-restored" },
+    ],
+  });
+  if (!values) return;
+
+  submitForm("/files/versions/restore", {
+    id: restore.dataset.restoreId || "",
+    versionId: restore.dataset.restoreVersion || "",
+    parentPath: restore.dataset.restoreParent || "",
+    asNewFile: values.asNewFile || "false",
+    name: values.name || "",
+  });
+});
+
+/**
+ * Bulk selection in the file listing.
+ *
+ * Selection lives only in the DOM: it is deliberately not persisted across
+ * navigation, because acting on files you can no longer see is how accidental
+ * mass deletions happen.
+ */
+function bulkSelection(): { ids: string[]; names: string[] } {
+  const checked = [...document.querySelectorAll<HTMLInputElement>("[data-bulk-item]:checked")];
+  return {
+    ids: checked.map((box) => box.dataset.bulkItem ?? ""),
+    names: checked.map((box) => box.dataset.bulkName ?? ""),
+  };
+}
+
+function refreshBulkBar(): void {
+  const bar = document.querySelector<HTMLElement>("[data-bulk-bar]");
+  if (!bar) return;
+  const { ids } = bulkSelection();
+  bar.hidden = ids.length === 0;
+  const label = bar.querySelector<HTMLElement>("[data-bulk-count]");
+  if (label) label.textContent = `${ids.length} selected`;
+
+  const all = document.querySelector<HTMLInputElement>("[data-bulk-all]");
+  const boxes = document.querySelectorAll<HTMLInputElement>("[data-bulk-item]");
+  if (all) {
+    all.checked = boxes.length > 0 && ids.length === boxes.length;
+    all.indeterminate = ids.length > 0 && ids.length < boxes.length;
+  }
+}
+
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+
+  if (target.matches("[data-bulk-all]")) {
+    for (const box of document.querySelectorAll<HTMLInputElement>("[data-bulk-item]")) {
+      box.checked = target.checked;
+    }
+  }
+  if (target.matches("[data-bulk-item]") || target.matches("[data-bulk-all]")) refreshBulkBar();
+});
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  if (target.closest("[data-bulk-clear]")) {
+    for (const box of document.querySelectorAll<HTMLInputElement>("[data-bulk-item]")) box.checked = false;
+    refreshBulkBar();
+    return;
+  }
+
+  const parentPath = new URLSearchParams(location.search).get("path") ?? "";
+
+  if (target.closest("[data-bulk-delete]")) {
+    const { ids, names } = bulkSelection();
+    if (ids.length === 0) return;
+    const confirmed = await prompts.confirm({
+      title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}`,
+      badge: names.slice(0, 4).join(", ") + (names.length > 4 ? `, +${names.length - 4} more` : ""),
+      message: "Each item is deleted on its own. Any that fail are reported individually and the rest still go through.",
+      confirmText: `Delete ${ids.length}`,
+      variant: "danger",
+    });
+    if (confirmed) submitForm("/files/bulk/delete", { parentPath, ids: ids.join(",") });
+    return;
+  }
+
+  if (target.closest("[data-bulk-move]")) {
+    const { ids, names } = bulkSelection();
+    if (ids.length === 0) return;
+    const values = await prompts.form({
+      title: `Move ${ids.length} item${ids.length === 1 ? "" : "s"}`,
+      badge: names.slice(0, 4).join(", ") + (names.length > 4 ? `, +${names.length - 4} more` : ""),
+      message: "Names are kept. The target must be an existing folder inside a mount, such as files or files/archive.",
+      confirmText: `Move ${ids.length}`,
+      fields: [
+        { name: "targetParentPath", label: "Target folder", placeholder: "files/archive", value: parentPath, required: true },
+        {
+          name: "onConflict",
+          label: "On conflict",
+          value: "error",
+          options: [
+            { value: "error", label: "Error" },
+            { value: "rename", label: "Rename" },
+            { value: "overwrite", label: "Overwrite" },
+          ],
+        },
+      ],
+    });
+    if (values) {
+      submitForm("/files/bulk/move", {
+        parentPath,
+        ids: ids.join(","),
+        targetParentPath: values.targetParentPath ?? "",
+        onConflict: values.onConflict ?? "error",
+      });
+    }
+  }
+});
+
+refreshBulkBar();
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.matches("[data-confirm-prune]")) return;
+  event.preventDefault();
+  const confirmed = await prompts.confirm({
+    title: "Prune versions now",
+    message:
+      "Applies the retention policy immediately and deletes the versions it no longer keeps. Pinned versions are never removed. The result is recorded in the activity log.",
+    confirmText: "Prune now",
+    variant: "danger",
+  });
+  if (confirmed) form.submit();
+});

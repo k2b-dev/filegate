@@ -115,7 +115,27 @@ curl -fsS -H 'Authorization: Bearer dev-token' \
 
 ## Configuration
 
-Filegate reads config from `--config`, `FILEGATE_CONFIG`, or default candidates such as `/etc/filegate/conf.yaml`. Environment variables use `FILEGATE_` plus the config path, for example `FILEGATE_SERVER_LISTEN`.
+Filegate uses a versioned desired-state manifest for repository-managed configuration. Plan and apply use the same bearer-authenticated HTTP API locally and remotely:
+
+```yaml
+# filegate.manifest.yaml
+version: 1
+config:
+  server:
+    public_url: https://files.example.com
+    access_log_enabled: true
+  upload:
+    max_upload_bytes: 1073741824
+```
+
+```bash
+fg config plan -f filegate.manifest.yaml --host https://files.example.com --token-file /run/secrets/filegate-token
+fg config apply -f filegate.manifest.yaml --host https://files.example.com --token-file /run/secrets/filegate-token
+```
+
+The manifest is a complete replacement: removing a key removes it from managed state. Runtime keys apply immediately; static keys are stored as desired state until restart. The admin Settings page is a read-only view of effective and desired configuration.
+
+Bootstrap settings and secrets still come from `--config`, `FILEGATE_CONFIG`, environment, or default candidates such as `/etc/filegate/conf.yaml`. Environment variables use `FILEGATE_` plus the config path, for example `FILEGATE_SERVER_LISTEN`.
 
 Use the config CLI for offline edits:
 
@@ -128,13 +148,12 @@ sudo fg config mount add --config /etc/filegate/conf.yaml /srv/filegate/photos
 
 sudo fg config set --config /etc/filegate/conf.yaml \
   --auth-bearer-token '<strong-token>' \
-  --server-listen ':8080' \
-  --server-public-url 'https://files.example.com'
+  --server-listen ':8080'
 ```
 
 Mutating `fg config` commands require explicit `--config`, create a timestamped backup by default, validate the resulting YAML before replacing it, and print a restart reminder. They do not hot-reload a running daemon.
 
-`fg serve` accepts the same config-value flags as one-shot runtime overrides:
+`fg serve` accepts the same config-value flags as one-shot startup overrides:
 
 ```bash
 fg serve --config ./conf.yaml --server-listen ':9090'
@@ -411,7 +430,7 @@ The default ring buffer retains 500 records. Set `activity.ring_buffer_size` to 
 ## Limits
 
 - Single-node service; no replication.
-- Config changes are offline; restart after editing config.
+- Bootstrap config changes are offline. Manifest runtime keys apply immediately; static keys take effect after restart.
 - REST uses one bearer token. S3 supports multiple keys and per-key bucket allowlists.
 - REST has no request rate limiting. S3 supports per-key request limits.
 - `X-Forwarded-For` is trusted only from configured `server.trusted_proxies`.

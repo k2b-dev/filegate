@@ -26,70 +26,118 @@ const (
 	configFlagRetentionBuckets
 )
 
+// configScope says whether a value can change while the server runs.
+//
+// Getting this wrong is worse than refusing a change: a key wrongly marked
+// runtime accepts an edit, answers 200, and quietly keeps using the old value.
+// The scope therefore lives on the spec table rather than in a second list that
+// could drift, and a test asserts every key carries one.
+type configScope int
+
+const (
+	// scopeStatic values are consumed once during startup -- listener binds,
+	// store paths, conditionally mounted routes -- and only a restart applies
+	// a new value.
+	scopeStatic configScope = iota
+	// scopeRuntime values are read from the live snapshot, so a change takes
+	// effect on the next request or the next loop iteration.
+	scopeRuntime
+)
+
+func (s configScope) String() string {
+	if s == scopeRuntime {
+		return "runtime"
+	}
+	return "static"
+}
+
 type configFlagSpec struct {
 	Name  string
 	Path  string
 	Kind  configFlagKind
 	Usage string
+	// Scope decides whether a change needs a restart. See configScope.
+	Scope configScope
+	// Secret marks values that must never be returned by an API. This is a
+	// deny list because the config endpoints are meant to be complete; a test
+	// fails when a secret-looking key is missing from it.
+	Secret bool
+	// Reason documents why a static key cannot move. Empty for runtime keys.
+	Reason string
+	// Unit says what a number counts, so a client can render 65536 as 64 KiB
+	// and 100000 as "100,000 entries". The type alone cannot carry this: a
+	// byte limit and a max-count are both ints, and several keys are named
+	// "size" while holding a count.
+	Unit string
+	// Choices is the complete allowed set for a closed string value. Keeping it
+	// beside validation lets schema-driven clients render a select without
+	// parsing human-facing usage text.
+	Choices []string
+	// DynamicDefault marks defaults derived from the machine running Filegate.
+	// They cannot be published as one deterministic number in the generated
+	// reference, but the effective config still reports the resolved value.
+	DynamicDefault bool
 }
 
 func allConfigFlagSpecs() []configFlagSpec {
 	return []configFlagSpec{
-		{Name: "server-listen", Path: "server.listen", Kind: configFlagString, Usage: "REST listener address"},
-		{Name: "server-public-url", Path: "server.public_url", Kind: configFlagString, Usage: "public REST base URL used when minting direct upload URLs"},
-		{Name: "server-trusted-proxies", Path: "server.trusted_proxies", Kind: configFlagStringArray, Usage: "proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers"},
-		{Name: "server-cors-allowed-origins", Path: "server.cors.allowed_origins", Kind: configFlagStringArray, Usage: "CORS allowed origin; repeat for multiple origins; empty disables CORS"},
-		{Name: "server-cors-allowed-methods", Path: "server.cors.allowed_methods", Kind: configFlagStringArray, Usage: "CORS allowed method; repeat for multiple methods; empty uses REST defaults"},
-		{Name: "server-cors-allowed-headers", Path: "server.cors.allowed_headers", Kind: configFlagStringArray, Usage: "CORS allowed request header; repeat for multiple headers; empty uses REST defaults"},
-		{Name: "server-cors-exposed-headers", Path: "server.cors.exposed_headers", Kind: configFlagStringArray, Usage: "CORS response header exposed to browsers; repeat for multiple headers"},
-		{Name: "server-cors-max-age", Path: "server.cors.max_age", Kind: configFlagDuration, Usage: "CORS preflight cache duration"},
-		{Name: "server-cors-allow-credentials", Path: "server.cors.allow_credentials", Kind: configFlagBool, Usage: "allow credentials on CORS responses; cannot be used with wildcard origin"},
-		{Name: "server-write-timeout", Path: "server.write_timeout", Kind: configFlagDuration, Usage: "HTTP response write timeout"},
-		{Name: "server-access-log-enabled", Path: "server.access_log_enabled", Kind: configFlagBool, Usage: "enable REST and S3 access logs"},
-		{Name: "server-shutdown-timeout", Path: "server.shutdown_timeout", Kind: configFlagDuration, Usage: "graceful shutdown timeout"},
-		{Name: "auth-bearer-token", Path: "auth.bearer_token", Kind: configFlagString, Usage: "REST bearer token"},
-		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts"},
-		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory"},
-		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs"},
-		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used"},
-		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Kind: configFlagInt, Usage: "in-memory path cache size"},
-		{Name: "jobs-workers", Path: "jobs.workers", Kind: configFlagInt, Usage: "background worker count"},
-		{Name: "jobs-queue-size", Path: "jobs.queue_size", Kind: configFlagInt, Usage: "background job queue size"},
-		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Kind: configFlagInt, Usage: "thumbnail worker count"},
-		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Kind: configFlagInt, Usage: "thumbnail job queue size"},
-		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry"},
-		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval"},
-		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes"},
-		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes"},
-		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes"},
-		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes"},
-		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads"},
-		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Kind: configFlagInt, Usage: "thumbnail LRU cache size"},
-		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails"},
-		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails"},
-		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off"},
-		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown"},
-		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture"},
-		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets"},
-		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval"},
-		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap"},
-		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete"},
-		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Kind: configFlagInt, Usage: "maximum version label bytes"},
-		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener"},
-		{Name: "s3-listen", Path: "s3.listen", Kind: configFlagString, Usage: "S3 listener address"},
-		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region"},
-		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "legacy single-tenant S3 access key"},
-		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "legacy single-tenant S3 secret key"},
-		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes"},
-		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 key access_key=<ak>,secret_key=<sk>,buckets=<a|b|*>,requests_per_second=<n>,burst=<n>; repeat for multiple keys"},
-		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default"},
-		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default"},
-		{Name: "s3-cleanup-stuck-upload-max-age", Path: "s3.cleanup.stuck_upload_max_age", Kind: configFlagDuration, Usage: "maximum age for stuck open multipart uploads; zero uses adapter default"},
-		{Name: "s3-cleanup-interval", Path: "s3.cleanup.interval", Kind: configFlagDuration, Usage: "multipart cleanup interval; negative disables"},
-		{Name: "metrics-enabled", Path: "metrics.enabled", Kind: configFlagBool, Usage: "enable Prometheus metrics endpoint"},
-		{Name: "metrics-path", Path: "metrics.path", Kind: configFlagString, Usage: "Prometheus metrics path"},
-		{Name: "metrics-token", Path: "metrics.token", Kind: configFlagString, Usage: "optional Prometheus metrics bearer token"},
-		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Kind: configFlagInt, Usage: "number of recent activity events kept in memory"},
+		{Name: "server-listen", Path: "server.listen", Kind: configFlagString, Usage: "REST listener address", Scope: scopeStatic, Reason: "REST listener bind address, fixed once the server accepts connections"},
+		{Name: "server-public-url", Path: "server.public_url", Kind: configFlagString, Usage: "public REST base URL used when minting direct upload URLs", Scope: scopeRuntime},
+		{Name: "server-trusted-proxies", Path: "server.trusted_proxies", Kind: configFlagStringArray, Usage: "proxy IP or CIDR whose X-Forwarded-For is honored; repeat for multiple; empty ignores forward headers", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-origins", Path: "server.cors.allowed_origins", Kind: configFlagStringArray, Usage: "CORS allowed origin; repeat for multiple origins; empty disables CORS", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-methods", Path: "server.cors.allowed_methods", Kind: configFlagStringArray, Usage: "CORS allowed method; repeat for multiple methods; empty uses REST defaults", Scope: scopeRuntime},
+		{Name: "server-cors-allowed-headers", Path: "server.cors.allowed_headers", Kind: configFlagStringArray, Usage: "CORS allowed request header; repeat for multiple headers; empty uses REST defaults", Scope: scopeRuntime},
+		{Name: "server-cors-exposed-headers", Path: "server.cors.exposed_headers", Kind: configFlagStringArray, Usage: "CORS response header exposed to browsers; repeat for multiple headers", Scope: scopeRuntime},
+		{Name: "server-cors-max-age", Path: "server.cors.max_age", Kind: configFlagDuration, Usage: "CORS preflight cache duration", Scope: scopeRuntime},
+		{Name: "server-cors-allow-credentials", Path: "server.cors.allow_credentials", Kind: configFlagBool, Usage: "allow credentials on CORS responses; cannot be used with wildcard origin", Scope: scopeRuntime},
+		{Name: "server-write-timeout", Path: "server.write_timeout", Kind: configFlagDuration, Usage: "HTTP response write timeout", Scope: scopeStatic, Reason: "an http.Server field, no longer read after ListenAndServe"},
+		{Name: "server-access-log-enabled", Path: "server.access_log_enabled", Kind: configFlagBool, Usage: "enable REST and S3 access logs", Scope: scopeRuntime},
+		{Name: "server-shutdown-timeout", Path: "server.shutdown_timeout", Kind: configFlagDuration, Usage: "graceful shutdown timeout", Scope: scopeStatic, Reason: "the shutdown plan captures its deadline when the process starts"},
+		{Name: "server-http2-cleartext", Path: "server.http2_cleartext", Kind: configFlagBool, Usage: "accept unencrypted HTTP/2 (h2c) on the REST listener, alongside HTTP/1.1 on the same port", Scope: scopeStatic, Reason: "the protocol set is fixed when the listener starts accepting connections"},
+		{Name: "auth-bearer-token", Path: "auth.bearer_token", Kind: configFlagString, Usage: "REST bearer token", Scope: scopeStatic, Reason: "deliberately static: the break-glass credential must survive a damaged runtime store", Secret: true},
+		{Name: "storage-base-paths", Path: "storage.base_paths", Kind: configFlagStringArray, Usage: "storage mount path; repeat for multiple mounts", Scope: scopeStatic, Reason: "mounts are bound into the service, seeded as index roots, and registered with the detector"},
+		{Name: "storage-runtime-config-path", Path: "storage.runtime_config_path", Kind: configFlagString, Usage: "directory holding the applied manifest and runtime resources; must be outside the index", Scope: scopeStatic, Reason: "the runtime config store is opened before the manifest can be read"},
+		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
+		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Choices: []string{"auto", "poll", "btrfs"}, Scope: scopeStatic, Reason: "selects a different detector implementation"},
+		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeStatic, Reason: "the detector loop captures its interval when it starts"},
+		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of paths kept in the in-memory cache", Scope: scopeStatic, Reason: "the path cache is allocated when the service is built"},
+		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count; defaults from available CPUs", Scope: scopeStatic, Reason: "the worker pool is created at startup", DynamicDefault: true},
+		{Name: "jobs-queue-size", Path: "jobs.queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum jobs queued before new ones are rejected", Scope: scopeStatic, Reason: "the job queue is allocated at startup"},
+		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Unit: "workers", Kind: configFlagInt, Usage: "thumbnail worker count", Scope: scopeStatic, Reason: "the thumbnail worker pool is created at startup"},
+		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum thumbnail jobs queued before new ones are rejected", Scope: scopeStatic, Reason: "the thumbnail queue is allocated at startup"},
+		{Name: "upload-expiry", Path: "upload.expiry", Kind: configFlagDuration, Usage: "upload session expiry", Scope: scopeStatic, Reason: "the upload session manager captures its expiry at startup"},
+		{Name: "upload-cleanup-interval", Path: "upload.cleanup_interval", Kind: configFlagDuration, Usage: "upload session cleanup interval", Scope: scopeStatic, Reason: "the upload cleanup loop captures its interval at startup"},
+		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
+		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes; defaults from available CPUs", Scope: scopeStatic, Reason: "the segment-write semaphore is allocated at startup", DynamicDefault: true},
+		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
+		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of thumbnails kept in memory", Scope: scopeStatic, Reason: "the thumbnail cache is allocated at startup"},
+		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeStatic, Reason: "the thumbnail service captures this limit at startup"},
+		{Name: "thumbnail-max-pixels", Path: "thumbnail.max_pixels", Unit: "pixels", Kind: configFlagInt64, Usage: "maximum decoded pixels for thumbnails", Scope: scopeStatic, Reason: "the thumbnail service captures this limit at startup"},
+		{Name: "versioning-enabled", Path: "versioning.enabled", Kind: configFlagString, Usage: "versioning mode: auto, on, off", Choices: []string{"auto", "on", "off"}, Scope: scopeStatic, Reason: "versioning and its background pruner are initialized at startup"},
+		{Name: "versioning-cooldown", Path: "versioning.cooldown", Kind: configFlagDuration, Usage: "automatic version capture cooldown", Scope: scopeStatic, Reason: "the versioning service captures its policy at startup"},
+		{Name: "versioning-min-size-for-auto-v1", Path: "versioning.min_size_for_auto_v1", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum size for automatic V1 capture", Scope: scopeStatic, Reason: "the versioning service captures its policy at startup"},
+		{Name: "versioning-retention-bucket", Path: "versioning.retention_buckets", Kind: configFlagRetentionBuckets, Usage: "retention bucket keep_for=<duration>,max_count=<n>; repeat for multiple buckets", Scope: scopeStatic, Reason: "the versioning pruner captures its retention policy at startup"},
+		{Name: "versioning-pruner-interval", Path: "versioning.pruner_interval", Kind: configFlagDuration, Usage: "versioning pruner interval", Scope: scopeStatic, Reason: "the versioning pruner loop starts with a fixed interval"},
+		{Name: "versioning-max-pinned-per-file", Path: "versioning.max_pinned_per_file", Unit: "versions", Kind: configFlagInt, Usage: "maximum pinned versions per file; 0 disables cap", Scope: scopeStatic, Reason: "the versioning service captures this limit at startup"},
+		{Name: "versioning-pinned-grace-after-delete", Path: "versioning.pinned_grace_after_delete", Kind: configFlagDuration, Usage: "retention grace for pinned versions after live file delete", Scope: scopeStatic, Reason: "the versioning pruner captures its policy at startup"},
+		{Name: "versioning-max-label-bytes", Path: "versioning.max_label_bytes", Unit: "bytes", Kind: configFlagInt, Usage: "maximum version label bytes", Scope: scopeStatic, Reason: "the versioning service captures this limit at startup"},
+		{Name: "s3-enabled", Path: "s3.enabled", Kind: configFlagBool, Usage: "enable S3-compatible listener", Scope: scopeStatic, Reason: "controls whether the second listener exists"},
+		{Name: "s3-listen", Path: "s3.listen", Kind: configFlagString, Usage: "S3 listener address", Scope: scopeStatic, Reason: "S3 listener bind address"},
+		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region", Scope: scopeStatic, Reason: "the S3 signing handler captures its region at startup"},
+		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "single-tenant S3 seed access key", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
+		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "single-tenant S3 seed secret key", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
+		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes; defaults from available CPUs", Scope: scopeStatic, Reason: "the S3 write semaphore is allocated at startup", DynamicDefault: true},
+		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 access-key seed entries; use the S3 key resource API after bootstrap", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
+		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default", Scope: scopeStatic, Reason: "the multipart cleanup loop captures its policy at startup"},
+		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default", Scope: scopeStatic, Reason: "the multipart cleanup loop captures its policy at startup"},
+		{Name: "s3-cleanup-stuck-upload-max-age", Path: "s3.cleanup.stuck_upload_max_age", Kind: configFlagDuration, Usage: "maximum age for stuck open multipart uploads; zero uses adapter default", Scope: scopeStatic, Reason: "the multipart cleanup loop captures its policy at startup"},
+		{Name: "s3-cleanup-interval", Path: "s3.cleanup.interval", Kind: configFlagDuration, Usage: "multipart cleanup interval; negative disables", Scope: scopeStatic, Reason: "the multipart cleanup loop starts with a fixed interval"},
+		{Name: "metrics-enabled", Path: "metrics.enabled", Kind: configFlagBool, Usage: "enable Prometheus metrics endpoint", Scope: scopeStatic, Reason: "the metrics route is mounted conditionally during router construction"},
+		{Name: "metrics-path", Path: "metrics.path", Kind: configFlagString, Usage: "Prometheus metrics path", Scope: scopeStatic, Reason: "the metrics route pattern is fixed at router construction"},
+		{Name: "metrics-token", Path: "metrics.token", Kind: configFlagString, Usage: "optional Prometheus metrics bearer token", Scope: scopeStatic, Reason: "the metrics authentication middleware captures its token at startup", Secret: true},
+		{Name: "activity-ring-buffer-size", Path: "activity.ring_buffer_size", Unit: "events", Kind: configFlagInt, Usage: "number of recent activity events kept in memory", Scope: scopeStatic, Reason: "the activity ring is allocated at startup"},
 	}
 }
 
@@ -169,6 +217,8 @@ func applyChangedConfigFlag(flags *pflag.FlagSet, spec configFlagSpec, cfg *doma
 		cfg.Auth.BearerToken = getFlagString(flags, spec.Name)
 	case "storage.base_paths":
 		cfg.Storage.BasePaths = getFlagStringArray(flags, spec.Name)
+	case "storage.runtime_config_path":
+		cfg.Storage.RuntimeConfigPath = strings.TrimSpace(getFlagString(flags, spec.Name))
 	case "storage.index_path":
 		cfg.Storage.IndexPath = getFlagString(flags, spec.Name)
 	case "detection.backend":
@@ -437,8 +487,10 @@ func validateResolvedConfig(cfg domain.Config) error {
 	if len(cfg.Storage.BasePaths) == 0 {
 		return fmt.Errorf("storage.base_paths is required")
 	}
-	if strings.TrimSpace(cfg.Auth.BearerToken) == "" && !cfg.S3.Enabled {
-		return fmt.Errorf("auth.bearer_token is required (unless s3.enabled=true for an S3-only deployment)")
+	// auth.bearer_token is no longer required: an empty one is generated on
+	// first boot and stored, so a fresh install needs no configuration at all.
+	if err := validateRuntimeConfigPath(cfg.Storage); err != nil {
+		return err
 	}
 	if err := validatePublicURL(cfg.Server.PublicURL); err != nil {
 		return err
@@ -469,6 +521,30 @@ func validateResolvedConfig(cfg domain.Config) error {
 	}
 	if err := validateS3Config(cfg); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateRuntimeConfigPath enforces the separation the runtime store depends
+// on. Rebuilding the index removes its directory outright, so a runtime store
+// nested inside it would take every stored credential with it.
+func validateRuntimeConfigPath(storage domain.StorageConfig) error {
+	runtimePath := strings.TrimSpace(storage.RuntimeConfigPath)
+	if runtimePath == "" {
+		return fmt.Errorf("storage.runtime_config_path is required")
+	}
+
+	index, err := filepath.Abs(strings.TrimSpace(storage.IndexPath))
+	if err != nil {
+		return err
+	}
+	runtime, err := filepath.Abs(runtimePath)
+	if err != nil {
+		return err
+	}
+
+	if runtime == index || strings.HasPrefix(runtime, index+string(filepath.Separator)) {
+		return fmt.Errorf("storage.runtime_config_path (%s) must not live inside storage.index_path (%s): rebuilding the index deletes that directory", runtime, index)
 	}
 	return nil
 }

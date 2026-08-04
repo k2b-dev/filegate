@@ -10,9 +10,8 @@ import (
 	"github.com/valentinkolb/filegate/domain"
 )
 
-// registerVersionRoutes wires the per-file version endpoints onto the
-// existing router. Read paths (this file) ship in Phase 3; mutation
-// paths (snapshot/pin/unpin/restore/delete) follow in later phases.
+// registerVersionRoutes wires the per-file version read and mutation endpoints
+// onto the existing router.
 func registerVersionRoutes(handleV1 func(string, http.HandlerFunc), svc *domain.Service) {
 	handleV1("GET /v1/nodes/{id}/versions", func(w http.ResponseWriter, r *http.Request) {
 		id, ok := parseID(w, r.PathValue("id"))

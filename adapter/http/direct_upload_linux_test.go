@@ -171,7 +171,7 @@ func TestDirectUploadRejectsExpiredToken(t *testing.T) {
 	defer cleanup()
 
 	root := svc.ListRoot()[0]
-	direct := newDirectUploadManager(svc, "test-token", "", 1024, nil)
+	direct := newDirectUploadManager(svc, "test-token", newLiveConfig(RouterOptions{MaxUploadBytes: 1024}))
 	token, err := direct.sign(directUploadToken{
 		Version:    1,
 		Path:       root.Name + "/expired.txt",

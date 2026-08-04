@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/valentinkolb/filegate/domain"
@@ -120,7 +121,9 @@ func (kr keyRecord) canAccess(bucket string) bool {
 // an error when Options is misconfigured: missing credentials, a
 // duplicated access key, or a Keys entry whose bucket whitelist
 // references a mount that doesn't exist.
-func NewHandler(svc *domain.Service, opts Options) (http.Handler, error) {
+// NewHandler builds the S3 adapter. The returned Handler exposes SetKeys so
+// access keys can be changed while the service runs.
+func NewHandler(svc *domain.Service, opts Options) (*Handler, error) {
 	if opts.Region == "" {
 		opts.Region = "us-east-1"
 	}
@@ -130,10 +133,22 @@ func NewHandler(svc *domain.Service, opts Options) (http.Handler, error) {
 		return nil, err
 	}
 
-	auth := authConfig{
+	r := &router{
+		svc:        svc,
+		limiter:    newRateLimiter(opts.Keys),
+		accessLog:  opts.AccessLogEnabled,
+		metrics:    opts.Metrics,
+		activity:   opts.ActivityLog,
+		writeSlots: make(chan struct{}, resolveMaxConcurrentWrites(opts.MaxConcurrentWrites)),
+	}
+	r.keys.Store(store)
+
+	r.auth = authConfig{
 		Region: opts.Region,
+		// Reads through the atomic pointer, so a key deleted a moment ago is
+		// already gone for the request being signed right now.
 		SecretForKeyID: func(keyID string) (string, bool) {
-			rec, ok := store.byAccessKey[keyID]
+			rec, ok := r.currentKeys().byAccessKey[keyID]
 			if !ok {
 				return "", false
 			}
@@ -146,21 +161,48 @@ func NewHandler(svc *domain.Service, opts Options) (http.Handler, error) {
 		},
 	}
 
-	r := &router{
-		svc:        svc,
-		auth:       auth,
-		keys:       store,
-		limiter:    newRateLimiter(opts.Keys),
-		accessLog:  opts.AccessLogEnabled,
-		metrics:    opts.Metrics,
-		activity:   opts.ActivityLog,
-		writeSlots: make(chan struct{}, resolveMaxConcurrentWrites(opts.MaxConcurrentWrites)),
-	}
 	// Sweep any active multipart uploads left in phase=committing across
 	// crashes. Rows whose durable record exists are promoted to phase=done;
 	// the rest are left for client-driven retry of Complete.
 	recoverPendingMultipartUploads(svc)
-	return http.HandlerFunc(r.serve), nil
+	return &Handler{router: r, svc: svc, region: opts.Region}, nil
+}
+
+// Handler serves the S3 API and owns the live access-key set.
+type Handler struct {
+	router *router
+	svc    *domain.Service
+	region string
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	h.router.serve(w, req)
+}
+
+// SetKeys replaces the access-key set atomically.
+//
+// Validation happens before the swap, so a rejected update leaves the running
+// key set untouched rather than half-applied.
+func (h *Handler) SetKeys(keys []KeyEntry) error {
+	// An empty set is legitimate here, unlike at startup: deleting the last key
+	// must mean nothing authenticates, not that the previous set stays live.
+	if len(keys) == 0 {
+		h.router.keys.Store(&keyStore{byAccessKey: map[string]keyRecord{}})
+		h.router.limiter = newRateLimiter(nil)
+		return nil
+	}
+
+	store, err := buildKeyStore(Options{Keys: keys}, h.svc)
+	if err != nil {
+		return err
+	}
+	h.router.keys.Store(store)
+	h.router.limiter = newRateLimiter(keys)
+	return nil
+}
+
+func (r *router) currentKeys() *keyStore {
+	return r.keys.Load()
 }
 
 // buildKeyStore folds the multi-tenant Keys list and the legacy
@@ -238,9 +280,12 @@ func buildKeyStore(opts Options, svc *domain.Service) (*keyStore, error) {
 }
 
 type router struct {
-	svc         *domain.Service
-	auth        authConfig
-	keys        *keyStore
+	svc  *domain.Service
+	auth authConfig
+	// keys is swapped atomically when access keys are created, rotated or
+	// deleted, so a revoked key stops working on the next request rather than
+	// at the next restart.
+	keys        atomic.Pointer[keyStore]
 	limiter     *rateLimiter // nil when no key has a configured limit
 	accessLog   bool
 	metrics     *metrics.Registry // nil-safe; receives the rate-limit reject counter
@@ -329,7 +374,7 @@ func (s *uploadLockSet) acquire(uploadID string) func() {
 // any present key in the store is authoritative — the lookup is
 // just to retrieve the bucket whitelist.
 func (r *router) keyForRequest(verified *sigV4Result) (keyRecord, bool) {
-	rec, ok := r.keys.byAccessKey[verified.AccessKeyID]
+	rec, ok := r.currentKeys().byAccessKey[verified.AccessKeyID]
 	return rec, ok
 }
 

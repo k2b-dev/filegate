@@ -11,6 +11,8 @@ tags: [operations, systemd, index]
 
 This page is for operators running Filegate as a service.
 
+Use the [Admin UI](admin) for browser-based file operations, runtime metrics, activity inspection, and index rescans.
+
 ## Service lifecycle
 
 | Task | Scope | Command |

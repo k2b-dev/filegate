@@ -7,6 +7,8 @@ import { NodesClient } from "./nodes.js";
 import { PathsClient } from "./paths.js";
 import { SearchClient } from "./search.js";
 import { StatsClient } from "./stats.js";
+import { ConfigClient, S3KeysClient } from "./config.js";
+import { SystemClient } from "./system.js";
 import { TransfersClient } from "./transfers.js";
 import { UploadsClient } from "./uploads.js";
 import { VersionsClient } from "./versions.js";
@@ -30,6 +32,9 @@ export class Filegate {
   readonly search: SearchClient;
   readonly index: IndexClient;
   readonly stats: StatsClient;
+  readonly system: SystemClient;
+  readonly config: ConfigClient;
+  readonly s3Keys: S3KeysClient;
   readonly capabilities: CapabilitiesClient;
   readonly versions: VersionsClient;
   readonly downloads: DownloadsClient;
@@ -57,6 +62,9 @@ export class Filegate {
     this.search = new SearchClient(core);
     this.index = new IndexClient(core);
     this.stats = new StatsClient(core);
+    this.system = new SystemClient(core);
+    this.config = new ConfigClient(core);
+    this.s3Keys = new S3KeysClient(core);
     this.capabilities = new CapabilitiesClient(core);
     this.versions = new VersionsClient(core);
     this.downloads = new DownloadsClient(core);

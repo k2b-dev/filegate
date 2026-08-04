@@ -122,6 +122,19 @@ this histogram tells you which without distributed tracing.
 |--------|------|--------|---------|
 | `filegate_multipart_complete_phase_seconds` | histogram | phase=concat\|lock_wait\|hash\|pebble_batch | Per-phase Complete duration. |
 
+### Detector and cache
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `filegate_detector_stale_seconds` | gauge | — | Seconds since the detector last completed a scan round. Growing far past the scan interval means detection stopped and the index is silently drifting from the filesystem. |
+| `filegate_detector_cycles_total` | counter | — | Detection scan rounds completed. |
+| `filegate_detector_errors_total` | counter | — | Detection scan errors. |
+| `filegate_path_cache_lookups_total` | counter | result=hit\|miss | Path cache lookups by result. Occupancy alone cannot tell an undersized cache from a cold one. |
+
+Worker-pool saturation is deliberately not a metric: the scheduler lives inside
+the HTTP router, which the metrics provider cannot reach without an awkward
+back-channel. It is available on `GET /v1/system/runtime` instead.
+
 ### Runtime + process (free, from client_golang)
 
 Standard Go-runtime and process collectors are registered:

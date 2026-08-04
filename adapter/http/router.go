@@ -30,6 +30,7 @@ import (
 	apiv1 "github.com/valentinkolb/filegate/api/v1"
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/activity"
+	"github.com/valentinkolb/filegate/infra/detect"
 	"github.com/valentinkolb/filegate/infra/jobs"
 )
 
@@ -70,6 +71,41 @@ type RouterOptions struct {
 	MetricsPath    string
 	MetricsToken   string
 	ActivityLog    *activity.Ring
+
+	// Config is the live snapshot. Runtime-scoped handlers read from it per
+	// request so a change applies without a restart; nil falls back to the
+	// values captured in this struct, which keeps existing callers working.
+	Config *domain.ConfigHolder
+	// Lifecycle reports the last background maintenance run. Nil reports zeroes.
+	Lifecycle func() apiv1.LifecycleRuntime
+	// PruneNow runs a retention round on demand. Nil leaves the route
+	// answering 501, which is the honest response when versioning is off.
+	PruneNow func() (domain.PruneStats, error)
+	// ConfigService backs the /v1/config endpoints. Nil leaves them unmounted,
+	// which is how every existing router caller and test keeps working.
+	ConfigService ConfigService
+	// S3Keys backs the /v1/s3/keys endpoints. Nil leaves them unmounted.
+	S3Keys S3KeyService
+
+	// Operational context for GET /v1/system/info, /v1/system/runtime and
+	// /v1/health. All optional: zero values degrade the reported detail
+	// rather than breaking the endpoints, which keeps existing router
+	// callers (including tests) working unchanged.
+	BuildVersion string
+	BuildCommit  string
+	BasePaths    []string
+	// PathCacheSize is the configured capacity, reported alongside the live
+	// occupancy the service tracks.
+	PathCacheSize int
+	// DetectorStats returns live detector state. Nil means the router reports
+	// an unknown backend instead of guessing.
+	DetectorStats func() detect.Stats
+
+	VersioningEnabled          bool
+	VersioningMode             string
+	VersioningCooldown         time.Duration
+	VersioningPrunerInterval   time.Duration
+	VersioningMaxPinnedPerFile int
 }
 
 type closeableHandler struct {
@@ -121,24 +157,21 @@ func (h *closeableHandler) Close() error {
 // NewRouter constructs the HTTP handler tree with all routes, middleware, and background workers.
 func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	root := http.NewServeMux()
+	live := newLiveConfig(opts)
 
 	thumbnailWorkers := resolveThumbnailJobWorkers(opts)
 	thumbnailQueueSize := resolveThumbnailQueueSize(opts)
 
 	thumbnailScheduler := jobs.New(thumbnailWorkers, thumbnailQueueSize)
-	directUploads := newDirectUploadManager(svc, opts.BearerToken, opts.PublicURL, opts.MaxUploadBytes, opts.TrustedProxies)
-	directDownloads := newDirectDownloadManager(svc, opts.BearerToken, opts.PublicURL, opts.TrustedProxies)
+	directUploads := newDirectUploadManager(svc, opts.BearerToken, live)
+	directDownloads := newDirectDownloadManager(svc, opts.BearerToken, live)
 	uploadSessions := newUploadSessionManager(
 		svc,
 		opts.BearerToken,
-		opts.PublicURL,
-		opts.MaxChunkBytes,
-		opts.MaxSessionUploadBytes,
+		live,
 		opts.MaxConcurrentSegmentWrites,
-		opts.UploadMinFreeBytes,
 		opts.UploadExpiry,
 		opts.UploadCleanupInterval,
-		opts.TrustedProxies,
 	)
 	thumbs := newThumbnailer(
 		svc,
@@ -173,9 +206,33 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	root.HandleFunc("POST /v1/uploads/sessions/{sessionId}/commit", uploadSessions.handleCommit)
 	root.HandleFunc("DELETE /v1/uploads/sessions/{sessionId}", uploadSessions.handleAbort)
 
-	auth := authMiddleware(opts.BearerToken)
+	auth := authMiddleware(opts.BearerToken, opts.ActivityLog)
 	handleV1 := func(pattern string, handler http.HandlerFunc) {
 		root.Handle(pattern, auth(http.HandlerFunc(handler)))
+	}
+
+	system := newSystemReporter(svc, opts, live, thumbs, uploadSessions)
+	handleV1("GET /v1/system/info", system.handleInfo)
+	handleV1("GET /v1/system/runtime", system.handleRuntime)
+	handleV1("GET /v1/health", system.handleHealth)
+	handleV1("GET /v1/uploads/sessions", system.handleListUploadSessions)
+	handleV1("POST /v1/versions/prune", system.handlePrune)
+
+	if opts.ConfigService != nil {
+		cfgAPI := configHandlers{svc: opts.ConfigService}
+		handleV1("GET /v1/config/schema", cfgAPI.handleSchema)
+		handleV1("GET /v1/config", cfgAPI.handleValues)
+		handleV1("POST /v1/config/plan", cfgAPI.handlePlan)
+		handleV1("POST /v1/config/apply", cfgAPI.handleApply)
+	}
+
+	if opts.S3Keys != nil {
+		keysAPI := s3KeyHandlers{svc: opts.S3Keys}
+		handleV1("GET /v1/s3/keys", keysAPI.handleList)
+		handleV1("POST /v1/s3/keys", keysAPI.handleCreate)
+		handleV1("PATCH /v1/s3/keys/{accessKey}", keysAPI.handleUpdate)
+		handleV1("POST /v1/s3/keys/{accessKey}/rotate", keysAPI.handleRotate)
+		handleV1("DELETE /v1/s3/keys/{accessKey}", keysAPI.handleDelete)
 	}
 
 	handleV1("GET /v1/stats", func(w http.ResponseWriter, _ *http.Request) {
@@ -246,9 +303,9 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	handleV1("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			Uploads: apiv1.UploadCapabilities{
-				MaxChunkBytes:              uploadSessions.maxSegmentBytes,
-				MaxUploadBytes:             opts.MaxUploadBytes,
-				MaxSessionUploadBytes:      uploadSessions.maxUploadBytes,
+				MaxChunkBytes:              live.maxChunkBytes(),
+				MaxUploadBytes:             live.maxUploadBytes(),
+				MaxSessionUploadBytes:      live.maxSessionUploadBytes(),
 				MaxConcurrentSegmentWrites: uploadSessions.maxWrites,
 			},
 		})
@@ -305,7 +362,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 			statusFromErr(w, err)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, opts.MaxUploadBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, live.maxUploadBytes())
 		meta, created, err := svc.WriteContentByVirtualPath(vp, r.Body, mode)
 		if err != nil {
 			if errors.Is(err, domain.ErrConflict) {
@@ -390,7 +447,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, opts.MaxUploadBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, live.maxUploadBytes())
 		if err := svc.WriteContent(id, r.Body); err != nil {
 			statusFromErr(w, err)
 			return
@@ -628,16 +685,10 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		writeJSON(w, http.StatusOK, apiv1.IndexResolveManyResponse{Items: items, Total: len(items)})
 	})
 	chain := []middlewareFunc{recoverMiddleware, requestIDMiddleware, activityMiddleware(opts.ActivityLog)}
-	if realIP := realIPMiddleware(opts.TrustedProxies); realIP != nil {
-		chain = append(chain, realIP)
-	}
+	chain = append(chain, liveRealIPMiddleware(live))
 	chain = append(chain, secureHeadersMiddleware)
-	if cors := corsMiddleware(opts.CORS); cors != nil {
-		chain = append(chain, cors)
-	}
-	if opts.AccessLogEnabled {
-		chain = append(chain, accessLogMiddleware)
-	}
+	chain = append(chain, liveCORSMiddleware(live))
+	chain = append(chain, liveAccessLogMiddleware(live))
 	handler := chainMiddleware(root, chain...)
 	return &closeableHandler{
 		handler: handler,
@@ -1441,6 +1492,12 @@ func restOperationName(method, path string) string {
 	switch {
 	case method == http.MethodPost && path == "/v1/index/rescan":
 		return "index.rescan"
+	case method == http.MethodPost && path == "/v1/versions/prune":
+		return "versions.prune"
+	case method == http.MethodPost && path == "/v1/config/plan":
+		return "config.plan"
+	case method == http.MethodPost && path == "/v1/config/apply":
+		return "config.apply"
 	case method == http.MethodPost && path == "/v1/uploads/direct":
 		return "direct_upload.create_url"
 	case method == http.MethodPost && path == "/v1/downloads/direct":
@@ -1853,20 +1910,43 @@ func metricsAuthMiddleware(metricsToken, bearerToken string) func(http.Handler) 
 	}
 }
 
-func authMiddleware(token string) func(http.Handler) http.Handler {
+// recordAuthFailure logs a rejected request to the activity ring.
+//
+// The activity middleware only records requests whose actor could be
+// determined, so authentication failures previously left no trace at all --
+// exactly the events an operator investigating an intrusion wants to see. The
+// actor is "system" because there is, by definition, no authenticated identity.
+func recordAuthFailure(ring *activity.Ring, r *http.Request, reason string) {
+	if ring == nil {
+		return
+	}
+	ring.Record(activity.Event{
+		Actor:     activity.Actor{Kind: activity.ActorSystem, ID: "anonymous"},
+		Operation: "auth.denied",
+		Outcome:   activity.OutcomeFailed,
+		Target:    &activity.Target{Kind: "path", Path: r.URL.Path},
+		RequestID: requestID(r),
+		Error:     reason,
+	})
+}
+
+func authMiddleware(token string, ring *activity.Ring) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := strings.TrimSpace(r.Header.Get("Authorization"))
 			if token == "" {
+				recordAuthFailure(ring, r, "bearer token not configured")
 				writeErr(w, http.StatusUnauthorized, "bearer token not configured")
 				return
 			}
 			if !strings.HasPrefix(auth, "Bearer ") {
+				recordAuthFailure(ring, r, "missing bearer token")
 				writeErr(w, http.StatusUnauthorized, "missing bearer token")
 				return
 			}
 			provided := strings.TrimPrefix(auth, "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				recordAuthFailure(ring, r, "invalid bearer token")
 				writeErr(w, http.StatusUnauthorized, "invalid bearer token")
 				return
 			}
@@ -2061,6 +2141,16 @@ func nodeResponseForFingerprint(meta *domain.FileMeta, mode fingerprintMode) api
 }
 
 func statusFromErr(w http.ResponseWriter, err error) {
+	// A body that exceeded upload.max_upload_bytes is the client's problem,
+	// not a server fault. Only the direct-upload handler used to translate
+	// this, so path and node writes answered 500 and told the caller nothing
+	// actionable.
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) {
+		writeErr(w, http.StatusRequestEntityTooLarge, "upload exceeds upload.max_upload_bytes")
+		return
+	}
+
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")

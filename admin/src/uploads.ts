@@ -1,4 +1,14 @@
-import { upload, type BrowserUploadAllowResponse, type BrowserUploadEvent, type CapabilitiesResponse } from "@valentinkolb/filegate";
+import { showFileDialog, showFolderDialog } from "@valentinkolb/stdlib/browser";
+import {
+  directUploads,
+  upload,
+  type BrowserUploadAllowResponse,
+  type BrowserUploadConflictMode,
+  type BrowserUploadFile,
+  type BrowserUploadEvent,
+  type CapabilitiesResponse,
+  type UploadSessionResponse,
+} from "@valentinkolb/filegate";
 
 const FALLBACK_SEGMENT_SIZE = 8 * 1024 * 1024;
 const PREFERRED_SEGMENT_SIZE = 32 * 1024 * 1024;
@@ -108,6 +118,22 @@ function bindStats(panel: HTMLElement): UploadStats {
   };
 }
 
+type DirectGrant = NonNullable<UploadSessionResponse["direct"]>;
+
+const conflictModes: BrowserUploadConflictMode[] = ["skip-existing", "skip-identical", "overwrite", "rename", "error"];
+
+function conflictModeFrom(raw: string | undefined): BrowserUploadConflictMode {
+  const found = conflictModes.find((mode) => mode === raw);
+  // skip-existing stays the default: it is the only mode that cannot destroy
+  // data when someone re-drops a folder they already uploaded.
+  return found ?? "skip-existing";
+}
+
+/** Best-effort abort of every session created for a cancelled upload. */
+async function abortGrants(grants: { direct: DirectGrant }[]): Promise<void> {
+  await Promise.allSettled(grants.map((grant) => directUploads.abort({ direct: grant.direct })));
+}
+
 function makeRow(list: HTMLElement, name: string): UploadRow {
   const el = document.createElement("div");
   el.className = "up-item";
@@ -123,12 +149,11 @@ function makeRow(list: HTMLElement, name: string): UploadRow {
   };
 }
 
-async function runUpload(form: HTMLFormElement, files: File[]) {
+async function runUpload(parentPath: string, files: StagedFile[], onConflict: BrowserUploadConflictMode) {
   const panel = document.getElementById("fg-uploads");
   if (!panel) throw new Error("upload panel missing");
   const list = must(panel, ".uploads-list");
   const title = must(panel, ".uploads-title");
-  const parentPath = new FormData(form).get("parentPath")?.toString() ?? "";
   const reloadURL = `/files${parentPath ? `?path=${encodeURIComponent(parentPath)}` : ""}`;
   const rows = new Map<string, UploadRow>();
   let completed = 0;
@@ -138,6 +163,23 @@ async function runUpload(form: HTMLFormElement, files: File[]) {
   list.innerHTML = "";
   panel.hidden = false;
   must(panel, ".uploads-close").addEventListener("click", () => location.assign(reloadURL), { once: true });
+
+  // Cancelling stops the client immediately and aborts the sessions the server
+  // already created, so an interrupted upload does not leave orphans holding
+  // staged bytes until the cleanup loop notices.
+  const controller = new AbortController();
+  const grants: { direct: DirectGrant }[] = [];
+  const cancelButton = panel.querySelector<HTMLButtonElement>(".uploads-cancel");
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    controller.abort(new Error("Upload cancelled"));
+    if (cancelButton) cancelButton.disabled = true;
+    title.textContent = "Cancelling...";
+    void abortGrants(grants);
+  };
+  cancelButton?.addEventListener("click", cancel);
   files.forEach((file, index) => rows.set(`u${index + 1}`, makeRow(list, file.webkitRelativePath || file.name)));
 
   const stats = bindStats(panel);
@@ -159,11 +201,19 @@ async function runUpload(form: HTMLFormElement, files: File[]) {
   const result = await upload({
     files,
     path: parentPath,
-    allow: (req) => postJSON<BrowserUploadAllowResponse>("/api/uploads/sessions", req),
+    signal: controller.signal,
+    allow: async (req) => {
+      const res = await postJSON<BrowserUploadAllowResponse>("/api/uploads/sessions", req);
+      for (const entry of res.uploads) {
+        const direct = entry.ok ? (entry.upload?.kind === "session" ? entry.upload.session.direct : undefined) : undefined;
+        if (direct) grants.push({ direct });
+      }
+      return res;
+    },
     config: {
       segmentSize: cfg.segmentSize,
       directThresholdBytes: cfg.directThresholdBytes,
-      onConflict: "skip-existing",
+      onConflict,
       chunkSize: 4 * 1024 * 1024,
       concurrency: { hash: 2, files: 6, segments: 6 },
       batch: { size: 32, flushMs: 20 },
@@ -219,28 +269,195 @@ function must(root: ParentNode, selector: string): HTMLElement {
   return el;
 }
 
+/**
+ * Files staged for upload.
+ *
+ * Not necessarily real File objects: entries dropped as part of a folder are
+ * wrapped so they can carry a relative path, which a File from the drag-and-drop
+ * entry API does not have. The SDK's upload contract is structural, so a wrapper
+ * with name, size and slice is all it needs.
+ */
+type StagedFile = BrowserUploadFile;
+
+function stagedFrom(file: File, relativePath?: string): StagedFile {
+  if (!relativePath || relativePath === file.name) return file;
+  return {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    webkitRelativePath: relativePath,
+    slice: (start, end) => file.slice(start, end),
+  };
+}
+
+/** Reads a dropped directory tree, preserving relative paths. */
+async function readEntry(entry: FileSystemEntry, prefix: string, out: StagedFile[]): Promise<void> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
+    out.push(stagedFrom(file, prefix ? `${prefix}/${file.name}` : file.name));
+    return;
+  }
+  if (!entry.isDirectory) return;
+
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
+  const next = prefix ? `${prefix}/${entry.name}` : entry.name;
+  // readEntries returns at most 100 entries per call, so keep reading until
+  // it reports an empty batch or a large folder silently loses its tail.
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (batch.length === 0) return;
+    for (const child of batch) await readEntry(child, next, out);
+  }
+}
+
+async function stagedFromDrop(transfer: DataTransfer): Promise<StagedFile[]> {
+  const entries = Array.from(transfer.items)
+    .map((item) => (typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null))
+    .filter((entry): entry is FileSystemEntry => !!entry);
+
+  if (entries.length === 0) return Array.from(transfer.files);
+
+  const out: StagedFile[] = [];
+  for (const entry of entries) await readEntry(entry, "", out);
+  return out;
+}
+
+function label(file: StagedFile): string {
+  return file.webkitRelativePath || file.name;
+}
+
+function openUploadDialog(parentPath: string): void {
+  const staged = new Map<string, StagedFile>();
+
+  const dialog = document.createElement("dialog");
+  dialog.className = "prompt";
+  dialog.innerHTML = `
+    <div class="prompt-panel">
+      <div class="prompt-head">
+        <h2>Upload</h2>
+        <button type="button" class="prompt-close" data-close aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="prompt-body">
+        <div class="prompt-message"><span class="prompt-badge"></span></div>
+        <button type="button" class="dropzone" data-dropzone>
+          <i class="ti ti-cloud-upload dropzone-icon" aria-hidden="true"></i>
+          <strong>Drop files or folders here</strong>
+          <span class="muted">or click to choose files</span>
+        </button>
+        <ul class="staged" data-staged hidden></ul>
+        <div class="field">
+          <label for="upload-conflict">If a file already exists</label>
+          <select id="upload-conflict" class="select" data-conflict>
+            <option value="skip-existing">Skip it</option>
+            <option value="skip-identical">Skip if identical</option>
+            <option value="rename">Keep both</option>
+            <option value="overwrite">Overwrite it</option>
+            <option value="error">Fail the upload</option>
+          </select>
+        </div>
+      </div>
+      <div class="prompt-footer upload-footer">
+        <button type="button" class="btn" data-folder><i class="ti ti-folder-up" aria-hidden="true"></i><span class="btn-label">Upload folder</span></button>
+        <button type="button" class="btn primary" data-start disabled><i class="ti ti-upload" aria-hidden="true"></i><span class="btn-label" data-start-label>Upload</span></button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+
+  const badge = must(dialog, ".prompt-badge");
+  const zone = must(dialog, "[data-dropzone]");
+  const list = must(dialog, "[data-staged]");
+  const start = must(dialog, "[data-start]") as HTMLButtonElement;
+  const conflict = must(dialog, "[data-conflict]") as HTMLSelectElement;
+
+  badge.textContent = parentPath ? `/${parentPath}` : "mount root";
+
+  const add = (incoming: StagedFile[]) => {
+    for (const file of incoming) staged.set(`${label(file)}:${file.size}`, file);
+    render();
+  };
+
+  const render = () => {
+    const items = [...staged.values()];
+    start.disabled = items.length === 0;
+    const startLabel = start.querySelector("[data-start-label]");
+    if (startLabel) {
+      startLabel.textContent = items.length ? `Upload ${items.length} file${items.length === 1 ? "" : "s"}` : "Upload";
+    }
+    list.hidden = items.length === 0;
+    list.innerHTML = "";
+    for (const file of items) {
+      const row = document.createElement("li");
+      row.innerHTML = `<span class="staged-name"></span><button type="button" class="staged-remove" aria-label="Remove">&times;</button>`;
+      must(row, ".staged-name").textContent = label(file);
+      must(row, ".staged-remove").addEventListener("click", () => {
+        staged.delete(`${label(file)}:${file.size}`);
+        render();
+      });
+      list.appendChild(row);
+    }
+  };
+
+  const close = () => {
+    dialog.close();
+    dialog.remove();
+    document.documentElement.classList.remove("has-prompt");
+  };
+
+  zone.addEventListener("click", () => {
+    void showFileDialog({ multiple: true })
+      .then((picked) => add(Array.isArray(picked) ? picked : [picked]))
+      // Cancelling the native dialog rejects; that is not an error worth showing.
+      .catch(() => {});
+  });
+
+  for (const type of ["dragenter", "dragover"]) {
+    zone.addEventListener(type, (event) => {
+      event.preventDefault();
+      zone.classList.add("is-over");
+    });
+  }
+  for (const type of ["dragleave", "drop"]) {
+    zone.addEventListener(type, () => zone.classList.remove("is-over"));
+  }
+  zone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const transfer = (event as DragEvent).dataTransfer;
+    if (transfer) void stagedFromDrop(transfer).then(add);
+  });
+
+  must(dialog, "[data-folder]").addEventListener("click", () => {
+    void showFolderDialog()
+      .then(add)
+      .catch(() => {});
+  });
+
+  must(dialog, "[data-close]").addEventListener("click", close);
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+
+  start.addEventListener("click", () => {
+    const files = [...staged.values()];
+    if (!files.length) return;
+    const mode = conflictModeFrom(conflict.value);
+    close();
+    runUpload(parentPath, files, mode).catch((error) => {
+      const panel = document.getElementById("fg-uploads");
+      if (!panel) return;
+      panel.hidden = false;
+      must(panel, ".uploads-title").textContent = friendly(error);
+    });
+  });
+
+  document.documentElement.classList.add("has-prompt");
+  dialog.showModal();
+}
+
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const trigger = target.closest<HTMLElement>("[data-upload-trigger]");
+  const trigger = target.closest<HTMLElement>("[data-upload-open]");
   if (!trigger) return;
-  const input = document.getElementById(trigger.dataset.uploadTrigger === "folder" ? "admin-folder-upload" : "admin-file-upload");
-  if (input instanceof HTMLInputElement) {
-    input.value = "";
-    input.click();
-  }
-});
-
-document.addEventListener("change", (event) => {
-  const input = event.target;
-  if (!(input instanceof HTMLInputElement) || !input.matches("[data-upload-input]") || !input.files?.length || !input.form) return;
-  const files = Array.from(input.files);
-  const form = input.form;
-  input.value = "";
-  runUpload(form, files).catch((error) => {
-    const panel = document.getElementById("fg-uploads");
-    if (!panel) return;
-    panel.hidden = false;
-    must(panel, ".uploads-title").textContent = friendly(error);
-  });
+  openUploadDialog(trigger.dataset.uploadOpen || "");
 });

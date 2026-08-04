@@ -23,6 +23,14 @@
 //   - sdk/filegate/segments: segment math + sha256 in Filegate's checksum format.
 //   - sdk/filegate/relay: HTTP response passthrough for proxy handlers.
 //
+// Higher-level orchestration also lives outside this package, so the client
+// surface stays a thin mapping of the HTTP API:
+//
+//   - sdk/filegate/directuploads: signed session tokens without a bearer token.
+//   - sdk/filegate/uploadtree: folder uploads over many one-file sessions, with
+//     bounded concurrency, batched session creation, retry, resume and one
+//     global progress view.
+//
 // Related Packages:
 //
 //   - api/v1: canonical type definitions aliased by this package.

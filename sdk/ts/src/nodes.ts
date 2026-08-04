@@ -4,7 +4,14 @@ import type { GetPathOptions } from "./paths.js";
 import type { MkdirRequest, Node, UpdateNodeRequest } from "./types.js";
 
 export interface ThumbnailOptions {
+  /** 128, 256 or 512; the server rejects anything else. */
   size?: number;
+  /**
+   * Previously received ETag. The server answers 304 when the thumbnail is
+   * unchanged, which avoids a re-encode and lets a proxying caller pass the
+   * validator straight through to a browser cache.
+   */
+  ifNoneMatch?: string;
 }
 
 function getQuery(opts?: GetPathOptions): Record<string, string> {
@@ -83,6 +90,7 @@ export class NodesClient {
     if (!id.trim()) throw new Error("id is required");
     const q: Record<string, string> = {};
     if (opts?.size) q["size"] = String(opts.size);
-    return this.core.doRaw("GET", `/v1/nodes/${encodeURIComponent(id)}/thumbnail`, q);
+    const headers = opts?.ifNoneMatch ? { "If-None-Match": opts.ifNoneMatch } : undefined;
+    return this.core.doRaw("GET", `/v1/nodes/${encodeURIComponent(id)}/thumbnail`, q, undefined, undefined, headers);
   }
 }

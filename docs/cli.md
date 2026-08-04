@@ -7,8 +7,11 @@ Filegate CLI is intentionally local-ops focused. The installed binary is `filega
 ```bash
 fg serve [--config /etc/filegate/conf.yaml]
 fg config show [--config /etc/filegate/conf.yaml] [--format yaml|json] [--show-secrets]
+fg config schema [--format table|json|markdown]
 fg config validate [--config /etc/filegate/conf.yaml]
 fg config set --config /etc/filegate/conf.yaml [config flags...]
+fg config plan -f filegate.manifest.yaml [--host <url>] [--token <bearer>|--token-file <path>]
+fg config apply -f filegate.manifest.yaml [--host <url>] [--token <bearer>|--token-file <path>]
 fg config s3 key generate
 fg config s3 key list [--config /etc/filegate/conf.yaml] [--show-secrets]
 fg config s3 key add --config /etc/filegate/conf.yaml (--bucket <name>... | --all-buckets) [--access-key <key>] [--secret-key <secret>]
@@ -29,10 +32,14 @@ fg index rescan --new [--skip-backup] [--config /etc/filegate/conf.yaml]
 - `serve`:
   - Starts the HTTP server and detector.
   - Linux-only.
-  - Accepts every config value flag listed below as a one-shot runtime override.
+  - Accepts every config value flag listed below as a one-shot startup override.
 - `config show`:
   - Prints the resolved config after defaults and environment overrides.
   - Redacts bearer tokens, S3 secrets, and metrics tokens unless `--show-secrets` is set.
+- `config schema`:
+  - Lists every config key with its type, scope, default and usage.
+  - Needs no config file; the catalog comes from the binary.
+  - `--format markdown` renders the published config reference. `make docs-config` writes it, and a test fails when the committed page drifts.
 - `config validate`:
   - Loads the config with the same resolver as `serve`.
   - Exits non-zero on invalid values, missing required mounts, invalid S3 key references, or duplicate S3 access keys.
@@ -41,6 +48,14 @@ fg index rescan --new [--skip-backup] [--config /etc/filegate/conf.yaml]
   - Requires explicit `--config`; `FILEGATE_CONFIG` is not enough for mutating commands.
   - Writes a timestamped backup by default, validates the temporary result, then atomically replaces the config.
   - Does not change a running daemon; restart filegate to apply the edited file.
+- `config plan`:
+  - Reads a version 1 manifest from `--file` / `-f`.
+  - Validates and diffs the complete desired state through the bearer-authenticated API.
+  - Makes no change to Pebble or the running process.
+- `config apply`:
+  - Plans first, then applies the complete manifest with the observed current revision.
+  - Returns a conflict instead of overwriting a manifest applied concurrently.
+  - Runtime keys publish immediately; static keys remain pending until restart.
 - `config s3 key generate`:
   - Prints a new random access key and secret.
 - `config s3 key add`:
@@ -78,10 +93,12 @@ fg index rescan --new [--skip-backup] [--config /etc/filegate/conf.yaml]
 
 ## Host/Token Resolution
 
-For `health` and `status`:
+For `health`, `status`, and config `plan/apply`:
 
 - `--host` and `--token` are optional.
-- If omitted, values are read from config.
+- `FILEGATE_HOST` and `FILEGATE_TOKEN` are accepted for remote automation.
+- Config `plan/apply` also accepts `--token-file`.
+- If omitted, values are read from the bootstrap config.
 - Config load order:
   1. `--config`
   2. `FILEGATE_CONFIG`
@@ -93,7 +110,7 @@ Special host handling:
 
 ## Config Value Flags
 
-`fg serve` accepts these flags as runtime overrides. `fg config set --config <path>` accepts the same flags and writes them to YAML.
+`fg serve` accepts these flags as one-shot startup overrides. `fg config set --config <path>` accepts the same flags and writes them to bootstrap YAML. Manifest-owned deployment state belongs in a versioned manifest and is applied through `fg config plan/apply`.
 
 ```bash
 --server-listen
