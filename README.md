@@ -430,7 +430,7 @@ The default ring buffer retains 500 records. Set `activity.ring_buffer_size` to 
 ## Limits
 
 - Single-node service; no replication.
-- Config changes are offline; restart after editing config.
+- Bootstrap config changes are offline. Manifest runtime keys apply immediately; static keys take effect after restart.
 - REST uses one bearer token. S3 supports multiple keys and per-key bucket allowlists.
 - REST has no request rate limiting. S3 supports per-key request limits.
 - `X-Forwarded-For` is trusted only from configured `server.trusted_proxies`.

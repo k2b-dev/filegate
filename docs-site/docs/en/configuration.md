@@ -110,7 +110,7 @@ The following values do not belong in a manifest:
 
 Bootstrap values come from defaults, the bootstrap YAML file, environment, or `fg serve` flags. `fg config show`, `validate`, and `set` operate on this offline bootstrap configuration; they do not update a running daemon.
 
-S3 keys may be seeded once from bootstrap configuration. After seeding, use the S3 key API or the Settings page to create, rotate, disable, and delete them. Deleting a resource does not alter the manifest.
+S3 keys may be seeded once from bootstrap configuration. After seeding, use the S3 key API or the admin S3 page to create, rotate, disable, and delete them. Deleting a resource does not alter the manifest.
 
 ## Stored state
 
@@ -131,7 +131,7 @@ The Settings page is read-only for configuration. It shows:
 - Provenance from manifest, environment, bootstrap file, or default.
 - Static values waiting on a restart.
 
-Resource panels remain operational because resources have their own lifecycle and are not declarative config keys.
+Runtime resources remain operational on their dedicated admin pages because they have their own lifecycle and are not declarative config keys.
 
 The authenticated API exposes the same state:
 

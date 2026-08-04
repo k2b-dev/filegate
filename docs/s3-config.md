@@ -13,7 +13,7 @@ s3:
   secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 ```
 
-This single-tenant form grants the configured key access to **every** mount. It's convenient for a personal deployment; multi-user setups should use the multi-tenant `keys` list below.
+This single-key form grants the configured key access to **every** mount. It is a bootstrap seed: Filegate imports it into the runtime store on first start, then the runtime store owns the key. Deployments that need separate credentials should seed the `keys` list below or create keys through the S3 resource API after bootstrap.
 
 When `s3.enabled=true`, filegate validates every mount name as an S3 bucket name on startup. Invalid mount names — not lowercase, > 63 chars, IP-format, AWS-reserved prefix/suffix — fail startup loudly so you catch the misconfiguration before clients hit it.
 
@@ -21,7 +21,7 @@ The S3 listener binds on its own port (`s3.listen`), separate from the REST list
 
 ---
 
-## Multi-tenant key store
+## Multi-key bootstrap seed
 
 For deployments with multiple users / clients, replace the single-tenant fields with a `keys` list:
 
@@ -65,23 +65,25 @@ Filegate refuses to start when:
 
 These errors are loud and fail-fast — operators catch the misconfiguration up-front instead of debugging mysterious 403s later.
 
-### Combining legacy + multi-tenant
+### Combining single-key and multi-key seeds
 
-The legacy single-tenant `access_key`/`secret_key` and the multi-tenant `keys` list **coexist**. Both are folded into one in-memory key store at startup. The legacy key is treated as a `"*"` wildcard entry. A duplicate access key between the legacy fields and a `keys` entry is rejected at startup.
+The single-key `access_key`/`secret_key` fields and the `keys` list **coexist**. Filegate imports both into an empty runtime store on first start. The single key is treated as a `"*"` wildcard entry. A duplicate access key between the single-key fields and a `keys` entry is rejected at startup.
 
-This makes the migration path painless: keep the legacy fields, add `keys` entries for new tenants, then drop the legacy fields once the original key has been retired.
+After that first seed, changes to these fields do not recreate, update, or delete runtime keys. This prevents a key removed through the admin or API from returning after a restart.
 
-### Rotating keys
+### Managing keys after bootstrap
 
-Filegate loads the key store **once at startup**. Config changes are offline edits: update the YAML, then restart the daemon with your service manager.
+Create, rotate, disable, and delete keys from the admin S3 page or the `/v1/s3/keys` routes. Changes apply immediately and persist in `storage.runtime_config_path`. A new or rotated secret is returned once and cannot be retrieved later.
 
-Generate a new credential pair:
+The `fg config s3 key` commands edit the offline bootstrap YAML. They are useful for preparing a new deployment, but they do not modify the runtime store of an existing deployment. Restarting does not re-import the file after the store has been seeded.
+
+To prepare a seed credential, generate a pair:
 
 ```bash
 fg config s3 key generate
 ```
 
-Add the new key to the YAML:
+Add it to the bootstrap YAML:
 
 ```bash
 fg config s3 key add --config /etc/filegate/conf.yaml \
@@ -92,19 +94,19 @@ fg config s3 key add --config /etc/filegate/conf.yaml \
 
 Omit `--access-key` and/or `--secret-key` to let the CLI generate the missing values. Use `--all-buckets` instead of `--bucket` for an admin key.
 
-After clients have switched, stage revocation by disabling the old key:
+You can also disable or remove entries from a bootstrap file before its first use:
 
 ```bash
 fg config s3 key disable --config /etc/filegate/conf.yaml FGALICEOLD
 ```
 
-The disabled key still authenticates but has an empty bucket list, so every bucket operation returns `403 AccessDenied`. Remove it after the cutover window:
+The disabled seed has an empty bucket list, so every bucket operation returns `403 AccessDenied`. Remove it from the bootstrap file with:
 
 ```bash
 fg config s3 key remove --config /etc/filegate/conf.yaml FGALICEOLD
 ```
 
-Every mutating `fg config` command validates the resulting YAML, creates a timestamped backup by default, and prints a restart reminder. It does not hot-reload a running filegate process.
+Every mutating `fg config` command validates the resulting YAML and creates a timestamped backup by default. It does not change live runtime resources.
 
 ---
 

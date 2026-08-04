@@ -28,13 +28,14 @@ The Filegate bearer token stays on the admin server. Browser uploads and downloa
 |---|---:|---|
 | Overview | Service | Mount and storage summary. |
 | Files | Mount and node | Browse, sort, filter, thumbnails, upload, download, create folders, transfer, rename, edit POSIX metadata, bulk actions, and delete. Per-file version history with snapshot, restore, pin and delete. |
+| S3 | Service | Listener identity, access keys, retained object activity, and read-only S3 configuration. |
 | Search | Service index | Glob search over indexed paths. |
 | System | Service | Live health, change detection, queue saturation, cache hit ratios, version retention with manual prune, upload sessions with abort, build versions, activity, and index rescan. |
-| Settings | Service | Every runtime config key, with its provenance and whether a change needs a restart. S3 access key creation, rotation and deletion. |
+| Settings | Service | Effective and desired configuration, provenance, manifest identity, and pending restart requirements. |
 
 The System page polls and patches values in place. It is server-rendered first, so it is complete without JavaScript; the poll only keeps it current, and it shows a stale banner rather than frozen numbers when Filegate stops answering.
 
-Everything on the Settings page carries the authority of the Filegate bearer token, including changing CORS and upload limits. See [Security model](security) for what admin access actually grants.
+The Settings page is read-only, but the admin app still holds the Filegate bearer token. File operations and S3 resource actions therefore carry its full authority. See [Security model](security) for what admin access actually grants.
 
 ## Environment
 
