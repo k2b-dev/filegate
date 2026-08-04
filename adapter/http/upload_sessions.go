@@ -14,7 +14,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,14 +50,10 @@ var (
 type uploadSessionManager struct {
 	svc *domain.Service
 
-	secret    []byte
-	publicURL string
-	trusted   []netip.Prefix
+	secret []byte
+	live   liveConfig
 
-	maxSegmentBytes int64
-	maxUploadBytes  int64
 	maxWrites       int
-	minFreeBytes    int64
 	expiry          time.Duration
 	cleanupInterval time.Duration
 
@@ -81,19 +76,11 @@ type uploadSessionToken struct {
 
 func newUploadSessionManager(
 	svc *domain.Service,
-	bearerToken, publicURL string,
-	maxSegmentBytes, maxUploadBytes int64,
+	bearerToken string,
+	live liveConfig,
 	maxConcurrentWrites int,
-	minFreeBytes int64,
 	expiry, cleanupInterval time.Duration,
-	trusted []netip.Prefix,
 ) *uploadSessionManager {
-	if maxSegmentBytes <= 0 {
-		maxSegmentBytes = 50 << 20
-	}
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 50 << 30
-	}
 	if maxConcurrentWrites <= 0 {
 		maxConcurrentWrites = runtime.NumCPU() * 8
 		if maxConcurrentWrites < 32 {
@@ -103,18 +90,11 @@ func newUploadSessionManager(
 			maxConcurrentWrites = 512
 		}
 	}
-	if minFreeBytes < 0 {
-		minFreeBytes = 0
-	}
 	m := &uploadSessionManager{
 		svc:             svc,
 		secret:          []byte(strings.TrimSpace(bearerToken)),
-		publicURL:       strings.TrimRight(strings.TrimSpace(publicURL), "/"),
-		trusted:         append([]netip.Prefix(nil), trusted...),
-		maxSegmentBytes: maxSegmentBytes,
-		maxUploadBytes:  maxUploadBytes,
+		live:            live,
 		maxWrites:       maxConcurrentWrites,
-		minFreeBytes:    minFreeBytes,
 		expiry:          expiry,
 		cleanupInterval: cleanupInterval,
 		locks:           xsync.NewMap[string, *sync.Mutex](),
@@ -446,8 +426,8 @@ func (m *uploadSessionManager) directForRequest(r *http.Request, sessionID strin
 }
 
 func (m *uploadSessionManager) baseURLForRequest(r *http.Request) (string, error) {
-	if m.publicURL != "" {
-		return m.publicURL, nil
+	if publicURL := m.live.publicURL(); publicURL != "" {
+		return publicURL, nil
 	}
 	host := r.Host
 	proto := ""
@@ -471,7 +451,7 @@ func (m *uploadSessionManager) baseURLForRequest(r *http.Request) (string, error
 }
 
 func (m *uploadSessionManager) peerTrusted(remoteAddr string) bool {
-	return peerTrusted(remoteAddr, m.trusted)
+	return peerTrusted(remoteAddr, m.live.trustedProxies())
 }
 
 func cleanSessionUploadPath(raw string) (string, error) {
@@ -583,7 +563,8 @@ func (m *uploadSessionManager) createSession(r *http.Request, body apiv1.UploadS
 	if err != nil {
 		return apiv1.UploadSessionResponse{}, err
 	}
-	if body.Size <= 0 || body.Size > m.maxUploadBytes {
+	maxUploadBytes := m.live.maxSessionUploadBytes()
+	if body.Size <= 0 || body.Size > maxUploadBytes {
 		return apiv1.UploadSessionResponse{}, domain.ErrInvalidArgument
 	}
 	if !checksumRE.MatchString(strings.TrimSpace(body.Checksum)) {
@@ -593,10 +574,11 @@ func (m *uploadSessionManager) createSession(r *http.Request, body apiv1.UploadS
 	if segmentSize <= 0 {
 		segmentSize = fallbackSegmentSize
 	}
+	maxSegmentBytes := m.live.maxChunkBytes()
 	if segmentSize <= 0 {
-		segmentSize = m.maxSegmentBytes
+		segmentSize = maxSegmentBytes
 	}
-	if segmentSize <= 0 || segmentSize > m.maxSegmentBytes {
+	if segmentSize <= 0 || segmentSize > maxSegmentBytes {
 		return apiv1.UploadSessionResponse{}, domain.ErrInvalidArgument
 	}
 	mode, err := domain.ParseConflictMode(body.OnConflict, domain.FileConflictModes)
@@ -673,8 +655,8 @@ func (m *uploadSessionManager) ensureSpace(stageRoot string, bytesNeeded int64) 
 		return err
 	}
 	needed := uint64(bytesNeeded)
-	if m.minFreeBytes > 0 {
-		needed += uint64(m.minFreeBytes)
+	if minFreeBytes := m.live.uploadMinFreeBytes(); minFreeBytes > 0 {
+		needed += uint64(minFreeBytes)
 	}
 	if free < needed {
 		return domain.ErrInsufficientStorage

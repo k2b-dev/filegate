@@ -414,7 +414,7 @@ func configSchema() []apiv1.ConfigKeySchema {
 			Choices:   append([]string(nil), spec.Choices...),
 			Secret:    spec.Secret,
 		}
-		if !spec.Secret {
+		if !spec.Secret && !spec.DynamicDefault {
 			entry.Default = defaults[spec.Path]
 		}
 		out = append(out, entry)

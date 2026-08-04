@@ -55,7 +55,10 @@ func TestParentRollbackListCoversOnlyNewLevels(t *testing.T) {
 	_, svc, cleanup := newTestRouter(t)
 	defer cleanup()
 
-	manager := newUploadSessionManager(svc, "test-token", "", 1<<20, 1<<30, 4, 0, time.Hour, 0, nil)
+	manager := newUploadSessionManager(svc, "test-token", newLiveConfig(RouterOptions{
+		MaxChunkBytes:         1 << 20,
+		MaxSessionUploadBytes: 1 << 30,
+	}), 4, time.Hour, 0)
 	defer manager.Close()
 
 	root := svc.ListRoot()[0]

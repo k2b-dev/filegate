@@ -73,6 +73,10 @@ type configFlagSpec struct {
 	// beside validation lets schema-driven clients render a select without
 	// parsing human-facing usage text.
 	Choices []string
+	// DynamicDefault marks defaults derived from the machine running Filegate.
+	// They cannot be published as one deterministic number in the generated
+	// reference, but the effective config still reports the resolved value.
+	DynamicDefault bool
 }
 
 func allConfigFlagSpecs() []configFlagSpec {
@@ -97,7 +101,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Choices: []string{"auto", "poll", "btrfs"}, Scope: scopeStatic, Reason: "selects a different detector implementation"},
 		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeStatic, Reason: "the detector loop captures its interval when it starts"},
 		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of paths kept in the in-memory cache", Scope: scopeStatic, Reason: "the path cache is allocated when the service is built"},
-		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count", Scope: scopeStatic, Reason: "the worker pool is created at startup"},
+		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count; defaults from available CPUs", Scope: scopeStatic, Reason: "the worker pool is created at startup", DynamicDefault: true},
 		{Name: "jobs-queue-size", Path: "jobs.queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum jobs queued before new ones are rejected", Scope: scopeStatic, Reason: "the job queue is allocated at startup"},
 		{Name: "jobs-thumbnail-workers", Path: "jobs.thumbnail_workers", Unit: "workers", Kind: configFlagInt, Usage: "thumbnail worker count", Scope: scopeStatic, Reason: "the thumbnail worker pool is created at startup"},
 		{Name: "jobs-thumbnail-queue-size", Path: "jobs.thumbnail_queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum thumbnail jobs queued before new ones are rejected", Scope: scopeStatic, Reason: "the thumbnail queue is allocated at startup"},
@@ -106,7 +110,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "upload-max-chunk-bytes", Path: "upload.max_chunk_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum single chunk size in bytes", Scope: scopeRuntime},
 		{Name: "upload-max-upload-bytes", Path: "upload.max_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum one-shot upload size in bytes", Scope: scopeRuntime},
 		{Name: "upload-max-session-upload-bytes", Path: "upload.max_session_upload_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum upload-session size in bytes", Scope: scopeRuntime},
-		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes", Scope: scopeStatic, Reason: "the segment-write semaphore is allocated at startup"},
+		{Name: "upload-max-concurrent-segment-writes", Path: "upload.max_concurrent_segment_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent segment writes; defaults from available CPUs", Scope: scopeStatic, Reason: "the segment-write semaphore is allocated at startup", DynamicDefault: true},
 		{Name: "upload-min-free-bytes", Path: "upload.min_free_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "minimum free bytes required before accepting uploads", Scope: scopeRuntime},
 		{Name: "thumbnail-lru-cache-size", Path: "thumbnail.lru_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of thumbnails kept in memory", Scope: scopeStatic, Reason: "the thumbnail cache is allocated at startup"},
 		{Name: "thumbnail-max-source-bytes", Path: "thumbnail.max_source_bytes", Unit: "bytes", Kind: configFlagInt64, Usage: "maximum source file size for thumbnails", Scope: scopeStatic, Reason: "the thumbnail service captures this limit at startup"},
@@ -124,7 +128,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "s3-region", Path: "s3.region", Kind: configFlagString, Usage: "S3 SigV4 region", Scope: scopeStatic, Reason: "the S3 signing handler captures its region at startup"},
 		{Name: "s3-access-key", Path: "s3.access_key", Kind: configFlagString, Usage: "single-tenant S3 seed access key", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
 		{Name: "s3-secret-key", Path: "s3.secret_key", Kind: configFlagString, Usage: "single-tenant S3 seed secret key", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
-		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes", Scope: scopeStatic, Reason: "the S3 write semaphore is allocated at startup"},
+		{Name: "s3-max-concurrent-writes", Path: "s3.max_concurrent_writes", Unit: "writes", Kind: configFlagInt, Usage: "maximum concurrent S3 object and part writes; defaults from available CPUs", Scope: scopeStatic, Reason: "the S3 write semaphore is allocated at startup", DynamicDefault: true},
 		{Name: "s3-key", Path: "s3.keys", Kind: configFlagS3Keys, Usage: "S3 access-key seed entries; use the S3 key resource API after bootstrap", Scope: scopeStatic, Reason: "credentials are seeded into the resource store during S3 listener startup", Secret: true},
 		{Name: "s3-cleanup-done-retention", Path: "s3.cleanup.done_retention", Kind: configFlagDuration, Usage: "multipart done-manifest retention; zero uses adapter default", Scope: scopeStatic, Reason: "the multipart cleanup loop captures its policy at startup"},
 		{Name: "s3-cleanup-aborted-retention", Path: "s3.cleanup.aborted_retention", Kind: configFlagDuration, Usage: "multipart aborted-manifest retention; zero uses adapter default", Scope: scopeStatic, Reason: "the multipart cleanup loop captures its policy at startup"},

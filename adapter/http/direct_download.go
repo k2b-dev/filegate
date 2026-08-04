@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -20,10 +19,9 @@ const (
 )
 
 type directDownloadManager struct {
-	svc       *domain.Service
-	secret    []byte
-	publicURL string
-	trusted   []netip.Prefix
+	svc    *domain.Service
+	secret []byte
+	live   liveConfig
 }
 
 type directDownloadToken struct {
@@ -38,12 +36,11 @@ type directDownloadToken struct {
 	Nonce     string `json:"nonce"`
 }
 
-func newDirectDownloadManager(svc *domain.Service, bearerToken, publicURL string, trusted []netip.Prefix) *directDownloadManager {
+func newDirectDownloadManager(svc *domain.Service, bearerToken string, live liveConfig) *directDownloadManager {
 	return &directDownloadManager{
-		svc:       svc,
-		secret:    []byte(strings.TrimSpace(bearerToken)),
-		publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/"),
-		trusted:   append([]netip.Prefix(nil), trusted...),
+		svc:    svc,
+		secret: []byte(strings.TrimSpace(bearerToken)),
+		live:   live,
 	}
 }
 
@@ -92,7 +89,7 @@ func (m *directDownloadManager) handleCreate(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusInternalServerError, "failed to create download url")
 		return
 	}
-	baseURL, err := directURLBaseForRequest(m.publicURL, m.trusted, r)
+	baseURL, err := directURLBaseForRequest(m.live.publicURL(), m.live.trustedProxies(), r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "public download URL unavailable")
 		return

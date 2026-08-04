@@ -3,6 +3,7 @@ package httpadapter
 import (
 	"net/http"
 	"net/netip"
+	"strings"
 
 	"github.com/valentinkolb/filegate/domain"
 )
@@ -32,45 +33,55 @@ func (l liveConfig) snapshot() (domain.Config, bool) {
 }
 
 func (l liveConfig) maxUploadBytes() int64 {
+	value := l.fallback.MaxUploadBytes
 	if cfg, ok := l.snapshot(); ok {
-		return cfg.Upload.MaxUploadBytes
+		value = cfg.Upload.MaxUploadBytes
 	}
-	return l.fallback.MaxUploadBytes
+	if value <= 0 {
+		return 500 << 20
+	}
+	return value
 }
 
 func (l liveConfig) maxChunkBytes() int64 {
+	value := l.fallback.MaxChunkBytes
 	if cfg, ok := l.snapshot(); ok {
-		return cfg.Upload.MaxChunkBytes
+		value = cfg.Upload.MaxChunkBytes
 	}
-	return l.fallback.MaxChunkBytes
+	if value <= 0 {
+		return 50 << 20
+	}
+	return value
 }
 
 func (l liveConfig) maxSessionUploadBytes() int64 {
+	value := l.fallback.MaxSessionUploadBytes
 	if cfg, ok := l.snapshot(); ok {
-		return cfg.Upload.MaxSessionUploadBytes
+		value = cfg.Upload.MaxSessionUploadBytes
 	}
-	return l.fallback.MaxSessionUploadBytes
+	if value <= 0 {
+		return 50 << 30
+	}
+	return value
 }
 
 func (l liveConfig) uploadMinFreeBytes() int64 {
+	value := l.fallback.UploadMinFreeBytes
 	if cfg, ok := l.snapshot(); ok {
-		return cfg.Upload.MinFreeBytes
+		value = cfg.Upload.MinFreeBytes
 	}
-	return l.fallback.UploadMinFreeBytes
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func (l liveConfig) publicURL() string {
+	value := l.fallback.PublicURL
 	if cfg, ok := l.snapshot(); ok {
-		return cfg.Server.PublicURL
+		value = cfg.Server.PublicURL
 	}
-	return l.fallback.PublicURL
-}
-
-func (l liveConfig) bearerToken() string {
-	if cfg, ok := l.snapshot(); ok {
-		return cfg.Auth.BearerToken
-	}
-	return l.fallback.BearerToken
+	return strings.TrimRight(strings.TrimSpace(value), "/")
 }
 
 // trustedProxies re-parses on every read.

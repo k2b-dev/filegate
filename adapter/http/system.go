@@ -21,15 +21,17 @@ import (
 type systemReporter struct {
 	svc       *domain.Service
 	opts      RouterOptions
+	live      liveConfig
 	thumbs    *thumbnailer
 	uploads   *uploadSessionManager
 	startedAt time.Time
 }
 
-func newSystemReporter(svc *domain.Service, opts RouterOptions, thumbs *thumbnailer, uploads *uploadSessionManager) *systemReporter {
+func newSystemReporter(svc *domain.Service, opts RouterOptions, live liveConfig, thumbs *thumbnailer, uploads *uploadSessionManager) *systemReporter {
 	return &systemReporter{
 		svc:       svc,
 		opts:      opts,
+		live:      live,
 		thumbs:    thumbs,
 		uploads:   uploads,
 		startedAt: time.Now(),
@@ -70,11 +72,11 @@ func (r *systemReporter) handleInfo(w http.ResponseWriter, _ *http.Request) {
 			MaxPinnedPerFile: r.opts.VersioningMaxPinnedPerFile,
 		},
 		Limits: apiv1.LimitsInfo{
-			MaxChunkBytes:              r.opts.MaxChunkBytes,
-			MaxUploadBytes:             r.opts.MaxUploadBytes,
-			MaxSessionUploadBytes:      r.opts.MaxSessionUploadBytes,
+			MaxChunkBytes:              r.live.maxChunkBytes(),
+			MaxUploadBytes:             r.live.maxUploadBytes(),
+			MaxSessionUploadBytes:      r.live.maxSessionUploadBytes(),
 			MaxConcurrentSegmentWrites: r.opts.MaxConcurrentSegmentWrites,
-			UploadMinFreeBytes:         r.opts.UploadMinFreeBytes,
+			UploadMinFreeBytes:         r.live.uploadMinFreeBytes(),
 			UploadExpiryMs:             r.opts.UploadExpiry.Milliseconds(),
 			UploadCleanupIntervalMs:    r.opts.UploadCleanupInterval.Milliseconds(),
 			ThumbnailMaxSourceBytes:    r.opts.ThumbnailMaxSourceBytes,

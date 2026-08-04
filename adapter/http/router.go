@@ -163,19 +163,15 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	thumbnailQueueSize := resolveThumbnailQueueSize(opts)
 
 	thumbnailScheduler := jobs.New(thumbnailWorkers, thumbnailQueueSize)
-	directUploads := newDirectUploadManager(svc, opts.BearerToken, opts.PublicURL, opts.MaxUploadBytes, opts.TrustedProxies)
-	directDownloads := newDirectDownloadManager(svc, opts.BearerToken, opts.PublicURL, opts.TrustedProxies)
+	directUploads := newDirectUploadManager(svc, opts.BearerToken, live)
+	directDownloads := newDirectDownloadManager(svc, opts.BearerToken, live)
 	uploadSessions := newUploadSessionManager(
 		svc,
 		opts.BearerToken,
-		opts.PublicURL,
-		opts.MaxChunkBytes,
-		opts.MaxSessionUploadBytes,
+		live,
 		opts.MaxConcurrentSegmentWrites,
-		opts.UploadMinFreeBytes,
 		opts.UploadExpiry,
 		opts.UploadCleanupInterval,
-		opts.TrustedProxies,
 	)
 	thumbs := newThumbnailer(
 		svc,
@@ -215,7 +211,7 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 		root.Handle(pattern, auth(http.HandlerFunc(handler)))
 	}
 
-	system := newSystemReporter(svc, opts, thumbs, uploadSessions)
+	system := newSystemReporter(svc, opts, live, thumbs, uploadSessions)
 	handleV1("GET /v1/system/info", system.handleInfo)
 	handleV1("GET /v1/system/runtime", system.handleRuntime)
 	handleV1("GET /v1/health", system.handleHealth)
@@ -307,9 +303,9 @@ func NewRouter(svc *domain.Service, opts RouterOptions) http.Handler {
 	handleV1("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			Uploads: apiv1.UploadCapabilities{
-				MaxChunkBytes:              uploadSessions.maxSegmentBytes,
+				MaxChunkBytes:              live.maxChunkBytes(),
 				MaxUploadBytes:             live.maxUploadBytes(),
-				MaxSessionUploadBytes:      uploadSessions.maxUploadBytes,
+				MaxSessionUploadBytes:      live.maxSessionUploadBytes(),
 				MaxConcurrentSegmentWrites: uploadSessions.maxWrites,
 			},
 		})

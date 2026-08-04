@@ -81,7 +81,7 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 
 | Key | Type | Activation | Managed by | Default | Meaning |
 |---|---|---|---|---|---|
-| `jobs.workers` | int | static | manifest | `40` | Background worker count. Measured in workers. Needs a restart: the worker pool is created at startup. |
+| `jobs.workers` | int | static | manifest | - | Background worker count; defaults from available CPUs. Measured in workers. Needs a restart: the worker pool is created at startup. |
 | `jobs.queue_size` | int | static | manifest | `8192` | Maximum jobs queued before new ones are rejected. Measured in jobs. Needs a restart: the job queue is allocated at startup. |
 | `jobs.thumbnail_workers` | int | static | manifest | - | Thumbnail worker count. Measured in workers. Needs a restart: the thumbnail worker pool is created at startup. |
 | `jobs.thumbnail_queue_size` | int | static | manifest | - | Maximum thumbnail jobs queued before new ones are rejected. Measured in jobs. Needs a restart: the thumbnail queue is allocated at startup. |
@@ -95,7 +95,7 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 | `upload.max_chunk_bytes` | int | runtime | manifest | `52428800` | Maximum single chunk size in bytes. Measured in bytes. |
 | `upload.max_upload_bytes` | int | runtime | manifest | `524288000` | Maximum one-shot upload size in bytes. Measured in bytes. |
 | `upload.max_session_upload_bytes` | int | runtime | manifest | `53687091200` | Maximum upload-session size in bytes. Measured in bytes. |
-| `upload.max_concurrent_segment_writes` | int | static | manifest | `80` | Maximum concurrent segment writes. Measured in writes. Needs a restart: the segment-write semaphore is allocated at startup. |
+| `upload.max_concurrent_segment_writes` | int | static | manifest | - | Maximum concurrent segment writes; defaults from available CPUs. Measured in writes. Needs a restart: the segment-write semaphore is allocated at startup. |
 | `upload.min_free_bytes` | int | runtime | manifest | `67108864` | Minimum free bytes required before accepting uploads. Measured in bytes. |
 
 ## Thumbnail
@@ -128,7 +128,7 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 | `s3.region` | string | static | manifest | `us-east-1` | S3 SigV4 region. Needs a restart: the S3 signing handler captures its region at startup. |
 | `s3.access_key` | string | static | resource | - | Single-tenant S3 seed access key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
 | `s3.secret_key` | string | static | resource | - | Single-tenant S3 seed secret key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
-| `s3.max_concurrent_writes` | int | static | manifest | `80` | Maximum concurrent S3 object and part writes. Measured in writes. Needs a restart: the S3 write semaphore is allocated at startup. |
+| `s3.max_concurrent_writes` | int | static | manifest | - | Maximum concurrent S3 object and part writes; defaults from available CPUs. Measured in writes. Needs a restart: the S3 write semaphore is allocated at startup. |
 | `s3.keys` | S3 key list | static | resource | - | S3 access-key seed entries; use the S3 key resource API after bootstrap. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
 | `s3.cleanup.done_retention` | duration | static | manifest | - | Multipart done-manifest retention; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |
 | `s3.cleanup.aborted_retention` | duration | static | manifest | - | Multipart aborted-manifest retention; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |

@@ -25,11 +25,9 @@ const (
 )
 
 type directUploadManager struct {
-	svc            *domain.Service
-	secret         []byte
-	publicURL      string
-	trusted        []netip.Prefix
-	maxUploadBytes int64
+	svc    *domain.Service
+	secret []byte
+	live   liveConfig
 }
 
 type directUploadToken struct {
@@ -42,16 +40,11 @@ type directUploadToken struct {
 	Nonce       string `json:"nonce"`
 }
 
-func newDirectUploadManager(svc *domain.Service, bearerToken, publicURL string, maxUploadBytes int64, trusted []netip.Prefix) *directUploadManager {
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = int64(500 * 1024 * 1024)
-	}
+func newDirectUploadManager(svc *domain.Service, bearerToken string, live liveConfig) *directUploadManager {
 	return &directUploadManager{
-		svc:            svc,
-		secret:         []byte(strings.TrimSpace(bearerToken)),
-		publicURL:      strings.TrimRight(strings.TrimSpace(publicURL), "/"),
-		trusted:        append([]netip.Prefix(nil), trusted...),
-		maxUploadBytes: maxUploadBytes,
+		svc:    svc,
+		secret: []byte(strings.TrimSpace(bearerToken)),
+		live:   live,
 	}
 }
 
@@ -77,11 +70,12 @@ func (m *directUploadManager) handleCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	maxUploadBytes := m.live.maxUploadBytes()
 	maxBytes := body.MaxBytes
 	if maxBytes <= 0 {
-		maxBytes = m.maxUploadBytes
+		maxBytes = maxUploadBytes
 	}
-	if maxBytes <= 0 || maxBytes > m.maxUploadBytes {
+	if maxBytes <= 0 || maxBytes > maxUploadBytes {
 		writeErr(w, http.StatusBadRequest, "maxBytes exceeds upload.max_upload_bytes")
 		return
 	}
@@ -109,7 +103,7 @@ func (m *directUploadManager) handleCreate(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "failed to create upload url")
 		return
 	}
-	baseURL, err := directURLBaseForRequest(m.publicURL, m.trusted, r)
+	baseURL, err := directURLBaseForRequest(m.live.publicURL(), m.live.trustedProxies(), r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "public upload URL unavailable")
 		return
