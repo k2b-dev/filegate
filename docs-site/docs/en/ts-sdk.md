@@ -43,6 +43,9 @@ const roots = await client.paths.get("");
 | `index` | Service index | Trigger rescans and resolve paths or IDs in bulk. |
 | `versions` | Per-file versions | List, snapshot, pin, unpin, restore, delete versions. |
 | `stats` | Runtime stats | Service, index, cache, mount, disk, and process state. |
+| `system` | Operational state | Health, effective storage modes, live workers, upload sessions, and retention pruning. |
+| `config` | Declarative configuration | Inspect schema and values, plan manifests, and apply desired state. |
+| `s3Keys` | S3 credentials | Create, update, rotate, disable, and delete access keys. |
 | `activity` | Activity ring buffer | Recent operation events. |
 | `capabilities` | Runtime limits | Upload and transfer limits for adaptive clients. |
 

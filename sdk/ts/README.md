@@ -6,7 +6,7 @@ URLs minted by your application server.
 
 Filegate keeps files as normal Linux files on configured mounts. The client
 covers path and ID lookup, direct URLs, upload sessions, transfers, search,
-activity, and stats.
+operations, declarative configuration, S3 credentials, activity, and stats.
 
 ## Install
 
@@ -55,6 +55,9 @@ The client namespaces match the API surface:
 | `search` | Indexed path search. |
 | `index` | Index stats and rescan operations. |
 | `stats` | Runtime, mount, cache, filesystem, and process stats. |
+| `system` | Health, operational runtime, upload sessions, and version pruning. |
+| `config` | Configuration schema, desired/effective values, manifest plan and apply. |
+| `s3Keys` | S3 access-key creation, grants, rotation, and deletion. |
 | `capabilities` | Server upload/download limits for adaptive clients. |
 | `versions` | File version history on supported mounts. |
 | `activity` | Recent API activity from the bounded server ring buffer. |

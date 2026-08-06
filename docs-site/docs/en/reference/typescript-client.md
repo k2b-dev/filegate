@@ -14,7 +14,7 @@ This document describes the intended stateless TS client pattern for Filegate.
 ## Goals
 
 - Stateless client construction
-- Scoped namespaces (`paths`, `nodes`, `uploads`, `transfers`, `search`, `index`, `stats`, `capabilities`, `versions`, `utils`)
+- Scoped namespaces for every authenticated REST area
 - Relay-first streaming APIs
 - Minimal runtime surprises across server and browser
 
@@ -55,6 +55,29 @@ const fg = new Filegate({
   fetchImpl: fetch,
 });
 ```
+
+## Complete client surface
+
+| Namespace | Methods |
+|---|---|
+| `paths` | `get`, `put`, `putRaw` |
+| `nodes` | `get`, `contentRaw`, `putContent`, `mkdir`, `patch`, `delete`, `thumbnailRaw` |
+| `uploads` | `createDirectUploadURL`; sessions: `create`, `createBatch`, `status`, `segments.put`, `segments.putRaw`, `commit`, `abort` |
+| `downloads` | `createDirectURL` |
+| `transfers` | `create` |
+| `search` | `glob` |
+| `index` | `rescan`, `resolvePath`, `resolvePaths`, `resolveId`, `resolveIds` |
+| `stats` | `get` |
+| `system` | `info`, `runtime`, `health`, `prune`, `uploadSessions` |
+| `config` | `schema`, `values`, `plan`, `apply` |
+| `s3Keys` | `list`, `create`, `update`, `rotate`, `delete` |
+| `capabilities` | `get` |
+| `versions` | `list`, `listAll`, `contentRaw`, `snapshot`, `pin`, `unpin`, `restore`, `delete` |
+| `activity` | `list` |
+
+The package also exports the browser helpers `upload`, `uploadDirect`, and
+`directUploads`. Pure segment and checksum helpers live under
+`@valentinkolb/filegate/utils` rather than on the authenticated client.
 
 ## Core Usage
 
@@ -274,6 +297,44 @@ console.log(info.versioning.enabled, info.versioning.copyMode, info.versioning.r
 for (const mount of info.mounts) console.log(mount.path, mount.reflinkSupported);
 ```
 
+Operational callers can also read cheap runtime counters, inspect readiness,
+list resumable sessions, and trigger retention:
+
+```ts
+const runtime = await fg.system.runtime();
+const health = await fg.system.health();
+const sessions = await fg.system.uploadSessions({ phase: "in_progress" });
+const pruned = await fg.system.prune();
+```
+
+### Declarative configuration
+
+`config.plan` and `config.apply` accept the complete managed values map. Always
+plan first and pass the observed revision to apply so concurrent operators
+cannot overwrite each other silently.
+
+```ts
+const current = await fg.config.values();
+const desired = { "metrics.enabled": true };
+const plan = await fg.config.plan(desired);
+
+if (plan.changes.length > 0) {
+  await fg.config.apply(desired, plan.currentRevision);
+}
+```
+
+### S3 access keys
+
+S3 secrets are returned only by `create` and `rotate`. Store the returned
+secret immediately.
+
+```ts
+const created = await fg.s3Keys.create({ buckets: ["data"] });
+await fg.s3Keys.update(created.accessKey, { requestsPerSecond: 20, burst: 40 });
+const rotated = await fg.s3Keys.rotate(created.accessKey);
+await fg.s3Keys.delete(created.accessKey);
+```
+
 ## Relay/Proxy Pattern
 
 ### Upload passthrough
@@ -316,8 +377,10 @@ This is critical for backend observability under load.
 
 ## Contract Source of Truth
 
-Server JSON contract lives in:
+Server JSON contracts live under:
 
-- [api/v1/types.go](https://github.com/ValentinKolb/filegate/blob/main/api/v1/types.go)
+- [`api/v1`](https://github.com/ValentinKolb/filegate/tree/main/api/v1)
 
-Keep generated TS types synchronized with this contract.
+TypeScript declarations are maintained in `sdk/ts/src/types.ts`; they are not
+generated. API changes therefore need matching SDK types, client methods, and
+contract tests in the same change.

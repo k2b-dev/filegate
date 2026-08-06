@@ -48,7 +48,7 @@ export class SystemClient {
 
   /** Resumable upload sessions, optionally filtered by phase. */
   async uploadSessions(options: { phase?: UploadSessionPhase } = {}): Promise<UploadSessionListResponse> {
-    const query = options.phase ? `?phase=${encodeURIComponent(options.phase)}` : "";
-    return this.core.doJSON<UploadSessionListResponse>("GET", `/v1/uploads/sessions${query}`);
+    const query = options.phase ? { phase: options.phase } : undefined;
+    return this.core.doJSON<UploadSessionListResponse>("GET", "/v1/uploads/sessions", query);
   }
 }

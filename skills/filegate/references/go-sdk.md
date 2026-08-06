@@ -32,7 +32,13 @@ fg.Transfers  // TransfersClient
 fg.Search     // SearchClient
 fg.Index      // IndexClient
 fg.Stats      // StatsClient
+fg.System     // SystemClient
+fg.Config     // ConfigClient
+fg.S3Keys     // S3KeysClient
+fg.Capabilities // CapabilitiesClient
 fg.Versions   // VersionsClient
+fg.Downloads  // DownloadsClient
+fg.Activity   // ActivityClient
 ```
 
 Pure helpers live in dedicated subpackages, reachable without constructing
@@ -234,6 +240,30 @@ out, err := fg.Uploads.Sessions.Commit(ctx, filegate.UploadSessionCommitRequest{
 if err != nil { return err }
 fmt.Println("done:", out.Node.ID)
 ```
+
+### Operations, configuration, and S3 keys
+
+```go
+health, err := fg.System.Health(ctx)
+runtime, err := fg.System.Runtime(ctx)
+sessions, err := fg.System.UploadSessions(ctx, "in_progress")
+pruned, err := fg.System.Prune(ctx)
+
+desired := map[string]any{"metrics.enabled": true}
+plan, err := fg.Config.Plan(ctx, desired)
+if err == nil {
+    _, err = fg.Config.Apply(ctx, desired, plan.CurrentRevision)
+}
+
+created, err := fg.S3Keys.Create(ctx, filegate.S3KeyCreateRequest{
+    Buckets: []string{"data"},
+})
+rotated, err := fg.S3Keys.Rotate(ctx, created.AccessKey)
+err = fg.S3Keys.Delete(ctx, created.AccessKey)
+```
+
+Plan before apply so the revision precondition protects concurrent changes.
+`Create` and `Rotate` return the S3 secret exactly once.
 
 ## Error model
 

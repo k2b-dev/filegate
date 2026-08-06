@@ -101,18 +101,59 @@ its opt-out.
 
 ## API coverage
 
-| Area | Scope | Supported by Go SDK |
-|---|---:|---|
-| Paths | Virtual path | Yes |
-| Nodes | Stable node ID | Yes |
-| Uploads | One-shot, sessions, direct URLs | Yes |
-| Downloads | Content and direct URLs | Yes |
-| Transfers | Node move/copy | Yes |
-| Search | Indexed glob search | Yes |
-| Index | Rescan and path/ID resolution | Yes |
-| Versions | Per-file version operations | Yes |
-| Stats | Service runtime state | Yes |
-| Activity | In-memory activity log | Yes |
-| Capabilities | Runtime upload limits | Yes |
+| Namespace | Methods |
+|---|---|
+| `Paths` | `List`, `Get`, `Put`, `PutRaw` |
+| `Nodes` | `Get`, `ContentRaw`, `PipeContent`, `PutContent`, `Mkdir`, `Patch`, `Delete`, `ThumbnailRaw` |
+| `Uploads` | `CreateDirectUploadURL`; sessions: `Create`, `CreateBatch`, `Status`, `PutSegment`, `PutSegmentRaw`, `Commit`, `Abort` |
+| `Downloads` | `CreateDirectURL` |
+| `Transfers` | `Create` |
+| `Search` | `Glob` |
+| `Index` | `Rescan`, `ResolvePath`, `ResolvePaths`, `ResolveID`, `ResolveIDs` |
+| `Stats` | `Get` |
+| `System` | `Info`, `Runtime`, `Health`, `Prune`, `UploadSessions` |
+| `Config` | `Schema`, `Values`, `Plan`, `Apply` |
+| `S3Keys` | `List`, `Create`, `Update`, `Rotate`, `Delete` |
+| `Capabilities` | `Get` |
+| `Versions` | `List`, `ListAll`, `ContentRaw`, `PipeContent`, `Snapshot`, `Pin`, `Unpin`, `Restore`, `Delete` |
+| `Activity` | `List` |
+
+## Configuration and S3 administration
+
+Plan complete desired state before applying it with the observed revision:
+
+```go
+desired := map[string]any{"metrics.enabled": true}
+plan, err := client.Config.Plan(ctx, desired)
+if err != nil {
+	return err
+}
+if len(plan.Changes) > 0 {
+	_, err = client.Config.Apply(ctx, desired, plan.CurrentRevision)
+}
+```
+
+S3 key secrets are returned only by create and rotate:
+
+```go
+created, err := client.S3Keys.Create(ctx, filegate.S3KeyCreateRequest{
+	Buckets: []string{"data"},
+})
+if err != nil {
+	return err
+}
+fmt.Println(created.AccessKey, created.SecretKey)
+
+rotated, err := client.S3Keys.Rotate(ctx, created.AccessKey)
+```
+
+Operational state and manual retention are under `System`:
+
+```go
+health, err := client.System.Health(ctx)
+runtime, err := client.System.Runtime(ctx)
+sessions, err := client.System.UploadSessions(ctx, "in_progress")
+pruned, err := client.System.Prune(ctx)
+```
 
 See [HTTP routes reference](/docs/en/reference/http-routes) for the underlying REST contract.

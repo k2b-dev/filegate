@@ -1,4 +1,5 @@
 import { ClientCore } from "./core.js";
+import { ensureSuccess } from "./errors.js";
 import type {
   ConfigManifestApplyResponse,
   ConfigManifestPlanResponse,
@@ -76,6 +77,8 @@ export class S3KeysClient {
   }
 
   async delete(accessKey: string): Promise<void> {
-    await this.core.doRaw("DELETE", `/v1/s3/keys/${encodeURIComponent(accessKey)}`);
+    const endpoint = `/v1/s3/keys/${encodeURIComponent(accessKey)}`;
+    const response = await this.core.doRaw("DELETE", endpoint);
+    await ensureSuccess(response, "DELETE", endpoint);
   }
 }

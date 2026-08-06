@@ -16,6 +16,9 @@
 //   - SearchClient: glob-based file search.
 //   - IndexClient: index maintenance and path/ID resolution.
 //   - StatsClient: runtime statistics retrieval.
+//   - SystemClient: health, operational state, upload sessions and retention.
+//   - ConfigClient: declarative configuration schema, plan and apply.
+//   - S3KeysClient: S3 access-key lifecycle management.
 //
 // Pure helpers live in dedicated subpackages so callers without an HTTP
 // client can use them:

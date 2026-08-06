@@ -47,6 +47,16 @@ func (c SystemClient) Health(ctx context.Context) (*apiv1.HealthResponse, error)
 	return &out, nil
 }
 
+// Prune runs one version-retention round. The server returns a conflict when
+// another round is already in flight.
+func (c SystemClient) Prune(ctx context.Context) (*PruneResponse, error) {
+	var out PruneResponse
+	if err := c.core.doJSON(ctx, http.MethodPost, "/v1/versions/prune", nil, nil, "", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // UploadSessions lists resumable upload sessions. An empty phase lists all of
 // them; this is how an orphaned session left by an interrupted upload is found,
 // since aborting one needs an ID that is otherwise no longer known.

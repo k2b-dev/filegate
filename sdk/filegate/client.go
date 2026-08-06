@@ -45,6 +45,8 @@ type Filegate struct {
 	Index        IndexClient
 	Stats        StatsClient
 	System       SystemClient
+	Config       ConfigClient
+	S3Keys       S3KeysClient
 	Capabilities CapabilitiesClient
 	Versions     VersionsClient
 	Downloads    DownloadsClient
@@ -97,6 +99,8 @@ func New(cfg Config) (*Filegate, error) {
 	client.Index = IndexClient{core: core}
 	client.Stats = StatsClient{core: core}
 	client.System = SystemClient{core: core}
+	client.Config = ConfigClient{core: core}
+	client.S3Keys = S3KeysClient{core: core}
 	client.Capabilities = CapabilitiesClient{core: core}
 	client.Versions = VersionsClient{core: core}
 	client.Downloads = DownloadsClient{core: core}

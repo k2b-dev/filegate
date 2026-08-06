@@ -99,7 +99,12 @@ fg.transfers    // TransfersClient — move / copy
 fg.search       // SearchClient   — glob
 fg.index        // IndexClient    — rescan, resolve
 fg.stats        // StatsClient    — daemon stats
+fg.system       // SystemClient   — health, runtime, sessions, prune
+fg.config       // ConfigClient   — schema, values, manifest plan/apply
+fg.s3Keys       // S3KeysClient   — access-key lifecycle
+fg.capabilities // CapabilitiesClient — runtime limits
 fg.versions     // VersionsClient — per-file version history
+fg.activity     // ActivityClient — recent operation history
 fg.baseUrl      // string         — the configured base URL
 ```
 
@@ -228,6 +233,26 @@ const resp = await fg.nodes.thumbnailRaw(imageId, { size: 256 });
 const blob = await resp.blob();
 imgEl.src = URL.createObjectURL(blob);
 ```
+
+### Operations, configuration, and S3 keys
+
+```ts
+const health = await fg.system.health();
+const runtime = await fg.system.runtime();
+const sessions = await fg.system.uploadSessions({ phase: "in_progress" });
+const pruned = await fg.system.prune();
+
+const desired = { "metrics.enabled": true };
+const plan = await fg.config.plan(desired);
+await fg.config.apply(desired, plan.currentRevision);
+
+const created = await fg.s3Keys.create({ buckets: ["data"] });
+const rotated = await fg.s3Keys.rotate(created.accessKey);
+await fg.s3Keys.delete(created.accessKey);
+```
+
+Plan before apply so the revision precondition protects concurrent changes.
+`create` and `rotate` return the S3 secret exactly once.
 
 ## Error model — `FilegateError`
 
