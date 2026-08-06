@@ -1,4 +1,4 @@
-import { defineFibel } from "@valentinkolb/fibel";
+import { defineFibel } from "@k2b/fibel";
 
 export default defineFibel({
   title: "Filegate Docs",

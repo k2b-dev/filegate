@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "fibel dev --port 5173 --config fibel.config.ts",
-    "build": "fibel build --config fibel.config.ts"
+    "build": "fibel build --config fibel.config.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@valentinkolb/fibel": "^0.0.5"
+    "@k2b/fibel": "0.7.3"
   },
   "devDependencies": {
+    "@types/bun": "1.3.14",
     "typescript": "^5.8.3"
   }
 }
