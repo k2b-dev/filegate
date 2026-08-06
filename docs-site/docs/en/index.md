@@ -11,7 +11,7 @@ tags: [overview, architecture]
 
 Filegate is the file layer between your application and Linux storage.
 
-> **Beta.** Filegate is single-node and single-tenant, authorizes the REST API with one all-or-nothing bearer token, and expects to run on a trusted network behind a reverse proxy. It has no replication or shared-index mode. Read [Security model](/docs/en/security) before deciding where to put it.
+> **Deployment model.** Filegate is intentionally single-node and single-tenant. These are permanent product boundaries, not beta limitations. The REST API uses one all-or-nothing bearer token and expects a trusted network behind a reverse proxy; replication and shared-index operation are outside Filegate's scope. Read [Security model](/docs/en/security) before deciding where to put it.
 
 Your application keeps its business logic, users, permissions, and product model. Filegate handles file APIs, indexed metadata, resumable uploads, direct browser transfers, activity records, and optional S3-compatible access.
 

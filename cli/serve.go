@@ -350,8 +350,8 @@ func newDaemonServeCmd() *cobra.Command {
 			// Start the S3 listener if configured. Lives on its own
 			// port so the operator can bind it to a different
 			// interface (e.g. internal-only) and so SigV4 middleware
-			// doesn't apply to REST routes. Multi-tenant via Keys
-			// list; legacy single-tenant AccessKey/SecretKey is
+			// doesn't apply to REST routes. Multiple credentials use
+			// the Keys list; legacy single-key AccessKey/SecretKey is
 			// folded into the key store by the adapter.
 			var s3Srv *http.Server
 			var s3CleanupDone chan struct{}

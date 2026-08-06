@@ -3,7 +3,7 @@ title: Security model
 navTitle: Security model
 section: Operate
 order: 130
-description: Understand Filegate authentication boundaries, the beta scope, direct URL tokens, CORS, trusted proxies, and secret handling.
+description: Understand Filegate authentication boundaries, fixed deployment scope, direct URL tokens, CORS, trusted proxies, and secret handling.
 tags: [security, auth, cors]
 ---
 
@@ -11,9 +11,11 @@ tags: [security, auth, cors]
 
 This page is for operators and developers who need to understand Filegate authentication boundaries and browser-safe transfer patterns.
 
-## Beta scope
+## Fixed security scope
 
-Filegate is in beta, and the authorization model is deliberately small. Read this before deciding where to put it.
+Filegate's authorization and tenancy model is deliberately small. Single-node
+and single-tenant operation are permanent product boundaries, not features
+planned for a later release. Read this before deciding where to put it.
 
 | Property | State |
 |---|---|

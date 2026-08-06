@@ -86,7 +86,7 @@ s3:
   # uses the default. Lower this for small disks or low ulimit.
   max_concurrent_writes: 0
 
-  # ─── Multi-tenant key store ──────────────────────────────────
+  # ─── Scoped access-key store ─────────────────────────────────
   # Each entry: a unique access_key, its secret, and the list of
   # bucket names the key may access. Rules:
   #   - "*" wildcard grants every configured mount (admin-style).
@@ -113,9 +113,9 @@ s3:
       buckets:
         - "*"   # admin: sees every mount
 
-  # ─── Legacy single-tenant credentials (optional) ─────────────
+  # ─── Legacy single-key credentials (optional) ────────────────
   # Leave blank when using the keys list above. Set them ONLY for
-  # single-tenant deployments that don't want a keys list. The
+  # deployments that don't need a keys list. The
   # legacy fields are folded into the same key store as a
   # synthesized "*" entry; their access key cannot collide with
   # any keys[] entry's access_key.

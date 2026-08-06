@@ -32,7 +32,8 @@ The S3 listener binds on its own port (`s3.listen`), separate from the REST list
 
 ## Multi-key bootstrap seed
 
-For deployments with multiple users / clients, replace the single-tenant fields with a `keys` list:
+For deployments that need separate credentials for multiple clients or tools,
+replace the single-key fields with a `keys` list:
 
 ```yaml
 s3:

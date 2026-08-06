@@ -127,8 +127,8 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 | `s3.enabled` | bool | static | manifest | `false` | Enable S3-compatible listener. Needs a restart: controls whether the second listener exists. |
 | `s3.listen` | string | static | manifest | `:9000` | S3 listener address. Needs a restart: S3 listener bind address. |
 | `s3.region` | string | static | manifest | `us-east-1` | S3 SigV4 region. Needs a restart: the S3 signing handler captures its region at startup. |
-| `s3.access_key` | string | static | resource | - | Single-tenant S3 seed access key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
-| `s3.secret_key` | string | static | resource | - | Single-tenant S3 seed secret key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
+| `s3.access_key` | string | static | resource | - | Single-key S3 seed access key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
+| `s3.secret_key` | string | static | resource | - | Single-key S3 seed secret key. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
 | `s3.max_concurrent_writes` | int | static | manifest | - | Maximum concurrent S3 object and part writes; defaults from available CPUs. Measured in writes. Needs a restart: the S3 write semaphore is allocated at startup. |
 | `s3.keys` | S3 key list | static | resource | - | S3 access-key seed entries; use the S3 key resource API after bootstrap. Needs a restart: credentials are seeded into the resource store during S3 listener startup. Secret; never returned by the API. |
 | `s3.cleanup.done_retention` | duration | static | manifest | - | Multipart done-manifest retention; zero uses adapter default. Needs a restart: the multipart cleanup loop captures its policy at startup. |

@@ -33,7 +33,7 @@ services:
       # Path-based config — viper reads this on startup.
       FILEGATE_CONFIG: "/etc/filegate/filegate.yaml"
     volumes:
-      # Multi-tenant key store + S3 listener config.
+      # Scoped S3 key store + listener config.
       - ./filegate.yaml:/etc/filegate/filegate.yaml:ro
       # Data buckets. Each base_paths entry becomes one S3 bucket.
       # The directory leaf is the bucket name (3-63 chars,

@@ -15,7 +15,7 @@ All examples assume:
 
 - Filegate exposed at `http://s3.example.com:9100` (plain HTTP behind a reverse proxy that does TLS to `https://s3.example.com`).
 - One bucket named `data` configured in `storage.base_paths`.
-- Single-tenant key `AKIAIOSFODNN7EXAMPLE` / secret `wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY`.
+- Example key `AKIAIOSFODNN7EXAMPLE` / secret `wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY`.
 - Region `us-east-1`.
 
 Substitute your real values.
