@@ -65,7 +65,7 @@ Authorization is per-key: each key has an explicit bucket whitelist. ListBuckets
 | GetObject              | GET    | `/{bucket}/{key}`          | Returns body + S3-shape headers. Supports `Range:`, conditional `If-Match`/`If-None-Match`/`If-Modified-Since`/`If-Unmodified-Since`. |
 | HeadObject             | HEAD   | `/{bucket}/{key}`          | Same headers as GetObject, no body. |
 | DeleteObject           | DELETE | `/{bucket}/{key}`          | Idempotent (404 → 204). Honors `If-Match`. |
-| CopyObject             | PUT    | `/{bucket}/{key}` + `x-amz-copy-source` | Server-side single-object copy. ≤ 5 GiB; reflink fast-path on btrfs same-mount. Supports `x-amz-copy-source-if-{match,none-match,modified-since,unmodified-since}`, `x-amz-metadata-directive: COPY|REPLACE`. |
+| CopyObject             | PUT    | `/{bucket}/{key}` + `x-amz-copy-source` | Server-side single-object copy. ≤ 5 GiB; same-mount reflink fast-path when supported. Supports `x-amz-copy-source-if-{match,none-match,modified-since,unmodified-since}`, `x-amz-metadata-directive: COPY|REPLACE`. |
 | CreateMultipartUpload  | POST   | `/{bucket}/{key}?uploads`  | Captures content-type + user-metadata for the eventual Complete. |
 | UploadPart             | PUT    | `/{bucket}/{key}?partNumber=N&uploadId=X` | Per-part body, returns ETag. Optional `Content-MD5`. |
 | ListParts              | GET    | `/{bucket}/{key}?uploadId=X` | Lists uploaded parts in ascending PartNumber order. |

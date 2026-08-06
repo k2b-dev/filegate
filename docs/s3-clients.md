@@ -183,7 +183,7 @@ After connecting, you'll see your authorized buckets listed at the top level. Dr
 ### Cyberduck quirks
 
 - Cyberduck issues some bucket-level probe ops (HeadBucket, GetBucketLocation) that we either implement or politely 200/403 on. The browser pane will populate normally as long as the key is authorized for the buckets it's listing.
-- On rename / move within the same bucket, Cyberduck uses CopyObject + DeleteObject — fast on btrfs (reflinks) and correct under filegate's atomic-rename semantics.
+- On rename / move within the same bucket, Cyberduck uses CopyObject + DeleteObject — fast on reflink-capable filesystems and correct under filegate's atomic-rename semantics.
 
 ---
 

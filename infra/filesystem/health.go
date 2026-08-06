@@ -11,15 +11,16 @@ import (
 )
 
 // MountHealth is the per-mount probe result. Operators see a
-// summary line per mount on startup; ListMountHealth returns the
-// full struct so a future /healthz endpoint can surface it.
+// summary line per mount on startup and the system API exposes the
+// full struct.
 type MountHealth struct {
-	Path           string
-	Exists         bool
-	Writable       bool
-	XAttrSupported bool
-	FreeBytes      uint64 // 0 when unknown (statfs failed)
-	TotalBytes     uint64 // 0 when unknown
+	Path             string
+	Exists           bool
+	Writable         bool
+	XAttrSupported   bool
+	ReflinkSupported bool
+	FreeBytes        uint64 // 0 when unknown (statfs failed)
+	TotalBytes       uint64 // 0 when unknown
 	// Errors collected during the probe. An empty slice means the
 	// mount is healthy. A non-empty slice with FailFast=true at
 	// the call site causes startup to abort.
@@ -35,7 +36,8 @@ type MountHealth struct {
 //  3. xattr — can we set + read back a 16-byte user.filegate.id?
 //     The whole filegate identity model depends on xattr support;
 //     a mount without it can't host filegate data correctly.
-//  4. Free space — disk usage via statfs. Surfaced for the log
+//  4. Reflink — can FICLONE create a cheap copy on this mount?
+//  5. Free space — disk usage via statfs. Surfaced for the log
 //     and used by callers that want to early-warn at low free.
 //
 // The test artifacts are removed at the end of each probe — even
@@ -124,6 +126,15 @@ func CheckMountHealth(path string) MountHealth {
 		return h
 	}
 	h.XAttrSupported = true
+
+	// CloneFile performs the real FICLONE call and falls back to a byte copy
+	// when the filesystem does not support it. The boolean therefore reports
+	// the effective behavior versioning and same-mount S3 copies will get,
+	// without relying on a filesystem-name check.
+	clonePath := filepath.Join(probeDir, "reflink-probe")
+	if reflinked, cloneErr := CloneFile(probeFile, clonePath); cloneErr == nil {
+		h.ReflinkSupported = reflinked
+	}
 
 	fillFreeSpace(&h, path)
 	return h

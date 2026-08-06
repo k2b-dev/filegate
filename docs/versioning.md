@@ -4,12 +4,12 @@ Filegate captures point-in-time copies of files written through its
 HTTP API. Older versions are listable, downloadable, and restorable —
 either back into the live file or as a fresh sibling.
 
-The feature is **HTTP-only** and **btrfs-only**. Writes that bypass the
+The feature captures **HTTP-mediated writes only**. Writes that bypass the
 HTTP layer (`cp` / `rsync` / SSH / shell into a container) are NOT
 captured because there is no point at which Filegate can save the
-"before" bytes. btrfs is required because the implementation relies on
-reflinks (FICLONE) to make storage cheap; on other filesystems the
-feature is silently disabled per mount.
+"before" bytes. Filegate tries the Linux `FICLONE` API to make stored
+versions cheap. In `auto` mode every configured mount must pass that real
+reflink probe; explicit `on` mode falls back to full byte copies where needed.
 
 ## Configuration
 
@@ -29,8 +29,10 @@ versioning:
     - { keep_for: "8760h", max_count: 12 }  # ~monthly in last 1y
 ```
 
-`enabled: auto` only turns the feature on if every base path is btrfs.
-`enabled: on` skips the check; `enabled: off` is a hard kill switch.
+`enabled: auto` only turns the feature on if every base path supports
+reflinks. `enabled: on` accepts full byte copies on mounts without reflinks;
+`enabled: off` is a hard kill switch. Startup logs and `GET /v1/system/info`
+show the effective copy mode and selection reason.
 
 `retention_buckets` defaults to the schedule shown above so an operator
 who enables versioning does not accidentally retain every captured
@@ -120,8 +122,9 @@ Status codes:
 
 Version bytes live in `<mount>/.fg-versions/<file-id>/<version-id>.bin`,
 linked via `FICLONE` from the source file (or from the prior live
-bytes, on overwrite). Reflinked blobs share extents with their source
-on btrfs — multiple versions of an unchanged region cost one copy.
+bytes, on overwrite), with a byte-copy fallback. Reflinked blobs share
+extents with their source — multiple versions of an unchanged region
+cost one copy until a region changes.
 
 Version metadata (timestamp, size, mode, pinned flag, label,
 `DeletedAt`) is stored in the Pebble index under a dedicated keyspace
@@ -136,7 +139,7 @@ fetching version content or restoring.
    and again at T+16m (with the default 15m cooldown) only captures
    the T+16m state — the T+14m bytes are lost. Lower the cooldown for
    more granular history at the cost of storage growth.
-3. `enabled: on` against a non-btrfs mount falls back to byte copies
+3. `enabled: on` against a mount without reflink support falls back to byte copies
    for capture. Storage usage will balloon proportional to the number
    of versions × file size; only use this configuration on small files
    or with aggressive retention.
@@ -147,7 +150,7 @@ fetching version content or restoring.
 
 ## Operator runbook
 
-- **Disable for a mount**: set `versioning.enabled: off` and restart.
+- **Disable globally**: set `versioning.enabled: off` and restart.
   Existing version blobs and Pebble entries remain untouched on disk;
   re-enabling later restores access to them.
 - **Reclaim version storage**: lower `retention_buckets` `max_count`
@@ -157,5 +160,5 @@ fetching version content or restoring.
 - **Inspect version storage usage**: `du -sh /<mount>/.fg-versions/`
   for a per-mount total; per-file is `du -sh
   /<mount>/.fg-versions/<file-id>/`.
-- **Force a prune now**: there's no admin endpoint yet — restart the
-  daemon or wait for the next `pruner_interval` tick.
+- **Force a prune now**: use the admin System page or
+  `POST /v1/versions/prune`.

@@ -17,7 +17,7 @@ export function Versions(props: { fileId: string; parentPath: string; versions?:
         </div>
         <div class="panel-body">
           <p class="muted">
-            Versioning is not active for this mount. It needs btrfs, or <code>versioning.enabled</code> set to <code>on</code>.
+            Versioning is not active. In <code>auto</code> mode every mount must support reflinks; set <code>versioning.enabled</code> to <code>on</code> to allow full byte copies instead.
           </p>
         </div>
       </div>

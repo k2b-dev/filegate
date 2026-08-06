@@ -290,15 +290,6 @@ func (d *BTRFSDetector) deltaEvents(ctx context.Context, basePath string, fromGe
 	return events, nextGen, nil
 }
 
-// SupportsBTRFS reports whether every path in basePaths sits on a btrfs
-// filesystem. Returns false (no error) when the btrfs CLI is missing or
-// any path is not btrfs — callers can treat both as "feature off". An
-// error indicates an underlying I/O / system failure that should not be
-// silently masked.
-func SupportsBTRFS(ctx context.Context, basePaths []string) (bool, error) {
-	return supportsBTRFS(ctx, basePaths)
-}
-
 func supportsBTRFS(ctx context.Context, basePaths []string) (bool, error) {
 	for _, p := range basePaths {
 		p = strings.TrimSpace(p)

@@ -83,8 +83,8 @@ This differs from systems that store user files as opaque blobs, chunk stores, o
 | Linux | `fg serve` host | The service uses Linux filesystem behavior and xattrs. |
 | User xattrs | Each storage mount | Required for stable node IDs. |
 | Persistent index path | Per service | Stores the Pebble index and upload/session metadata. |
-| btrfs | Per mount, optional | Enables fast change detection, reflink copies, and file versioning. |
-| ext4 or other Linux filesystems | Per mount | Supported with polling change detection and without btrfs-only features. |
+| btrfs | Per mount, recommended | Enables fast change detection and commonly provides reflink copies. |
+| ext4 or other Linux filesystems | Per mount | Supported with polling detection; versioning follows the mount's probed reflink support or explicit byte-copy mode. |
 
 ## Read next
 

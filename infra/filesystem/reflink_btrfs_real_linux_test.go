@@ -39,6 +39,14 @@ func TestCloneFileReflinkSucceedsOnBTRFS(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
+	health := CheckMountHealth(dir)
+	if len(health.Errors) != 0 {
+		t.Fatalf("mount health probe on btrfs: %v", health.Errors)
+	}
+	if !health.ReflinkSupported {
+		t.Fatal("mount health probe did not detect btrfs reflink support")
+	}
+
 	// 4 MiB payload — large enough that a copy fallback would clearly
 	// allocate new extents but small enough to keep the test snappy.
 	const payloadSize = 4 * 1024 * 1024

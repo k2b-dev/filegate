@@ -20,7 +20,7 @@ Files stay as normal files on configured mounts. File bytes, directory layout, a
 
 - Linux for `fg serve`.
 - Storage mounts with user xattr support.
-- btrfs is recommended for fast change detection, reflink copies, and version history.
+- btrfs is recommended for fast change detection, reflink copies, and space-efficient version history.
 - ext4 and other Linux filesystems can run with poll detection.
 
 ## Production install
@@ -91,6 +91,15 @@ The mount basename becomes the root name. `/tmp/filegate/data` is exposed as RES
 ## Docker
 
 Filegate can run in Docker. Use Docker for local evaluation, CI smoke tests, or container-based deployments.
+
+The published image is intentionally distroless and does not contain the
+`btrfs` CLI. With `detection.backend: auto` it therefore uses poll detection,
+even when `/data` is a btrfs bind mount. Reflink probing uses the kernel
+`FICLONE` API directly, so `versioning.enabled: auto` can still enable cheap
+versions when the mounted filesystem supports them. Use the host package (which
+recommends `btrfs-progs`) or a purpose-built image with the required mount
+access when the btrfs detector itself is required. The System API and admin
+page show the configured backend, effective backend, and selection reason.
 
 ```bash
 mkdir -p ./filegate-data

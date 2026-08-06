@@ -200,8 +200,9 @@ type StorageConfig struct {
 
 // DetectionConfig controls the filesystem change detection backend.
 type DetectionConfig struct {
-	Backend      string        `mapstructure:"backend"`
-	PollInterval time.Duration `mapstructure:"poll_interval"`
+	Backend           string        `mapstructure:"backend"`
+	PollInterval      time.Duration `mapstructure:"poll_interval"`
+	ReconcileInterval time.Duration `mapstructure:"reconcile_interval"`
 }
 
 // CacheConfig controls in-memory cache sizes.
@@ -237,12 +238,12 @@ type ThumbnailConfig struct {
 
 // VersioningConfig controls per-file version history. The feature is
 // HTTP-only (external writes via cp/rsync are not captured) and requires
-// btrfs reflinks for storage efficiency. Per-mount auto-detection makes
-// btrfs mounts opt-in and ext4 mounts no-op.
+// reflinks for storage efficiency. Startup probes the actual FICLONE behavior
+// of every mount instead of assuming it from the filesystem name.
 //
 // Enabled values:
-//   - "auto"  : btrfs mounts get versioning, ext4 silently disabled
-//   - "on"    : forced on; non-btrfs mounts return ErrUnsupportedFS
+//   - "auto"  : enabled when every mount supports reflinks
+//   - "on"    : forced on; mounts without reflinks use byte copies
 //   - "off"   : feature globally disabled
 //
 // Cooldown bounds auto-capture noise: a write within Cooldown of the

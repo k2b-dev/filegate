@@ -91,7 +91,7 @@ func (f *restartableServiceFixture) openServiceLocked() {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
-		consumeDetectorEvents(ctx, svc, runner.Events(), nil)
+		consumeDetectorEvents(ctx, svc, runner.Events(), nil, 0)
 	}()
 
 	f.idx = idx

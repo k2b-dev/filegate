@@ -42,8 +42,13 @@ func TestSystemInfoReportsBuildMountsAndLimits(t *testing.T) {
 		MaxUploadBytes:             1 << 20,
 		VersioningEnabled:          true,
 		VersioningMode:             "on",
+		VersioningCopyMode:         "byte-copy",
+		VersioningReason:           "enabled by configuration",
 		VersioningCooldown:         15 * time.Minute,
 		VersioningMaxPinnedPerFile: 100,
+		DetectorConfigured:         "auto",
+		DetectorReason:             "auto selected poll for this test",
+		ReconcileInterval:          24 * time.Hour,
 		DetectorStats: func() detect.Stats {
 			return detect.Stats{Backend: "poll", Interval: 3 * time.Second}
 		},
@@ -65,8 +70,14 @@ func TestSystemInfoReportsBuildMountsAndLimits(t *testing.T) {
 	if info.Detector.Backend != "poll" || info.Detector.IntervalMs != 3000 {
 		t.Errorf("detector = %+v, want poll at 3000ms", info.Detector)
 	}
+	if info.Detector.ConfiguredBackend != "auto" || info.Detector.Reason == "" || info.Detector.ReconcileIntervalMs != (24*time.Hour).Milliseconds() {
+		t.Errorf("detector selection = %+v, want configured auto with reason and daily reconciliation", info.Detector)
+	}
 	if !info.Versioning.Enabled || info.Versioning.Mode != "on" {
 		t.Errorf("versioning = %+v, want enabled in mode on", info.Versioning)
+	}
+	if info.Versioning.CopyMode != "byte-copy" || info.Versioning.Reason == "" {
+		t.Errorf("versioning selection = %+v, want byte-copy with reason", info.Versioning)
 	}
 	if info.Limits.PathCacheCapacity != 4096 {
 		t.Errorf("pathCacheCapacity = %d, want 4096", info.Limits.PathCacheCapacity)

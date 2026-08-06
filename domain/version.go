@@ -14,7 +14,7 @@ func (v VersionID) IsZero() bool {
 
 // VersionMeta is the metadata for one frozen state of a file. The bytes
 // themselves live in `<mount>/.fg-versions/<file-id>/<version-id>.bin`,
-// linked via reflink on btrfs (cheap) or copied on other filesystems.
+// linked via reflink when supported (cheap) or copied otherwise.
 //
 // Pinned versions are exempt from automatic pruning until the file is
 // deleted and the post-delete grace period expires.

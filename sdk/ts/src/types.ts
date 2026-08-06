@@ -368,6 +368,7 @@ export interface MountInfo {
   exists: boolean;
   writable: boolean;
   xattrSupported: boolean;
+  reflinkSupported: boolean;
   freeBytes: number;
   totalBytes: number;
   errors?: string[];
@@ -376,6 +377,8 @@ export interface MountInfo {
 export interface VersioningInfo {
   enabled: boolean;
   mode: string;
+  copyMode: string;
+  reason: string;
   cooldownMs: number;
   prunerIntervalMs: number;
   maxPinnedPerFile: number;
@@ -397,8 +400,11 @@ export interface LimitsInfo {
 }
 
 export interface DetectorInfo {
+  configuredBackend: string;
   backend: string;
+  reason: string;
   intervalMs: number;
+  reconcileIntervalMs: number;
 }
 
 export interface SystemInfoResponse {

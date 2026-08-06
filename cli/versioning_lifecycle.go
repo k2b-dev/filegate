@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/detect"
+	"github.com/valentinkolb/filegate/infra/filesystem"
 	"github.com/valentinkolb/filegate/infra/metrics"
 )
 
@@ -37,28 +37,53 @@ func warnOrphanVersionDirs(basePaths []string) {
 	}
 }
 
-// versioningShouldEnable resolves the operator's versioning.enabled
-// setting to a definitive on/off boolean.
-//
-//   - "off" : feature disabled, regardless of filesystem.
-//   - "on"  : feature enabled. The user explicitly opted in; no btrfs
-//     check (operator is responsible for capability).
-//   - "auto" (default): on iff every base_path is btrfs. We check once
-//     at startup; live mount changes are not detected.
-func versioningShouldEnable(cfg domain.VersioningConfig, basePaths []string) bool {
+type versioningSelection struct {
+	Enabled  bool
+	CopyMode string
+	Reason   string
+}
+
+// selectVersioning resolves the operator setting against the real FICLONE
+// probe already performed during startup. This keeps policy simple: auto only
+// enables cheap versions, while an explicit "on" accepts byte-copy cost.
+func selectVersioning(cfg domain.VersioningConfig, mounts []filesystem.MountHealth) versioningSelection {
+	allReflink := len(mounts) > 0
+	reflinkCount := 0
+	for _, mount := range mounts {
+		if mount.ReflinkSupported {
+			reflinkCount++
+			continue
+		}
+		allReflink = false
+	}
+
 	switch cfg.Enabled {
 	case "off":
-		return false
+		return versioningSelection{CopyMode: "disabled", Reason: "disabled by configuration"}
 	case "on":
-		return true
+		copyMode := "byte-copy"
+		if allReflink {
+			copyMode = "reflink"
+		} else if reflinkCount > 0 {
+			copyMode = "mixed"
+		}
+		return versioningSelection{
+			Enabled:  true,
+			CopyMode: copyMode,
+			Reason:   "enabled by configuration",
+		}
 	}
-	// auto
-	ok, err := detect.SupportsBTRFS(context.Background(), basePaths)
-	if err != nil {
-		log.Printf("[filegate] versioning auto-detect: btrfs check failed: %v — disabling feature", err)
-		return false
+	if allReflink {
+		return versioningSelection{
+			Enabled:  true,
+			CopyMode: "reflink",
+			Reason:   "auto enabled because every mount supports reflink",
+		}
 	}
-	return ok
+	return versioningSelection{
+		CopyMode: "disabled",
+		Reason:   "auto disabled because at least one mount lacks reflink support",
+	}
 }
 
 // runVersioningPruner periodically calls Service.PruneVersions until the

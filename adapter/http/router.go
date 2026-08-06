@@ -99,10 +99,15 @@ type RouterOptions struct {
 	PathCacheSize int
 	// DetectorStats returns live detector state. Nil means the router reports
 	// an unknown backend instead of guessing.
-	DetectorStats func() detect.Stats
+	DetectorStats      func() detect.Stats
+	DetectorConfigured string
+	DetectorReason     string
+	ReconcileInterval  time.Duration
 
 	VersioningEnabled          bool
 	VersioningMode             string
+	VersioningCopyMode         string
+	VersioningReason           string
 	VersioningCooldown         time.Duration
 	VersioningPrunerInterval   time.Duration
 	VersioningMaxPinnedPerFile int

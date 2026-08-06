@@ -130,6 +130,7 @@ Special host handling:
 --storage-index-path
 --detection-backend
 --detection-poll-interval
+--detection-reconcile-interval
 --cache-path-cache-size
 --jobs-workers
 --jobs-queue-size

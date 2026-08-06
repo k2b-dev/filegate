@@ -27,6 +27,8 @@ This document lists core runtime assumptions and behavioral guarantees.
 - HTTP writes: immediate visibility in metadata reads.
 - External filesystem writes: eventual consistency via detector sync.
 - Unknown detector scopes can trigger mount-scoped rescan fallback.
+- Periodic full reconciliation (default `24h`, configurable or disableable)
+  bounds how long detector blind spots can leave the index incomplete.
 
 Detector cost model:
 

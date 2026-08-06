@@ -38,7 +38,7 @@ func TestConsumeDetectorEventsWithPollerSyncsExternalChanges(t *testing.T) {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
-		consumeDetectorEvents(ctx, svc, poller.Events(), nil)
+		consumeDetectorEvents(ctx, svc, poller.Events(), nil, 0)
 	}()
 	defer func() {
 		cancel()
@@ -89,6 +89,37 @@ func TestConsumeDetectorEventsWithPollerSyncsExternalChanges(t *testing.T) {
 		_, err := svc.ResolvePath(rootName + "/from-poller.txt")
 		return err == domain.ErrNotFound
 	})
+}
+
+func TestConsumeDetectorEventsPeriodicReconciliationRepairsMissedChange(t *testing.T) {
+	root := t.TempDir()
+	svc, cleanup := newDetectorTestService(t, []string{root})
+	defer cleanup()
+	rootName := mustMountNameByPath(t, svc, root)
+
+	missed := filepath.Join(root, "missed-empty-dir")
+	if err := os.Mkdir(missed, 0o755); err != nil {
+		t.Fatalf("create external directory: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan []detect.Event)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		consumeDetectorEvents(ctx, svc, events, nil, 5*time.Millisecond)
+	}()
+
+	waitUntil(t, 5*time.Second, func() bool {
+		_, err := svc.ResolvePath(rootName + "/missed-empty-dir")
+		return err == nil
+	})
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("detector consumer did not stop")
+	}
 }
 
 func TestApplyDetectorBatchPollLikeSyncsExternalChanges(t *testing.T) {
@@ -215,7 +246,7 @@ func TestConsumeDetectorEventsStressWithDuplicates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := make(chan []detect.Event, 8192)
-	go consumeDetectorEvents(ctx, svc, ch, nil)
+	go consumeDetectorEvents(ctx, svc, ch, nil, 0)
 
 	rnd := rand.New(rand.NewSource(42))
 	for round := 0; round < 12; round++ {
@@ -309,7 +340,7 @@ func TestConsumeDetectorEventsSoak(t *testing.T) {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
-		consumeDetectorEvents(ctx, svc, poller.Events(), nil)
+		consumeDetectorEvents(ctx, svc, poller.Events(), nil, 0)
 	}()
 	defer func() {
 		cancel()
@@ -393,7 +424,7 @@ func TestConsumeDetectorEventsChaos(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := make(chan []detect.Event, 16384)
-	go consumeDetectorEvents(ctx, svc, ch, nil)
+	go consumeDetectorEvents(ctx, svc, ch, nil, 0)
 
 	for i := 0; i < 1200; i++ {
 		name := fmt.Sprintf("chaos-seed-%04d.bin", i)
@@ -481,7 +512,7 @@ func TestConsumeDetectorEventsWithRealBTRFS(t *testing.T) {
 	}
 	runner.Start(ctx)
 	defer runner.Close()
-	go consumeDetectorEvents(ctx, svc, runner.Events(), nil)
+	go consumeDetectorEvents(ctx, svc, runner.Events(), nil, 0)
 
 	target := filepath.Join(subvol, "real-btrfs.txt")
 	if err := os.WriteFile(target, []byte("one"), 0o644); err != nil {

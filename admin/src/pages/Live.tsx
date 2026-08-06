@@ -1,4 +1,5 @@
-import type { HealthResponse, SystemRuntimeResponse, UploadSessionSummary } from "@valentinkolb/filegate";
+import type { HealthResponse, SystemInfoResponse, SystemRuntimeResponse, UploadSessionSummary } from "@valentinkolb/filegate";
+import { text } from "@valentinkolb/stdlib";
 import { formatBytes, formatUnix } from "../lib/format";
 import { IconLabel } from "../components/Icons";
 
@@ -17,8 +18,7 @@ function ratio(part: number, whole: number): string {
 
 function ms(value: number): string {
   if (value <= 0) return "-";
-  if (value < 1000) return `${value} ms`;
-  return `${(value / 1000).toFixed(1)} s`;
+  return text.pprintDurationMs(value);
 }
 
 export function HealthPanel(props: { health?: HealthResponse }) {
@@ -54,8 +54,9 @@ export function HealthPanel(props: { health?: HealthResponse }) {
   );
 }
 
-export function DetectorPanel(props: { runtime?: SystemRuntimeResponse }) {
+export function DetectorPanel(props: { runtime?: SystemRuntimeResponse; info?: SystemInfoResponse }) {
   const d = props.runtime?.detector;
+  const info = props.info?.detector;
   const stale = d ? d.staleForMs > d.intervalMs * 5 : false;
   return (
     <div class="panel">
@@ -67,10 +68,16 @@ export function DetectorPanel(props: { runtime?: SystemRuntimeResponse }) {
       </div>
       <div class="panel-body">
         <dl class="kv">
+          <dt>Configured</dt>
+          <dd>{info?.configuredBackend ?? "-"}</dd>
           <dt>Backend</dt>
           <dd data-live="detector.backend">{d?.backend ?? "-"}</dd>
+          <dt>Selection</dt>
+          <dd>{info?.reason || "-"}</dd>
           <dt>Scan interval</dt>
           <dd data-live="detector.intervalMs">{d ? ms(d.intervalMs) : "-"}</dd>
+          <dt>Full reconciliation</dt>
+          <dd>{info ? (info.reconcileIntervalMs > 0 ? `every ${ms(info.reconcileIntervalMs)}` : "disabled") : "-"}</dd>
           <dt>Last scan</dt>
           <dd data-live="detector.staleForMs">{d ? `${ms(d.staleForMs)} ago` : "-"}</dd>
           <dt>Scan duration</dt>
@@ -153,8 +160,11 @@ export function CachePanel(props: { runtime?: SystemRuntimeResponse }) {
   );
 }
 
-export function LifecyclePanel(props: { runtime?: SystemRuntimeResponse; canPrune?: boolean }) {
+export function LifecyclePanel(props: { runtime?: SystemRuntimeResponse; info?: SystemInfoResponse; canPrune?: boolean }) {
   const l = props.runtime?.lifecycle;
+  const versioning = props.info?.versioning;
+  const mounts = props.info?.mounts ?? [];
+  const reflinkMounts = mounts.filter((mount) => mount.reflinkSupported).length;
   const ran = !!l && l.lastPruneAt > 0;
   return (
     <div class="panel">
@@ -172,6 +182,18 @@ export function LifecyclePanel(props: { runtime?: SystemRuntimeResponse; canPrun
         </span>
       </div>
       <div class="panel-body">
+        <dl class="kv">
+          <dt>Configured</dt>
+          <dd>{versioning?.mode ?? "-"}</dd>
+          <dt>Effective</dt>
+          <dd>{versioning ? (versioning.enabled ? "enabled" : "disabled") : "-"}</dd>
+          <dt>Copy mode</dt>
+          <dd>{versioning?.copyMode ?? "-"}</dd>
+          <dt>Selection</dt>
+          <dd>{versioning?.reason || "-"}</dd>
+          <dt>Reflink mounts</dt>
+          <dd>{mounts.length > 0 ? `${reflinkMounts} / ${mounts.length}` : "-"}</dd>
+        </dl>
         {!ran ? (
           <p class="muted">
             {l && l.prunerIntervalMs > 0

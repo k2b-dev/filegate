@@ -7,7 +7,34 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/valentinkolb/filegate/domain"
+	"github.com/valentinkolb/filegate/infra/filesystem"
 )
+
+func TestSelectVersioning(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		mounts   []filesystem.MountHealth
+		enabled  bool
+		copyMode string
+	}{
+		{name: "auto reflink", mode: "auto", mounts: []filesystem.MountHealth{{ReflinkSupported: true}}, enabled: true, copyMode: "reflink"},
+		{name: "auto byte copy", mode: "auto", mounts: []filesystem.MountHealth{{}}, enabled: false, copyMode: "disabled"},
+		{name: "forced byte copy", mode: "on", mounts: []filesystem.MountHealth{{}}, enabled: true, copyMode: "byte-copy"},
+		{name: "forced mixed", mode: "on", mounts: []filesystem.MountHealth{{ReflinkSupported: true}, {}}, enabled: true, copyMode: "mixed"},
+		{name: "off", mode: "off", mounts: []filesystem.MountHealth{{ReflinkSupported: true}}, enabled: false, copyMode: "disabled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := selectVersioning(domain.VersioningConfig{Enabled: tt.mode}, tt.mounts)
+			if got.Enabled != tt.enabled || got.CopyMode != tt.copyMode || got.Reason == "" {
+				t.Fatalf("selection = %+v, want enabled=%v copyMode=%q and a reason", got, tt.enabled, tt.copyMode)
+			}
+		})
+	}
+}
 
 // TestWarnOrphanVersionDirsLogsDetachedBlobs pins the operator-safety
 // signal that fires when a Pebble format-version bump triggers a full

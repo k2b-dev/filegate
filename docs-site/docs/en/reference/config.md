@@ -21,12 +21,12 @@ A manifest is a complete desired-state replacement. Runtime keys activate when `
 
 | Activation | Keys | Effect |
 |---|---:|---|
-| `static` | 44 | Desired state is stored; the running process changes after restart. |
+| `static` | 45 | Desired state is stored; the running process changes after restart. |
 | `runtime` | 13 | The running snapshot changes immediately. |
 
 | Managed by | Keys | Meaning |
 |---|---:|---|
-| `manifest` | 51 | Accepted by the complete manifest in `fg config plan/apply`. |
+| `manifest` | 52 | Accepted by the complete manifest in `fg config plan/apply`. |
 | `bootstrap` | 3 | Read from file, environment, or startup flags; excluded from manifests. |
 | `resource` | 3 | Managed through its dedicated resource API, not configuration apply. |
 
@@ -70,6 +70,7 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 |---|---|---|---|---|---|
 | `detection.backend` | string | static | manifest | `auto` | Change detector backend: auto, poll, btrfs. Needs a restart: selects a different detector implementation. |
 | `detection.poll_interval` | duration | static | manifest | `3s` | Polling interval when poll detection is used. Needs a restart: the detector loop captures its interval when it starts. |
+| `detection.reconcile_interval` | duration | static | manifest | `24h` | Full index reconciliation interval; zero disables. Needs a restart: the reconciliation loop captures its interval when it starts. |
 
 ## Cache
 

@@ -371,6 +371,7 @@ export const app = new Hono()
           activity={activity}
           activityQuery={activityQuery}
           runtime={live.runtime}
+          info={live.info}
           healthDetail={live.health}
           sessions={live.sessions}
           canPrune={live.canPrune}
@@ -623,15 +624,16 @@ function splitCSV(raw: string): string[] {
  */
 async function loadLive() {
   const fg = client();
-  const [runtime, health, sessions] = await Promise.all([
+  const [runtime, health, info, sessions] = await Promise.all([
     fg.system.runtime().catch(() => undefined),
     fg.system.health().catch(() => undefined),
+    fg.system.info().catch(() => undefined),
     fg.system.uploadSessions({ phase: "in_progress" }).catch(() => undefined),
   ]);
   // Only offer the button where a round can actually happen; with versioning
   // off the endpoint answers 501 and a button would be a dead end.
   const canPrune = (runtime?.lifecycle?.prunerIntervalMs ?? 0) > 0;
-  return { runtime, health, sessions: sessions?.items ?? [], canPrune };
+  return { runtime, health, info, sessions: sessions?.items ?? [], canPrune };
 }
 
 async function loadSettings() {

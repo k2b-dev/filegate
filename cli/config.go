@@ -51,6 +51,7 @@ func registerConfigDefaults(v *viper.Viper) {
 	v.SetDefault("storage.runtime_config_path", "/var/lib/filegate/config")
 	v.SetDefault("detection.backend", "auto")
 	v.SetDefault("detection.poll_interval", "3s")
+	v.SetDefault("detection.reconcile_interval", "24h")
 	v.SetDefault("cache.path_cache_size", 100000)
 	v.SetDefault("jobs.workers", defaultJobWorkers())
 	v.SetDefault("jobs.queue_size", 8192)
@@ -187,6 +188,7 @@ func finishConfig(v *viper.Viper) (domain.Config, error) {
 	}
 
 	cfg.Detection.PollInterval = v.GetDuration("detection.poll_interval")
+	cfg.Detection.ReconcileInterval = v.GetDuration("detection.reconcile_interval")
 	cfg.Server.WriteTimeout = v.GetDuration("server.write_timeout")
 	cfg.Server.ShutdownTimeout = v.GetDuration("server.shutdown_timeout")
 	cfg.Server.CORS.MaxAge = v.GetDuration("server.cors.max_age")
@@ -226,6 +228,9 @@ func finishConfig(v *viper.Viper) (domain.Config, error) {
 	cfg.Upload.CleanupInterval = v.GetDuration("upload.cleanup_interval")
 	if cfg.Detection.PollInterval <= 0 {
 		cfg.Detection.PollInterval = 3 * time.Second
+	}
+	if cfg.Detection.ReconcileInterval < 0 {
+		return cfg, fmt.Errorf("detection.reconcile_interval must be >= 0")
 	}
 	if cfg.Server.WriteTimeout <= 0 {
 		cfg.Server.WriteTimeout = 5 * time.Minute

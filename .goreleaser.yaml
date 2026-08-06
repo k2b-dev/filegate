@@ -46,6 +46,10 @@ nfpms:
     homepage: https://github.com/valentinkolb/filegate
     section: utils
     priority: optional
+    # Optional: only the btrfs detector invokes this CLI. ext4/XFS installs
+    # remain valid and use poll detection, so this is not a hard dependency.
+    recommends:
+      - btrfs-progs
     formats:
       - deb
       - rpm

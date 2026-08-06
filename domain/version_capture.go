@@ -16,7 +16,7 @@ import (
 //	<mount>/.fg-versions/<file-id-hex>/<version-id>.bin
 //
 // Reflinks must stay within a filesystem; placing versions inside the
-// owning mount is what makes the per-mount FICLONE call cheap on btrfs.
+// owning mount is what makes the per-mount FICLONE call possible.
 const versionsDirName = ".fg-versions"
 const uploadsDirName = ".fg-uploads"
 

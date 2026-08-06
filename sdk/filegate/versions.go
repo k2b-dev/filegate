@@ -14,8 +14,8 @@ import (
 
 // VersionsClient covers the per-file versioning surface
 // (`/v1/nodes/{id}/versions/...`). Returned 404 from any of these
-// methods on btrfs-only deployments where the target file's mount
-// is ext4/xfs/etc. is the canonical "versioning unsupported" signal —
+// methods while versioning is disabled is the canonical "versioning
+// unsupported" signal —
 // the caller can fall back to a non-versioned UX without a separate
 // capability check.
 type VersionsClient struct {

@@ -21,22 +21,25 @@ type BuildInfo struct {
 // without user xattr support cannot carry stable file IDs. They were previously
 // checked once at startup and then discarded.
 type MountInfo struct {
-	Name           string   `json:"name"`
-	Path           string   `json:"path"`
-	Exists         bool     `json:"exists"`
-	Writable       bool     `json:"writable"`
-	XAttrSupported bool     `json:"xattrSupported"`
-	FreeBytes      uint64   `json:"freeBytes"`
-	TotalBytes     uint64   `json:"totalBytes"`
-	Errors         []string `json:"errors,omitempty"`
+	Name             string   `json:"name"`
+	Path             string   `json:"path"`
+	Exists           bool     `json:"exists"`
+	Writable         bool     `json:"writable"`
+	XAttrSupported   bool     `json:"xattrSupported"`
+	ReflinkSupported bool     `json:"reflinkSupported"`
+	FreeBytes        uint64   `json:"freeBytes"`
+	TotalBytes       uint64   `json:"totalBytes"`
+	Errors           []string `json:"errors,omitempty"`
 }
 
 // VersioningInfo reports the effective versioning configuration. Enabled is the
-// resolved answer, which for the "auto" mode depends on whether the mounts are
-// btrfs and was previously only visible in a startup log line.
+// resolved answer, which for the "auto" mode depends on the mounts' actual
+// reflink support and was previously only visible in a startup log line.
 type VersioningInfo struct {
 	Enabled          bool   `json:"enabled"`
 	Mode             string `json:"mode"`
+	CopyMode         string `json:"copyMode"`
+	Reason           string `json:"reason"`
 	CooldownMs       int64  `json:"cooldownMs"`
 	PrunerIntervalMs int64  `json:"prunerIntervalMs"`
 	MaxPinnedPerFile int    `json:"maxPinnedPerFile"`
@@ -74,8 +77,11 @@ type SystemInfoResponse struct {
 
 // DetectorInfo is the static half of detector state.
 type DetectorInfo struct {
-	Backend    string `json:"backend"`
-	IntervalMs int64  `json:"intervalMs"`
+	ConfiguredBackend   string `json:"configuredBackend"`
+	Backend             string `json:"backend"`
+	Reason              string `json:"reason"`
+	IntervalMs          int64  `json:"intervalMs"`
+	ReconcileIntervalMs int64  `json:"reconcileIntervalMs"`
 }
 
 // DetectorRuntime is the live half: whether detection is actually keeping up.

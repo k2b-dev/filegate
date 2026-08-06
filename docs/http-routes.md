@@ -138,8 +138,9 @@ mkdir). For directory replacement use `POST /v1/transfers` with `overwrite`.
 
 ## Versions
 
-Per-file version history for HTTP-mediated writes. btrfs-only via
-reflinks; ext4 mounts return `404` with `versioning_unsupported`. See
+Per-file version history for HTTP-mediated writes. Reflink-capable mounts use
+cheap clones; explicit `versioning.enabled: on` uses byte copies elsewhere.
+Disabled versioning returns `404` with `versioning_unsupported`. See
 [versioning.md](versioning.md) for behaviour, retention, and operator
 notes.
 
@@ -297,8 +298,10 @@ time and stream the current directory contents when used.
 These endpoints exist for operators and dashboards. All require the bearer token.
 
 - `GET /v1/system/info`
-  - Build version/commit, uptime, detector backend, effective versioning mode,
-    per-mount health (`exists`, `writable`, `xattrSupported`, free/total bytes),
+  - Build version/commit, uptime, configured/effective detector backend and
+    selection reason, reconciliation interval, effective versioning/copy mode,
+    per-mount health (`exists`, `writable`, `xattrSupported`,
+    `reflinkSupported`, free/total bytes),
     and a curated set of effective limits.
   - Probes the mounts, so it touches the filesystem. Read it occasionally; do
     not poll it.

@@ -87,7 +87,7 @@ func TestBTRFSRealCrossSubvolumeMove(t *testing.T) {
 	}
 	runner.Start(ctx)
 	t.Cleanup(func() { runner.Close() })
-	go consumeDetectorEvents(ctx, svc, runner.Events(), nil)
+	go consumeDetectorEvents(ctx, svc, runner.Events(), nil, 0)
 
 	src := filepath.Join(subvolA, "moving.txt")
 	seedAndAwait(t, svc, src, rootA+"/moving.txt", []byte("xsubvol"))

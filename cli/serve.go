@@ -168,7 +168,8 @@ func newDaemonServeCmd() *cobra.Command {
 			if err := ensureDefaultBasePath(cfg); err != nil {
 				return err
 			}
-			if err := checkMountsHealthOrFail(cfg.Storage.BasePaths); err != nil {
+			mountHealth, err := checkMountsHealthOrFail(cfg.Storage.BasePaths)
+			if err != nil {
 				return err
 			}
 
@@ -226,26 +227,33 @@ func newDaemonServeCmd() *cobra.Command {
 				return err
 			}
 			detectorRef = detector
-			log.Printf("[filegate] detection backend: %s", detector.Name())
+			detectorReason := "selected by configuration"
+			if cfg.Detection.Backend == "auto" {
+				if detector.Name() == "btrfs" {
+					detectorReason = "auto selected btrfs because every mount is a btrfs subvolume and the btrfs CLI is available"
+				} else {
+					detectorReason = "auto selected poll because at least one mount is not a btrfs subvolume or the btrfs CLI is unavailable"
+				}
+			}
+			log.Printf("[filegate] detection: configured=%s effective=%s reason=%s", cfg.Detection.Backend, detector.Name(), detectorReason)
 			detector.Start(ctx)
 			detectorDone := make(chan struct{})
 			go func() {
 				defer close(detectorDone)
-				consumeDetectorEvents(ctx, svc, detector.Events(), metricsReg)
+				consumeDetectorEvents(ctx, svc, detector.Events(), metricsReg, cfg.Detection.ReconcileInterval)
 			}()
 
 			lifecycle := &lifecycleState{}
-			versioningEnabled := versioningShouldEnable(cfg.Versioning, cfg.Storage.BasePaths)
-			svc.EnableVersioning(cfg.Versioning, versioningEnabled)
+			versioning := selectVersioning(cfg.Versioning, mountHealth)
+			svc.EnableVersioning(cfg.Versioning, versioning.Enabled)
 			prunerDone := make(chan struct{})
-			if versioningEnabled {
-				log.Printf("[filegate] versioning: enabled (cooldown=%s, pruner_interval=%s)",
-					cfg.Versioning.Cooldown, cfg.Versioning.PrunerInterval)
+			if versioning.Enabled {
+				log.Printf("[filegate] versioning: enabled (mode=%s, copy=%s, reason=%s, cooldown=%s, pruner_interval=%s)",
+					cfg.Versioning.Enabled, versioning.CopyMode, versioning.Reason, cfg.Versioning.Cooldown, cfg.Versioning.PrunerInterval)
 				go runVersioningPruner(ctx, svc, cfg.Versioning.PrunerInterval, metricsReg, lifecycle, prunerDone)
 			} else {
 				close(prunerDone)
-				log.Printf("[filegate] versioning: disabled (config=%q, btrfs check failed for at least one mount)",
-					cfg.Versioning.Enabled)
+				log.Printf("[filegate] versioning: disabled (mode=%s, reason=%s)", cfg.Versioning.Enabled, versioning.Reason)
 			}
 
 			trustedProxies, err := httpadapter.ParseTrustedProxies(cfg.Server.TrustedProxies)
@@ -288,23 +296,28 @@ func newDaemonServeCmd() *cobra.Command {
 				ConfigService:              configManager,
 				S3Keys:                     s3Keys,
 
-				BuildVersion:  buildVersion,
-				BuildCommit:   buildCommit,
-				BasePaths:     cfg.Storage.BasePaths,
-				PathCacheSize: cfg.Cache.PathCacheSize,
-				DetectorStats: detector.Stats,
+				BuildVersion:       buildVersion,
+				BuildCommit:        buildCommit,
+				BasePaths:          cfg.Storage.BasePaths,
+				PathCacheSize:      cfg.Cache.PathCacheSize,
+				DetectorStats:      detector.Stats,
+				DetectorConfigured: cfg.Detection.Backend,
+				DetectorReason:     detectorReason,
+				ReconcileInterval:  cfg.Detection.ReconcileInterval,
 				Lifecycle: func() apiv1.LifecycleRuntime {
 					return lifecycle.Snapshot(cfg.Versioning.PrunerInterval)
 				},
 				PruneNow: func() (domain.PruneStats, error) {
-					if !versioningEnabled {
+					if !versioning.Enabled {
 						return domain.PruneStats{}, fmt.Errorf("versioning is disabled, so there is nothing to prune")
 					}
 					return lifecycle.Run(svc.PruneVersions)
 				},
 
-				VersioningEnabled:          versioningEnabled,
+				VersioningEnabled:          versioning.Enabled,
 				VersioningMode:             cfg.Versioning.Enabled,
+				VersioningCopyMode:         versioning.CopyMode,
+				VersioningReason:           versioning.Reason,
 				VersioningCooldown:         cfg.Versioning.Cooldown,
 				VersioningPrunerInterval:   cfg.Versioning.PrunerInterval,
 				VersioningMaxPinnedPerFile: cfg.Versioning.MaxPinnedPerFile,
@@ -417,6 +430,12 @@ func newDaemonServeCmd() *cobra.Command {
 				}
 			}
 
+			if cfg.Detection.ReconcileInterval > 0 {
+				log.Printf("[filegate] periodic reconciliation: interval=%s", cfg.Detection.ReconcileInterval)
+			} else {
+				log.Printf("[filegate] periodic reconciliation: disabled")
+			}
+
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -504,11 +523,26 @@ func buildCore(cfg domain.Config) (*indexpebble.Index, *domain.Service, error) {
 	return idx, svc, nil
 }
 
-func consumeDetectorEvents(ctx context.Context, svc *domain.Service, events <-chan []detect.Event, reg *metrics.Registry) {
+func consumeDetectorEvents(ctx context.Context, svc *domain.Service, events <-chan []detect.Event, reg *metrics.Registry, reconcileInterval time.Duration) {
+	var reconcileC <-chan time.Time
+	var reconcileTicker *time.Ticker
+	if reconcileInterval > 0 {
+		reconcileTicker = time.NewTicker(reconcileInterval)
+		reconcileC = reconcileTicker.C
+		defer reconcileTicker.Stop()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-reconcileC:
+			started := time.Now()
+			if err := svc.Rescan(); err != nil {
+				log.Printf("[filegate] periodic reconciliation failed after %s: %v", time.Since(started).Round(time.Millisecond), err)
+				continue
+			}
+			log.Printf("[filegate] periodic reconciliation completed in %s", time.Since(started).Round(time.Millisecond))
 		case batch, ok := <-events:
 			if !ok {
 				return

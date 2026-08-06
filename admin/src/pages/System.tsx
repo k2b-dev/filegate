@@ -3,6 +3,7 @@ import type {
   ActivityListResponse,
   HealthResponse,
   StatsResponse,
+  SystemInfoResponse,
   SystemRuntimeResponse,
   UploadSessionSummary,
 } from "@valentinkolb/filegate";
@@ -21,6 +22,7 @@ export function System(props: {
   activity?: ActivityListResponse;
   activityQuery: ActivityQuery;
   runtime?: SystemRuntimeResponse;
+  info?: SystemInfoResponse;
   healthDetail?: HealthResponse;
   sessions: UploadSessionSummary[];
   canPrune?: boolean;
@@ -85,10 +87,10 @@ export function System(props: {
 
       <section class="metrics-grid live-grid" data-live-root>
         <HealthPanel health={props.healthDetail} />
-        <DetectorPanel runtime={props.runtime} />
+        <DetectorPanel runtime={props.runtime} info={props.info} />
         <QueuePanel runtime={props.runtime} />
         <CachePanel runtime={props.runtime} />
-        <LifecyclePanel runtime={props.runtime} canPrune={props.canPrune} />
+        <LifecyclePanel runtime={props.runtime} info={props.info} canPrune={props.canPrune} />
         <UploadSessionPanel runtime={props.runtime} sessions={props.sessions} />
       </section>
 

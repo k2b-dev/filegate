@@ -100,6 +100,7 @@ func allConfigFlagSpecs() []configFlagSpec {
 		{Name: "storage-index-path", Path: "storage.index_path", Kind: configFlagString, Usage: "Pebble index directory", Scope: scopeStatic, Reason: "the Pebble index is opened at startup"},
 		{Name: "detection-backend", Path: "detection.backend", Kind: configFlagString, Usage: "change detector backend: auto, poll, btrfs", Choices: []string{"auto", "poll", "btrfs"}, Scope: scopeStatic, Reason: "selects a different detector implementation"},
 		{Name: "detection-poll-interval", Path: "detection.poll_interval", Kind: configFlagDuration, Usage: "polling interval when poll detection is used", Scope: scopeStatic, Reason: "the detector loop captures its interval when it starts"},
+		{Name: "detection-reconcile-interval", Path: "detection.reconcile_interval", Kind: configFlagDuration, Usage: "full index reconciliation interval; zero disables", Scope: scopeStatic, Reason: "the reconciliation loop captures its interval when it starts"},
 		{Name: "cache-path-cache-size", Path: "cache.path_cache_size", Unit: "entries", Kind: configFlagInt, Usage: "maximum number of paths kept in the in-memory cache", Scope: scopeStatic, Reason: "the path cache is allocated when the service is built"},
 		{Name: "jobs-workers", Path: "jobs.workers", Unit: "workers", Kind: configFlagInt, Usage: "background worker count; defaults from available CPUs", Scope: scopeStatic, Reason: "the worker pool is created at startup", DynamicDefault: true},
 		{Name: "jobs-queue-size", Path: "jobs.queue_size", Unit: "jobs", Kind: configFlagInt, Usage: "maximum jobs queued before new ones are rejected", Scope: scopeStatic, Reason: "the job queue is allocated at startup"},
@@ -225,6 +226,8 @@ func applyChangedConfigFlag(flags *pflag.FlagSet, spec configFlagSpec, cfg *doma
 		cfg.Detection.Backend = getFlagString(flags, spec.Name)
 	case "detection.poll_interval":
 		cfg.Detection.PollInterval = getFlagDuration(flags, spec.Name)
+	case "detection.reconcile_interval":
+		cfg.Detection.ReconcileInterval = getFlagDuration(flags, spec.Name)
 	case "cache.path_cache_size":
 		cfg.Cache.PathCacheSize = getFlagInt(flags, spec.Name)
 	case "jobs.workers":
@@ -506,6 +509,9 @@ func validateResolvedConfig(cfg domain.Config) error {
 	case "auto", "poll", "btrfs":
 	default:
 		return fmt.Errorf("detection.backend must be one of: auto, poll, btrfs")
+	}
+	if cfg.Detection.ReconcileInterval < 0 {
+		return fmt.Errorf("detection.reconcile_interval must be >= 0")
 	}
 	if cfg.Upload.MaxSessionUploadBytes < cfg.Upload.MaxChunkBytes {
 		return fmt.Errorf("upload.max_session_upload_bytes must be >= upload.max_chunk_bytes")

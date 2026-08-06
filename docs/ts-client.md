@@ -233,8 +233,9 @@ download as tar streams.
 
 ### Versions
 
-Per-file version history is REST-only and available when versioning is enabled
-on a supported mount.
+Per-file version history is REST-only and available when versioning is enabled.
+Automatic mode requires reflink support on every mount; explicit `on` mode can
+use full byte copies.
 
 ```ts
 const page = await fg.versions.list("<file-id>", { limit: 20 });
@@ -247,6 +248,19 @@ const restored = await fg.versions.restore("<file-id>", snapshot.versionId, {
 });
 
 console.log(restored.node.id, page.items.length);
+```
+
+### Effective storage modes
+
+Use the system endpoint to explain effective detector and versioning behavior
+without inferring it from configuration:
+
+```ts
+const info = await fg.system.info();
+
+console.log(info.detector.configuredBackend, info.detector.backend, info.detector.reason);
+console.log(info.versioning.enabled, info.versioning.copyMode, info.versioning.reason);
+for (const mount of info.mounts) console.log(mount.path, mount.reflinkSupported);
 ```
 
 ## Relay/Proxy Pattern

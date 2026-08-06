@@ -217,7 +217,7 @@ Lower the value for small disks, container tmpfs mounts, or low `ulimit -n` sett
 
 The S3 listener uses two internal namespaces under each mount root:
 
-- `<mount>/.fg-versions/<file-id>/<version-id>.bin` — the REST versioning feature's per-file blobs (only created on btrfs mounts and when versioning is enabled).
+- `<mount>/.fg-versions/<file-id>/<version-id>.bin` — the REST versioning feature's per-file blobs (reflinked when supported, byte-copied otherwise).
 - `<mount>/.fg-uploads/s3-<uploadId>/` — multipart upload staging (`parts/00001.bin`, …, and ephemeral `complete.tmp`). Active multipart metadata and part rows are stored in Pebble.
 
 Both are filegate-private. Object keys can't reach them: the validator rejects `.fg-versions`, `.fg-uploads`, and Filegate's internal `.filegate-tmp-*` atomic-write names as path segments.

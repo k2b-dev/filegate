@@ -9,7 +9,7 @@ import (
 
 // TestLoadConfigVersioningRetentionDefaults pins the default versioning
 // schedule. A regression that empties the default RetentionBuckets list
-// would silently turn auto-on btrfs deployments into unbounded storage
+// would silently turn auto-on reflink deployments into unbounded storage
 // growth — every write captures forever, the pruner has nothing to
 // prune. The other defaults are pinned alongside so a "tidy the config
 // loader" pass can't drift the operator-facing contract.
@@ -28,6 +28,9 @@ func TestLoadConfigVersioningRetentionDefaults(t *testing.T) {
 
 	if cfg.Versioning.Enabled != "auto" {
 		t.Fatalf("versioning.enabled=%q, want auto", cfg.Versioning.Enabled)
+	}
+	if cfg.Detection.ReconcileInterval != 24*time.Hour {
+		t.Fatalf("detection.reconcile_interval=%s, want 24h", cfg.Detection.ReconcileInterval)
 	}
 	if cfg.Versioning.Cooldown != 15*time.Minute {
 		t.Fatalf("versioning.cooldown=%s, want 15m", cfg.Versioning.Cooldown)
@@ -68,6 +71,34 @@ func TestLoadConfigVersioningRetentionDefaults(t *testing.T) {
 			t.Fatalf("bucket %d = {%s, %d}, want {%s, %d}",
 				i, b.KeepFor, b.MaxCount, want[i].KeepFor, want[i].MaxCount)
 		}
+	}
+}
+
+func TestLoadConfigAllowsDisabledReconciliation(t *testing.T) {
+	base := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "storage:\n  base_paths:\n    - " + base + "\ndetection:\n  reconcile_interval: 0s\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Detection.ReconcileInterval != 0 {
+		t.Fatalf("detection.reconcile_interval=%s, want disabled", cfg.Detection.ReconcileInterval)
+	}
+}
+
+func TestLoadConfigRejectsNegativeReconciliation(t *testing.T) {
+	base := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "storage:\n  base_paths:\n    - " + base + "\ndetection:\n  reconcile_interval: -1s\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := loadConfig(cfgPath); err == nil {
+		t.Fatal("expected load error for negative reconciliation interval")
 	}
 }
 

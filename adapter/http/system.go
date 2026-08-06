@@ -61,12 +61,17 @@ func (r *systemReporter) handleInfo(w http.ResponseWriter, _ *http.Request) {
 		StartedAt: r.startedAt.UnixMilli(),
 		UptimeMs:  now.Sub(r.startedAt).Milliseconds(),
 		Detector: apiv1.DetectorInfo{
-			Backend:    detector.Backend,
-			IntervalMs: detector.Interval.Milliseconds(),
+			ConfiguredBackend:   fallback(r.opts.DetectorConfigured, "unknown"),
+			Backend:             detector.Backend,
+			Reason:              r.opts.DetectorReason,
+			IntervalMs:          detector.Interval.Milliseconds(),
+			ReconcileIntervalMs: r.opts.ReconcileInterval.Milliseconds(),
 		},
 		Versioning: apiv1.VersioningInfo{
 			Enabled:          r.opts.VersioningEnabled,
 			Mode:             fallback(r.opts.VersioningMode, "auto"),
+			CopyMode:         fallback(r.opts.VersioningCopyMode, "disabled"),
+			Reason:           r.opts.VersioningReason,
 			CooldownMs:       r.opts.VersioningCooldown.Milliseconds(),
 			PrunerIntervalMs: r.opts.VersioningPrunerInterval.Milliseconds(),
 			MaxPinnedPerFile: r.opts.VersioningMaxPinnedPerFile,
@@ -96,14 +101,15 @@ func (r *systemReporter) mountInfo() []apiv1.MountInfo {
 	out := make([]apiv1.MountInfo, 0, len(paths))
 	for _, health := range filesystem.CheckMountsHealth(paths) {
 		out = append(out, apiv1.MountInfo{
-			Name:           filepath.Base(health.Path),
-			Path:           health.Path,
-			Exists:         health.Exists,
-			Writable:       health.Writable,
-			XAttrSupported: health.XAttrSupported,
-			FreeBytes:      health.FreeBytes,
-			TotalBytes:     health.TotalBytes,
-			Errors:         health.Errors,
+			Name:             filepath.Base(health.Path),
+			Path:             health.Path,
+			Exists:           health.Exists,
+			Writable:         health.Writable,
+			XAttrSupported:   health.XAttrSupported,
+			ReflinkSupported: health.ReflinkSupported,
+			FreeBytes:        health.FreeBytes,
+			TotalBytes:       health.TotalBytes,
+			Errors:           health.Errors,
 		})
 	}
 	return out

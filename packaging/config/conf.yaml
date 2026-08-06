@@ -34,6 +34,8 @@ storage:
 detection:
   backend: auto
   poll_interval: "3s"
+  # Safety net for detector blind spots and missed external changes. Set to 0s to disable.
+  reconcile_interval: "24h"
 
 cache:
   path_cache_size: 100000

@@ -47,7 +47,7 @@ Strongly recommended explicit settings:
 - `server.listen`, `server.public_url`, `server.cors.*`, `server.shutdown_timeout`
 - `upload.max_*`
 - `jobs.*`
-- `detection.backend` and `detection.poll_interval`
+- `detection.backend`, `detection.poll_interval`, and `detection.reconcile_interval`
 
 ## 4. systemd Service Operation
 
@@ -149,11 +149,15 @@ Behavior model:
 - HTTP writes are immediately reflected in index reads.
 - External filesystem changes are eventual-consistent through detector sync.
 - Unknown detector scopes can trigger mount-scoped rescan behavior.
+- A full reconciliation runs every `detection.reconcile_interval` (default
+  `24h`) as a simple safety net for missed events; `0s` disables it.
 
 Efficiency note:
 
 - `detection.backend=btrfs` is a major optimization when roots are on btrfs subvolumes.
 - `detection.backend=poll` is functionally correct but materially heavier on very large trees.
+- The standard distroless container has no `btrfs` CLI, so `auto` selects
+  `poll`; the System page reports this reason instead of hiding the fallback.
 
 ## 8. Capacity and Sizing
 

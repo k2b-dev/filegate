@@ -8,7 +8,7 @@ import (
 // TestCheckMountsHealthOrFailEmpty: zero base_paths is rejected
 // fast — the daemon needs at least one mount to do anything.
 func TestCheckMountsHealthOrFailEmpty(t *testing.T) {
-	if err := checkMountsHealthOrFail(nil); err == nil {
+	if _, err := checkMountsHealthOrFail(nil); err == nil {
 		t.Errorf("empty paths slice should return an error")
 	}
 }
@@ -18,7 +18,7 @@ func TestCheckMountsHealthOrFailEmpty(t *testing.T) {
 // error message naming the path.
 func TestCheckMountsHealthOrFailMissingMount(t *testing.T) {
 	missing := "/nonexistent/filegate/test/mount"
-	err := checkMountsHealthOrFail([]string{missing})
+	_, err := checkMountsHealthOrFail([]string{missing})
 	if err == nil {
 		t.Fatalf("missing mount should hard-fail")
 	}
@@ -33,7 +33,8 @@ func TestCheckMountsHealthOrFailMissingMount(t *testing.T) {
 // filesystem-package test for the same skip rationale.)
 func TestCheckMountsHealthOrFailHealthy(t *testing.T) {
 	tmp := t.TempDir()
-	if err := checkMountsHealthOrFail([]string{tmp}); err != nil {
+	results, err := checkMountsHealthOrFail([]string{tmp})
+	if err != nil {
 		// xattr-not-supported on the test FS shows up as the
 		// only error path here — accept it as a skip rather
 		// than a fail.
@@ -41,5 +42,8 @@ func TestCheckMountsHealthOrFailHealthy(t *testing.T) {
 			t.Skipf("test FS doesn't support xattrs: %v", err)
 		}
 		t.Errorf("healthy mount probe returned error: %v", err)
+	}
+	if len(results) != 1 || results[0].Path != tmp {
+		t.Fatalf("health results = %+v, want one result for %q", results, tmp)
 	}
 }

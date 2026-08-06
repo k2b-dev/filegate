@@ -32,9 +32,9 @@ const minSafeFreeBytes uint64 = 1 << 30 // 1 GiB
 // rebuild is expensive and pointless if the underlying storage
 // is broken. An error returned here aborts the serve command
 // before any goroutines are spawned.
-func checkMountsHealthOrFail(paths []string) error {
+func checkMountsHealthOrFail(paths []string) ([]filesystem.MountHealth, error) {
 	if len(paths) == 0 {
-		return errors.New("storage.base_paths is empty — at least one mount is required")
+		return nil, errors.New("storage.base_paths is empty — at least one mount is required")
 	}
 	results := filesystem.CheckMountsHealth(paths)
 	var bad []string
@@ -46,17 +46,21 @@ func checkMountsHealthOrFail(paths []string) error {
 			bad = append(bad, fmt.Sprintf("%s: %s", h.Path, joinErrs(h.Errors)))
 			continue
 		}
-		log.Printf("[filegate] startup health: OK %s — writable, xattr-supported, free=%.1f GiB / %.1f GiB",
-			h.Path, freeGiB, totalGiB)
+		copyMode := "byte-copy"
+		if h.ReflinkSupported {
+			copyMode = "reflink"
+		}
+		log.Printf("[filegate] startup health: OK %s — writable, xattr-supported, copy=%s, free=%.1f GiB / %.1f GiB",
+			h.Path, copyMode, freeGiB, totalGiB)
 		if h.FreeBytes > 0 && h.FreeBytes < minSafeFreeBytes {
 			log.Printf("[filegate] WARN %s has only %.1f GiB free (< %.1f GiB threshold) — uploads may start failing soon",
 				h.Path, freeGiB, float64(minSafeFreeBytes)/(1<<30))
 		}
 	}
 	if len(bad) > 0 {
-		return fmt.Errorf("startup health: %d mount(s) failed: %s", len(bad), joinErrs(bad))
+		return results, fmt.Errorf("startup health: %d mount(s) failed: %s", len(bad), joinErrs(bad))
 	}
-	return nil
+	return results, nil
 }
 
 // joinErrs flattens a slice of error strings into a single

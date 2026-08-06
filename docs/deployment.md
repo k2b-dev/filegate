@@ -132,6 +132,13 @@ services:
 
 Use the provided Dockerfile or compose examples for local evaluation, CI smoke tests, or environments that explicitly standardize on containers. For ordinary Linux production hosts, prefer package install plus systemd.
 
+The published image is distroless and does not ship the `btrfs` CLI. Its
+`auto` detector therefore resolves to `poll`, including on btrfs bind mounts.
+The separate kernel-level reflink probe still works, so automatic versioning
+can use cheap clones when the mounted filesystem supports `FICLONE`. Use the
+host package or a purpose-built image with `btrfs-progs` and suitable mount
+access when btrfs delta detection is required.
+
 For production, mount:
 
 - file roots

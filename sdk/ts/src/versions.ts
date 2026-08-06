@@ -58,9 +58,8 @@ export interface RestoreOptions {
 
 /**
  * Per-file version history. All endpoints respond 404 with
- * "versioning not supported on this mount" when the target file lives
- * on a non-btrfs filesystem; callers can use that as a capability
- * check without a separate flag.
+ * "versioning not supported on this mount" while versioning is disabled;
+ * callers can use that as a capability check without a separate flag.
  */
 export class VersionsClient {
   constructor(private readonly core: ClientCore) {}

@@ -127,10 +127,10 @@ type Store interface {
 	// proceeding with an ID nothing else agrees with.
 	SetIDIfAbsent(path string, id FileID) (FileID, bool, error)
 	GetID(path string) (FileID, error)
-	// CloneFile copies srcPath to dstPath using FICLONE on btrfs (cheap,
-	// constant-time) or a byte copy fallback. dstPath must not exist;
+	// CloneFile copies srcPath to dstPath using FICLONE when supported
+	// (cheap, constant-time) or a byte copy fallback. dstPath must not exist;
 	// callers create the parent directory first. Returns true when the
 	// reflink fast-path was used. Used by the versioning subsystem to
-	// snapshot file bytes without paying double the storage on btrfs.
+	// snapshot file bytes without paying double the storage on reflink-capable filesystems.
 	CloneFile(srcPath, dstPath string) (reflinked bool, err error)
 }

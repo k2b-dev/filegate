@@ -71,7 +71,7 @@ type CopyObjectResult struct {
 // the source and the destination must resolve to existing mounts;
 // the source must be a file (S3 has no directory copy). When the
 // two paths sit in the same mount, the byte-copy is delegated to
-// CloneFile which uses btrfs reflinks where available. Across
+// CloneFile which uses reflinks where available. Across
 // mounts a streaming io.Copy is used.
 //
 // Returns ErrConflict when any precondition fails (the adapter
@@ -258,8 +258,8 @@ func (s *Service) CopyObjectS3(args CopyObjectArgs) (*CopyObjectResult, error) {
 	//                     real-S3 behaviour for the metadata-update
 	//                     trick.
 	//
-	//   same-mount      → CloneFile to a sibling tmp file; reflinks
-	//                     on btrfs, byte copy elsewhere. The tmp is
+	//   same-mount      → CloneFile to a sibling tmp file; reflink when
+	//                     supported, byte copy elsewhere. The tmp is
 	//                     atomically renamed over the destination at
 	//                     the end of the prep pipeline so a failure
 	//                     anywhere in between can't truncate or
@@ -439,7 +439,7 @@ const maxSingleCopyBytes = 5 * 1024 * 1024 * 1024
 // EntityTooLarge error code.
 var ErrCopySourceTooLarge = errors.New("copy source exceeds 5 GiB single-copy limit")
 
-// copyForS3 invokes the store's CloneFile (FICLONE on btrfs, byte
+// copyForS3 invokes the store's CloneFile (FICLONE when supported, byte
 // copy elsewhere). The caller passes a tmp dstPath that does NOT
 // already exist — CloneFile rejects an existing target. Returns
 // (reflinked, error).

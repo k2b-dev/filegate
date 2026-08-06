@@ -263,8 +263,9 @@ func configDisplayMap(cfg domain.Config, showSecrets bool) map[string]any {
 			"index_path": cfg.Storage.IndexPath,
 		},
 		"detection": map[string]any{
-			"backend":       cfg.Detection.Backend,
-			"poll_interval": cfg.Detection.PollInterval.String(),
+			"backend":            cfg.Detection.Backend,
+			"poll_interval":      cfg.Detection.PollInterval.String(),
+			"reconcile_interval": cfg.Detection.ReconcileInterval.String(),
 		},
 		"cache": map[string]any{
 			"path_cache_size": cfg.Cache.PathCacheSize,
