@@ -172,17 +172,12 @@ func finishConfig(v *viper.Viper) (domain.Config, error) {
 	if len(cfg.Storage.BasePaths) == 0 {
 		return cfg, fmt.Errorf("storage.base_paths is required")
 	}
-	// auth.bearer_token guards the REST API. It is required UNLESS the
-	// S3 listener is enabled — an S3-only deployment authenticates via
-	// SigV4 and legitimately runs with the REST API locked down (the
-	// REST auth middleware fails closed on an empty token, returning
-	// 401 for every /v1 route). Allowing an empty bearer token here is
-	// what makes the documented open /metrics mode reachable for an
-	// S3-only daemon on a trusted internal network.
-	// An empty token is no longer an error: serve generates one on first boot
-	// and stores it, so a fresh install needs no configuration at all. The REST
-	// auth middleware still fails closed until a token exists, so this cannot
-	// open the API by accident.
+	// An empty token is generated and stored on first boot. Reject the known
+	// placeholder shipped by older packages so preserved configurations cannot
+	// accidentally expose the API under a public credential.
+	if err := validateBearerToken(cfg.Auth.BearerToken); err != nil {
+		return cfg, err
+	}
 	if err := validatePublicURL(cfg.Server.PublicURL); err != nil {
 		return cfg, err
 	}

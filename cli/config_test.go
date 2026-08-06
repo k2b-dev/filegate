@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -304,6 +305,19 @@ func TestLoadConfigBearerIsOptional(t *testing.T) {
 				t.Errorf("empty bearer should load, got %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadConfigRejectsPackagedBearerTokenSentinel(t *testing.T) {
+	t.Setenv("FILEGATE_STORAGE_BASE_PATHS", t.TempDir())
+	t.Setenv("FILEGATE_AUTH_BEARER_TOKEN", " CHANGE_ME ")
+
+	_, err := loadConfig("")
+	if err == nil {
+		t.Fatal("CHANGE_ME bearer token loaded successfully")
+	}
+	if !strings.Contains(err.Error(), "leave it empty to generate one") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

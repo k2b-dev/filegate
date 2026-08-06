@@ -492,6 +492,9 @@ func validateResolvedConfig(cfg domain.Config) error {
 	}
 	// auth.bearer_token is no longer required: an empty one is generated on
 	// first boot and stored, so a fresh install needs no configuration at all.
+	if err := validateBearerToken(cfg.Auth.BearerToken); err != nil {
+		return err
+	}
 	if err := validateRuntimeConfigPath(cfg.Storage); err != nil {
 		return err
 	}
@@ -527,6 +530,13 @@ func validateResolvedConfig(cfg domain.Config) error {
 	}
 	if err := validateS3Config(cfg); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateBearerToken(token string) error {
+	if strings.TrimSpace(token) == "CHANGE_ME" {
+		return fmt.Errorf("auth.bearer_token must not be CHANGE_ME; set a strong value or leave it empty to generate one")
 	}
 	return nil
 }

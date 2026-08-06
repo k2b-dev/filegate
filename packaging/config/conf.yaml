@@ -23,8 +23,9 @@ server:
   access_log_enabled: true
 
 auth:
-  # Set a strong token before starting the service.
-  bearer_token: "CHANGE_ME"
+  # Empty generates a strong token once on first boot and stores it in
+  # storage.runtime_config_path. Set an explicit strong value if preferred.
+  bearer_token: ""
 
 storage:
   base_paths:
