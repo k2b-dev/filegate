@@ -1,4 +1,4 @@
-.PHONY: docs-config test test-race test-short test-detector-linux test-detector-soak test-detector-chaos test-detector-btrfs-real test-detector-btrfs-real-docker test-versioning-btrfs-real-docker test-versioning-soak fuzz-smoke bench-go bench-http bench-compose bench-tree check
+.PHONY: docs-config test test-race test-short test-docker-runtime-state test-detector-linux test-detector-soak test-detector-chaos test-detector-btrfs-real test-detector-btrfs-real-docker test-versioning-btrfs-real-docker test-versioning-soak fuzz-smoke bench-go bench-http bench-compose bench-tree check
 
 docs-config:
 	go run ./cmd/filegate config schema --format markdown > docs-site/docs/en/reference/config.md
@@ -11,6 +11,9 @@ test-short:
 
 test-race:
 	go test -race ./adapter/http ./domain ./infra/pebble
+
+test-docker-runtime-state:
+	./bench/scripts/run-docker-runtime-state-smoke.sh
 
 test-detector-linux:
 	./bench/scripts/run-detector-sync-tests.sh

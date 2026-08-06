@@ -110,10 +110,17 @@ docker run --rm -d \
   -e FILEGATE_AUTH_BEARER_TOKEN=dev-token \
   -e FILEGATE_STORAGE_BASE_PATHS=/data \
   -e FILEGATE_STORAGE_INDEX_PATH=/var/lib/filegate/index \
+  -e FILEGATE_STORAGE_RUNTIME_CONFIG_PATH=/var/lib/filegate/config \
   -v "$PWD/filegate-data:/data" \
+  -v filegate-index:/var/lib/filegate/index \
+  -v filegate-config:/var/lib/filegate/config \
   ghcr.io/valentinkolb/filegate:latest \
   serve
 ```
+
+Keep both named volumes when replacing the container. `filegate-config` is
+authoritative: it contains the applied manifest, generated API token, and S3
+keys. `filegate-index` is rebuildable but avoids a full data walk.
 
 ```bash
 curl -fsS http://127.0.0.1:8080/health

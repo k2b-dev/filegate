@@ -7,6 +7,7 @@ services:
       FILEGATE_AUTH_BEARER_TOKEN: "your-secret-token-here"
       FILEGATE_STORAGE_BASE_PATHS: "/data/homes,/data/groups"
       FILEGATE_STORAGE_INDEX_PATH: "/var/lib/filegate/index"
+      FILEGATE_STORAGE_RUNTIME_CONFIG_PATH: "/var/lib/filegate/config"
       FILEGATE_SERVER_LISTEN: ":8080"
       FILEGATE_SERVER_WRITE_TIMEOUT: "5m"
       FILEGATE_SERVER_SHUTDOWN_TIMEOUT: "60s"
@@ -19,7 +20,9 @@ services:
       - /export/homes:/data/homes
       - /export/groups:/data/groups
       - filegate-index:/var/lib/filegate/index
+      - filegate-config:/var/lib/filegate/config
     restart: unless-stopped
 
 volumes:
   filegate-index:
+  filegate-config:

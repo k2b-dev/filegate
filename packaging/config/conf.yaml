@@ -31,6 +31,9 @@ storage:
   base_paths:
     - /var/lib/filegate/data
   index_path: /var/lib/filegate/index
+  # Authoritative applied manifest, generated API token, and S3 key store.
+  # Back this path up separately from the rebuildable index.
+  runtime_config_path: /var/lib/filegate/config
 
 detection:
   backend: auto

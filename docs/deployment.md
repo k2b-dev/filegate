@@ -142,7 +142,10 @@ access when btrfs delta detection is required.
 For production, mount:
 
 - file roots
-- index path
+- `/var/lib/filegate/config` — authoritative applied manifest and credentials;
+  losing it loses generated API and S3 keys
+- `/var/lib/filegate/index` — rebuildable metadata index; losing it requires a
+  full data walk
 - persistent logs (optional)
 
 and inject token/config through env vars or mounted config file.

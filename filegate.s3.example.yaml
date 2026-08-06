@@ -42,6 +42,9 @@ storage:
     - "/data/backups"
     - "/data/archive"
   index_path: "/var/lib/filegate/index"
+  # Authoritative applied manifest and runtime credential store. The Compose
+  # example mounts this path as a separate persistent volume.
+  runtime_config_path: "/var/lib/filegate/config"
 
 upload:
   # REST upload settings (S3 multipart has its own

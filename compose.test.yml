@@ -9,6 +9,7 @@ services:
       FILEGATE_SERVER_LISTEN: ":8080"
       FILEGATE_STORAGE_BASE_PATHS: "/data"
       FILEGATE_STORAGE_INDEX_PATH: "/var/lib/filegate/index"
+      FILEGATE_STORAGE_RUNTIME_CONFIG_PATH: "/var/lib/filegate/config"
       FILEGATE_UPLOAD_EXPIRY: "1h"
       FILEGATE_UPLOAD_CLEANUP_INTERVAL: "10m"
       FILEGATE_UPLOAD_MAX_CHUNK_BYTES: "10485760"   # 10 MiB
@@ -16,6 +17,7 @@ services:
     volumes:
       - filegate-test-data:/data
       - filegate-test-index:/var/lib/filegate/index
+      - filegate-test-config:/var/lib/filegate/config
     healthcheck:
       test:
         [
@@ -32,3 +34,4 @@ services:
 volumes:
   filegate-test-data:
   filegate-test-index:
+  filegate-test-config:

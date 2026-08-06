@@ -43,6 +43,9 @@ services:
       # Persistent index; small, but its loss triggers a rebuild
       # walk so volumes are preferable to anonymous mounts.
       - filegate-index:/var/lib/filegate/index
+      # Authoritative applied manifest, generated REST token, and runtime S3
+      # keys. Losing this volume loses credentials and desired state.
+      - filegate-config:/var/lib/filegate/config
     restart: unless-stopped
 
   caddy:
@@ -66,6 +69,7 @@ services:
 
 volumes:
   filegate-index:
+  filegate-config:
   caddy-data:
   caddy-config:
 
