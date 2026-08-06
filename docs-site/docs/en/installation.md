@@ -124,13 +124,11 @@ curl -fsS -H 'Authorization: Bearer <token>' \
 
 ## Behind a reverse proxy
 
-Filegate never terminates TLS. HTTPS, and browser-facing HTTP/2, belong at a
-reverse proxy in front of it; there is no TLS configuration to enable.
+Terminate TLS and browser-facing HTTP/2 at a reverse proxy in front of Filegate.
+The Filegate listener serves cleartext traffic on the trusted upstream network.
 
-The listener serves cleartext HTTP/1.1. That is what every mainstream proxy speaks
-to its backends — nginx does not support HTTP/2 upstreams at all, and Caddy,
-Traefik and Envoy default to HTTP/1.1 — so no configuration is needed for the
-usual setup.
+The listener serves cleartext HTTP/1.1 by default, which works with standard
+nginx, Caddy, Traefik, and Envoy upstream configurations.
 
 Set `server.http2_cleartext` when your proxy or service mesh is configured to
 speak h2 to its backends. HTTP/1.1 and h2c then share the same port: the server
@@ -179,9 +177,11 @@ sudo systemctl status filegate
 
 The package preinstall script refuses to replace package files while `filegate.service` is active.
 
-## Container evaluation
+## Container deployment
 
-Use the Docker image for evaluation, CI smoke tests, or environments that intentionally standardize on containers. For ordinary Linux production hosts, use the package and systemd path above.
+Use the Docker image for local environments, CI smoke tests, and
+container-standardized deployments. On systemd-based Linux hosts, use the
+package path above.
 
 ```sh
 mkdir -p ./filegate-data
@@ -204,7 +204,7 @@ Keep both named volumes when replacing the container. `filegate-config` is
 authoritative: it holds the applied manifest, S3 access keys, and generated API
 token. `filegate-index` is rebuildable but avoids a full data walk.
 
-The published container is currently Linux AMD64 only and runs as UID/GID
+The published container targets Linux AMD64 and runs as UID/GID
 `65532`. Bind mounts must be writable by that identity and preserve `user.*`
 xattrs. Run only one container against a given data mount set and its config and
 index volumes.

@@ -11,7 +11,7 @@ tags: [reference, operations, recovery]
 
 This guide is for deploying, operating, and maintaining Filegate in production.
 
-## 1. Deployment Modes
+## 1. Installation options
 
 - Package install: RPM/DEB with systemd unit. This is the recommended production path.
 - Static binary: direct service management with your own unit.
@@ -87,7 +87,8 @@ sudo systemctl status filegate
 sudo journalctl -u filegate -f
 ```
 
-The package intentionally does not auto-start the service.
+The package installs the service without starting it. Configure its storage
+paths and credentials before enabling it.
 
 Package install provides `/usr/bin/fg`. It can also add the optional shell alias:
 
@@ -193,7 +194,7 @@ Efficiency note:
 - `detection.backend=btrfs` is a major optimization when roots are on btrfs subvolumes.
 - `detection.backend=poll` is functionally correct but materially heavier on very large trees.
 - The standard distroless container has no `btrfs` CLI, so `auto` selects
-  `poll`; the System page reports this reason instead of hiding the fallback.
+  `poll`; the System page reports the effective backend and reason.
 
 Do not place nested btrfs subvolumes inside a root watched by the btrfs
 detector. Externally deleting a nested subvolume can stop generation processing
@@ -274,7 +275,7 @@ fg status --config /etc/filegate/conf.yaml
 Important for `index rescan --new`:
 
 - Stop `filegate` first.
-- The command is intentionally offline-only and exits with an error if index files are in use.
+- The command runs offline and exits with an error if index files are in use.
 - By default it creates a timestamped backup of the previous index directory.
 - Use `--skip-backup` only when you explicitly do not want a rollback artifact.
 
@@ -348,10 +349,11 @@ Rollback:
 There is no automatic schema downgrade promise. Test forward and rollback paths
 with a copy of production state before an upgrade that changes on-disk formats.
 
-## 13. Fixed Operating Boundaries
+## 13. Operating requirements
 
-- Single node, no replication, leader election, or shared Pebble deployment.
-- Single tenant. The REST bearer token grants all file and config authority.
+- Run one daemon per writable mount set, runtime store, and Pebble index.
+- The REST bearer token grants full file and configuration authority for the
+  Filegate instance.
 - No multi-file transactions or cross-request point-in-time snapshot. Each
   successful write publishes its own result atomically.
 - External writers are eventually indexed; the reconciliation interval bounds
@@ -362,8 +364,8 @@ with a copy of production state before an upgrade that changes on-disk formats.
   feed Filegate's internal version capture, which is administered through REST.
 - No durable audit log and no OpenTelemetry traces. Export logs/metrics and
   activity to external systems if those are requirements.
-- The published Filegate container is Linux AMD64 only. Packages cover Linux
-  AMD64 and ARM64. The Admin app has no published release artifact.
+- The published Filegate container targets Linux AMD64. Packages cover Linux
+  AMD64 and ARM64. Deploy the source-shipped Admin app from a pinned commit.
 
 ## 14. Troubleshooting Quick Table
 

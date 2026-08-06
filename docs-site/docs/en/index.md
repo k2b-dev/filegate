@@ -11,8 +11,6 @@ tags: [overview, architecture]
 
 Filegate is the file layer between your application and Linux storage.
 
-> **Deployment model.** Filegate is intentionally single-node and single-tenant. These are permanent product boundaries, not beta limitations. The REST API uses one all-or-nothing bearer token and expects a trusted network behind a reverse proxy; replication and shared-index operation are outside Filegate's scope. Read [Security model](/docs/en/security) before deciding where to put it.
-
 Your application keeps its business logic, users, permissions, and product model. Filegate handles file APIs, indexed metadata, resumable uploads, direct browser transfers, activity records, and optional S3-compatible access.
 
 The filesystem is the durable storage layer. Files stay as regular Linux files in the directories you configure, so standard Linux tools, backups, snapshots, rsync, and future systems can read the same data without a Filegate-specific export step.
@@ -93,6 +91,6 @@ This differs from systems that store user files as opaque blobs, chunk stores, o
 - [Getting started](/docs/en/getting-started) gets one local service running and uploads a file.
 - [Use Filegate in an app](/docs/en/application-architecture) shows the recommended application architecture with direct signed uploads and downloads.
 - [Configuration](/docs/en/configuration) explains how Filegate resolves and validates configuration.
-- [Operations](/docs/en/operations) defines backup, restore, readiness, upgrade, and fixed production boundaries.
+- [Operations](/docs/en/operations) covers backup, restore, readiness, upgrades, and production requirements.
 - [HTTP API](/docs/en/http-api) documents the REST surface.
 - [Uploads and downloads](/docs/en/uploads-downloads) describes one-shot, resumable, and direct browser transfer patterns.

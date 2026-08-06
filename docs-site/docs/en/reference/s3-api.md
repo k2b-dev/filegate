@@ -3,7 +3,7 @@ title: S3 API compatibility reference
 navTitle: S3 API compatibility
 section: Deep reference
 order: 285
-description: Implemented S3 operations, AWS deviations, limits, and reserved namespaces.
+description: Supported S3 operations, compatibility behavior, limits, and reserved namespaces.
 tags: [reference, s3, compatibility]
 ---
 
@@ -11,9 +11,11 @@ tags: [reference, s3, compatibility]
 
 Filegate exposes an S3-compatible HTTP API alongside its native REST API. The S3 listener is **disabled by default**; enable it in config (`s3.enabled: true`) and configure at least one credential.
 
-The implementation targets the subset of the AWS S3 API that real-world clients use for backup, sync, and object-store workflows — `rclone`, `restic`, `kopia`, `awscli`, `Bun.s3`, Cyberduck, MinIO Client, etc. It is **not** a full AWS-compatibility layer.
+The API supports the operations used by backup, sync, and object-storage clients
+including `rclone`, `restic`, `kopia`, `awscli`, `Bun.s3`, Cyberduck, and MinIO
+Client.
 
-This page documents what's implemented, the deviations from AWS, and the limits.
+This page documents the supported surface, compatibility behavior, and limits.
 
 ---
 
@@ -29,7 +31,8 @@ Virtual-hosted-style (`{bucket}.s3.example.com`) is not supported. Configure you
 
 A bucket maps 1:1 to a configured Filegate mount; the mount name is the bucket name. Bucket-name validation runs at startup when `s3.enabled=true`: every mount name must satisfy AWS S3 bucket rules (3-63 chars, lowercase alphanumeric + hyphens, no IP-like names, no AWS-reserved prefixes/suffixes, not `.fg-versions` or `.fg-uploads`).
 
-CreateBucket / DeleteBucket are intentionally **rejected** — buckets are operator-configured, not client-provisioned.
+CreateBucket and DeleteBucket return `NotImplemented`; buckets are configured as
+Filegate mounts by the operator.
 
 ---
 
@@ -81,22 +84,22 @@ Authorization is per-key: each key has an explicit bucket whitelist. ListBuckets
 | AbortMultipartUpload   | DELETE | `/{bucket}/{key}?uploadId=X` | Idempotent staging-dir cleanup. |
 | CompleteMultipartUpload | POST  | `/{bucket}/{key}?uploadId=X` | Validates + concats parts, atomic 2-phase commit. Returns the composite ETag (`<hex(MD5(concat-of-part-MD5-bytes))>-<N>`). |
 
-### Not implemented
+### Unsupported operations
 
 - Bucket lifecycle, versioning, replication, ACLs, policies, CORS, encryption keys.
 - Object tagging, legal hold, retention, presigned-POST forms.
 - ListObjectsV1 (`GET /{bucket}` without `list-type=2`) — clients should use V2.
 - ListObjectVersions (filegate exposes no per-object S3 versions).
-- UploadPartCopy (multipart-copy). The single-call CopyObject covers ≤ 5 GiB; oversized sources currently return `EntityTooLarge`.
+- UploadPartCopy (multipart-copy). The single-call CopyObject covers ≤ 5 GiB; oversized sources return `EntityTooLarge`.
 - SelectObjectContent (S3 Select).
 
 Any unimplemented op returns `NotImplemented` (501) with a clear error message.
 
 ---
 
-## Deviations from AWS
+## Compatibility behavior
 
-These are intentional differences in semantics:
+The following semantics define Filegate's S3 compatibility surface:
 
 ### Bucket existence isolation
 
@@ -126,7 +129,7 @@ Filegate enforces a **2 KiB** ceiling on the total user-metadata blob (matches A
 
 Successful multipart Complete deletes the staging `parts/` and `complete.tmp` immediately. Active multipart metadata lives in Pebble; part bytes stay under `.fg-uploads` until Complete, Abort, or cleanup. A durable Pebble record is written only after Complete succeeds and is used for idempotent Complete retries. The cleanup loop retires `phase=done` active rows and their durable records after the configured done-retention window, retires aborted legacy manifests after aborted-retention, and force-aborts stale `in_progress` uploads after the stuck-upload max age. `phase=committing` uploads are not cleanup-eligible; startup recovery reconciles them against the durable record.
 
-If startup recovery finds a `phase=committing` upload without a durable record, it logs the upload ID, bucket, key, and staging path, then leaves the active row in place. This means the original Complete did not reach the final Pebble commit. The safe recovery path is to retry `CompleteMultipartUpload` with the original parts list; if the client is gone and the upload is intentionally abandoned, an operator may remove the logged staging directory after confirming the object was not created.
+If startup recovery finds a `phase=committing` upload without a durable record, it logs the upload ID, bucket, key, and staging path, then leaves the active row in place. This means the original Complete did not reach the final Pebble commit. The safe recovery path is to retry `CompleteMultipartUpload` with the original parts list; for an abandoned upload, an operator may remove the logged staging directory after confirming the object was not created.
 
 ### `If-None-Match` on PutObject / CopyObject
 

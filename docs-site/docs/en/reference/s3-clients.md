@@ -20,7 +20,11 @@ All examples assume:
 
 Substitute your real values.
 
-> **Path-style required.** Filegate only supports path-style addressing (`https://host/{bucket}/{key}`). Every client below has a flag for this — set it explicitly. Virtual-hosted-style (`{bucket}.host`) does **not** work.
+## Use path-style addressing
+
+Configure every client for path-style addressing
+(`https://host/{bucket}/{key}`). The examples below include the required client
+setting.
 
 ---
 
@@ -191,7 +195,7 @@ After connecting, you'll see your authorized buckets listed at the top level. Dr
 
 ### Cyberduck quirks
 
-- Cyberduck issues some bucket-level probe ops (HeadBucket, GetBucketLocation) that we either implement or politely 200/403 on. The browser pane will populate normally as long as the key is authorized for the buckets it's listing.
+- Cyberduck uses bucket-level probes such as HeadBucket and GetBucketLocation. The browser pane populates when the key is authorized for the listed buckets.
 - On rename / move within the same bucket, Cyberduck uses CopyObject + DeleteObject — fast on reflink-capable filesystems and correct under filegate's atomic-rename semantics.
 
 ---
@@ -238,7 +242,7 @@ curl -v -X HEAD http://localhost:9100/data/some-key \
 curl http://localhost:9100/   # → 403 SignatureDoesNotMatch (SigV4 required)
 ```
 
-A 403 here is the **expected** response — it means the listener is alive and rejecting unsigned requests, which is what we want.
+A 403 confirms that the listener is available and requires a signed request.
 
 ---
 

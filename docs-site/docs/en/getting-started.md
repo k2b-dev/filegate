@@ -20,7 +20,8 @@ This guide is for technical users who want a short first run before installing F
 | Writable index directory | Service metadata | `/tmp/filegate/index` |
 | Bearer token | REST API | `dev-token` |
 
-None of these are strictly required — `fg serve` with no configuration at all starts, serves `/var/lib/filegate/data`, and prints a generated API token once. This guide sets them explicitly so the commands below are copy-pasteable.
+The example configures each value explicitly. Without configuration, `fg serve`
+uses `/var/lib/filegate/data` and prints a generated API token once.
 
 ## Start a disposable instance
 

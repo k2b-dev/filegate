@@ -88,9 +88,8 @@ Files at or below `DirectThresholdBytes` take one `PUT /v1/paths` instead of
 create, segment and commit. It defaults to `SegmentSize`, so a file that would
 have been a single segment goes direct without any configuration.
 
-That default is worth understanding rather than overriding. A session costs three
-round trips and several fsyncs per file, and for a file that fits in one segment
-its resumability amounts to retrying that one segment. Measurements in
+The default avoids three session round trips and several fsyncs for files that
+fit in one segment. Measurements in
 [Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the one-shot path at 2.4x the
 throughput of sessions on a 5000-file corpus averaging 16 KiB.
 

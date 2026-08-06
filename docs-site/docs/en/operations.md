@@ -137,9 +137,9 @@ Restore data, runtime store, and matching index together only when the failed
 upgrade changed durable state. There is no general on-disk schema downgrade
 promise; rehearse upgrades and rollbacks on a copy of production state.
 
-## Fixed production boundaries
+## Production requirements
 
-- Filegate is single-node and single-tenant. Run exactly one daemon for an
+- Run exactly one Filegate daemon for an
   index/runtime-store pair and writable mount set; there is no replication,
   leader election, or shared Pebble mode.
 - The REST bearer token grants full file and configuration authority. S3 keys
@@ -157,8 +157,9 @@ promise; rehearse upgrades and rollbacks on a copy of production state.
   implemented.
 - S3 is path-style and does not expose object versioning. Filegate's internal
   version history is administered through REST.
-- The published Filegate container is Linux AMD64 only; packages cover Linux
-  AMD64 and ARM64. The Admin app currently has no published release artifact.
+- The published Filegate container targets Linux AMD64; packages cover Linux
+  AMD64 and ARM64. Deploy the source-shipped Admin app from a pinned Filegate
+  commit.
 
 For backup and restore procedures, filesystem repair, detector recovery, and
 operational checklists, see the [system administration reference](/docs/en/reference/sysadmin).

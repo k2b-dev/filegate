@@ -3,7 +3,7 @@ title: Prometheus and observability reference
 navTitle: Observability
 section: Deep reference
 order: 280
-description: Filegate metrics, PromQL examples, cardinality rules, and deliberate omissions.
+description: Filegate metrics, PromQL examples, cardinality rules, and additional runtime signals.
 tags: [reference, metrics, prometheus]
 ---
 
@@ -129,9 +129,8 @@ this histogram tells you which without distributed tracing.
 | `filegate_detector_errors_total` | counter | — | Detection scan errors. |
 | `filegate_path_cache_lookups_total` | counter | result=hit\|miss | Path cache lookups by result. Occupancy alone cannot tell an undersized cache from a cold one. |
 
-Worker-pool saturation is deliberately not a metric: the scheduler lives inside
-the HTTP router, which the metrics provider cannot reach without an awkward
-back-channel. It is available on `GET /v1/system/runtime` instead.
+Worker-pool saturation is available on `GET /v1/system/runtime` rather than the
+Prometheus endpoint.
 
 ### Runtime + process (free, from client_golang)
 
@@ -179,16 +178,15 @@ the metrics; you visualize them.
 
 ## Cardinality discipline
 
-Labels are deliberately bounded: `status_class` (not the exact code),
+Labels use bounded value sets: `status_class` (not the exact code),
 `adapter` (two values), `op` (a fixed set), `mount`, `reason`, `phase`,
 `type`. There are **no** per-path, per-key, or per-access-key labels —
 those are unbounded and would inflate the time-series database.
 
-## Deliberately not exposed (yet)
+## Additional operational signals
 
-- **Multipart uploads-in-flight gauge** — would require scanning
-  `.fg-uploads/` on every scrape (I/O on the scrape path). Deferred until
-  it can be tracked in memory cheaply.
-- **Per-access-key rate-limit label** — cardinality risk with many keys.
-  The aggregate `filegate_s3_ratelimit_rejected_total` is exposed; a
-  per-key breakdown can be added behind a flag if needed.
+- **Multipart uploads in flight** — inspect `GET /v1/system/runtime` for active
+  upload sessions. The metrics scrape path does not scan `.fg-uploads/`.
+- **Rate-limit pressure** — use the aggregate
+  `filegate_s3_ratelimit_rejected_total`. Per-access-key labels are omitted to
+  keep metric cardinality bounded.

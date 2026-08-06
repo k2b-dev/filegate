@@ -3,18 +3,17 @@ title: Runtime model and guarantees
 navTitle: Runtime model
 section: Development
 order: 310
-description: Filegate sources of truth, consistency boundaries, write semantics, and fixed assumptions.
+description: Filegate sources of truth, consistency boundaries, and write semantics.
 tags: [development, consistency, storage]
 ---
 
-# Behavior and Assumptions
+# Runtime model
 
-This document lists core runtime assumptions and behavioral guarantees.
+This document defines Filegate's runtime behavior and guarantees.
 
-## Scope
+## Operating contract
 
 - Linux-only runtime support
-- No backward-compatibility guarantee with legacy TS-only implementation
 - Bearer token auth for `/v1/*`, except scoped direct upload/download URLs
 - Single-node and single-tenant operation
 - Exactly one active daemon per runtime/index store and writable mount set

@@ -87,8 +87,7 @@ Your `allow` endpoint has to handle both kinds. A direct item carries no
 `checksum` and no `segments`, and it expects a `{ kind: "direct", direct }`
 directive minted from `POST /v1/uploads/direct`; a session item expects a
 `session`. [Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the
-one-shot path at 2.4x the throughput of sessions for small files, which is why
-this is the default rather than an opt-in.
+one-shot path at 2.4x the throughput of sessions for small files.
 
 Pass `directThresholdBytes: 0` to send everything through sessions. The shortcut
 is also skipped when `onConflict` is `skip-identical`, which needs the checksum

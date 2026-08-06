@@ -54,7 +54,7 @@ Secret keys are excluded from manifests, never returned by the config API, and r
 
 | Key | Type | Activation | Managed by | Default | Meaning |
 |---|---|---|---|---|---|
-| `auth.bearer_token` | string | static | bootstrap | - | REST bearer token. Needs a restart: deliberately static: the break-glass credential must survive a damaged runtime store. Secret; never returned by the API. |
+| `auth.bearer_token` | string | static | bootstrap | - | REST bearer token. Needs a restart: loaded at startup so the break-glass credential remains available when the runtime store is damaged. Secret; never returned by the API. |
 
 ## Storage
 

@@ -3,7 +3,7 @@ title: Versioning internals and operations
 navTitle: Versioning internals
 section: Deep reference
 order: 295
-description: Filegate version capture, retention, storage layout, caveats, and operator runbook.
+description: Filegate version capture, retention, storage layout, operational characteristics, and operator runbook.
 tags: [reference, versioning, storage]
 ---
 
@@ -49,8 +49,8 @@ show the effective copy mode and selection reason.
 
 `retention_buckets` defaults to the schedule shown above so an operator
 who enables versioning does not accidentally retain every captured
-version forever. Configure an explicit empty list only when you want no
-live-version pruning and have planned for the storage growth.
+version forever. An explicit empty list disables live-version pruning and
+requires capacity monitoring for the resulting storage growth.
 
 ## Lifecycle
 
@@ -144,18 +144,17 @@ Version metadata (timestamp, size, mode, pinned flag, label,
 (`0x04`). Listing is index-only; the filesystem is touched only when
 fetching version content or restoring.
 
-## Caveats
+## Operational characteristics
 
 1. External writes are not versioned. Files modified by `cp`, `rsync`, or any
    path that bypasses Filegate do not reach the capture point.
-2. The cooldown window can swallow rapid edits. A file edited at T+14m
+2. The cooldown window groups rapid edits. A file edited at T+14m
    and again at T+16m (with the default 15m cooldown) only captures
    the T+16m state — the T+14m bytes are lost. Lower the cooldown for
    more granular history at the cost of storage growth.
 3. `enabled: on` against a mount without reflink support falls back to byte copies
-   for capture. Storage usage will balloon proportional to the number
-   of versions × file size; only use this configuration on small files
-   or with aggressive retention.
+   for capture. Storage usage grows with the number of versions and file size;
+   use retention limits that match available capacity.
 4. Pinned versions outlive the bucket policy but not the source file's
    `pinned_grace_after_delete` window. The grace exists so an
    accidental `DELETE` is recoverable; after the window every version

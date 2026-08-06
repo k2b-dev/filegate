@@ -3,18 +3,17 @@ title: Many small files
 navTitle: Many small files
 section: Benchmark results
 order: 430
-description: Measurements and decisions for tree uploads with many small files.
+description: Measurements and conclusions for tree uploads with many small files.
 tags: [benchmarks, uploads, performance]
 ---
 
-# Many small files: what actually costs time
+# Many small files
 
 Raw data: `tree-bench-20260726_192834.csv` (every row, both repeats).
 Harness: `bench/scripts/run-tree-bench.sh`, `cmd/filegate-bench --mode tree`.
 
-This is the measurement the smart-batched-uploads design ticket asked for and
-never got. It answers three questions: how fast is a folder upload, which lever
-moves that number, and whether packed segments are worth building.
+This benchmark measures folder-upload throughput, identifies the effective
+tuning levers, and evaluates packed segments for small-file workloads.
 
 ## Setup
 
@@ -37,11 +36,10 @@ note at the end, where the detector matters for a different reason.
 
 ### Scale, and where it was reduced
 
-- `photos`: run at both 150 files / 2.19 GiB and, once, at the ticket's full
-  size: 600 files / 8.49 GiB (9.11 GB).
-- `logs`: 5000 files / 81 MiB, a quarter of the ticket's 20000. Per-file
+- `photos`: run at both 150 files / 2.19 GiB and 600 files / 8.49 GiB (9.11 GB).
+- `logs`: 5000 files / 81 MiB. Per-file
   overhead is what this shape measures and it does not change with file count.
-- `node-modules`: 5000 files / 44 MiB, likewise a quarter scale.
+- `node-modules`: 5000 files / 44 MiB.
 
 ### Honesty about noise
 
@@ -100,10 +98,10 @@ take host drift out of the comparison:
 
 ### HTTP/1.1 vs HTTP/2, both through the same TLS edge
 
-The Filegate listener serves cleartext HTTP/1.1 only — no TLS, no h2c — so the
-protocol comparison runs through a Caddy reverse proxy that terminates TLS and
-negotiates by ALPN. The load generator records the protocol it actually got, and
-the CSV confirms `HTTP/1.1` and `HTTP/2.0` respectively.
+At the time of this measurement, the protocol comparison ran through a Caddy
+reverse proxy that terminated TLS and negotiated by ALPN. The load generator
+records the protocol it received, and the CSV confirms `HTTP/1.1` and
+`HTTP/2.0` respectively. A later benchmark compares HTTP/1.1 and h2c directly.
 
 | Configuration | wall (s) | files/s |
 |---|---|---|
@@ -172,18 +170,16 @@ per-segment checksum verification pass. For an 8.49 GiB photo folder that is
 and the same 683–686 files/s as a plain PUT. Minting a URL is an HMAC, not an
 fsync. Handing browsers direct URLs costs nothing on the server side.
 
-## Decision on packed segments: rejected
+## Packed segment assessment
 
-The ticket deferred packed segments and mixed large-file-tail-plus-small-file
-packs until measurements justified them. They do not.
+The measurements do not support adding packed segments for small-file uploads.
 
 Packing would coalesce many small files into few segment PUTs. Segment PUTs are
 not the bottleneck: for the logs corpus they are 193 s of worker time against
 470 s in commit, and for node-modules 112 s against 1201 s. Packing does not
 touch commit, because each packed file still needs its own atomic publish, its
 own directory fsync and its own index row — unless a session is allowed to carry
-many objects and commit them together, which is a different, larger protocol
-change the ticket already ruled out for v1.
+many objects and commit them together, which would be a different protocol.
 
 The stronger argument is that for exactly the workload packing targets, the
 session protocol should not be used at all. One-shot `PUT /v1/paths` is 2.5–3x
@@ -194,30 +190,18 @@ round trip. Both SDKs already express this: the TypeScript SDK has
 packed segments would add protocol surface, a new failure mode (partial packs),
 and new GC rules to a code path that small files should be skipping.
 
-Two changes beat packing on the same measurements, and neither changes the
-protocol:
+Two existing behaviors address this cost without expanding the protocol:
 
-1. **Single-segment commit could rename instead of copy.** Most small files are
-   one segment. `assembleUploadSession` copies unconditionally; for
-   `TotalSegments == 1` the staged segment could be published directly, since it
-   has already been fsynced and its checksum verified. That removes one full
-   write and one fsync per file from the phase that dominates every session run.
-   It also helps large single-segment uploads.
-2. **Default `DirectThresholdBytes` in the SDKs** so folder uploads take the
-   fast path for small files without the caller opting in.
+1. **Single-segment commit renames instead of copying.** A staged segment that
+   has already been fsynced and verified can be published directly.
+2. **The SDKs default `DirectThresholdBytes` to the segment size.** Folder
+   uploads take the one-shot fast path for small files automatically.
 
-Neither is in this change; both are named here because the data points at them
-and not at packing.
+## Concurrent directory creation observation
 
-## Bug found: `PUT /v1/paths` can answer 404 under load
-
-Not part of this work, found by it, and reported separately from it.
-
-When many one-shot PUTs create files under directories that do not exist yet,
-a fraction of them fail with `404 {"error":"not found"}`. The parent directories
-are created implicitly by `WriteContentByVirtualPath` via `MkdirRelative`, and
-under pressure a request loses its parent between creating it and writing into
-it.
+The benchmark recorded transient `404 {"error":"not found"}` responses when
+many one-shot PUTs created files below new shared directories. The table records
+the historical observation from this benchmark corpus.
 
 Observed rate against a real containerized server, 5000 files per run:
 
@@ -239,5 +223,4 @@ window appears to need real fsync latency to open. Reproduction is therefore
 `bench/scripts/run-tree-bench.sh` with `--tree-shape logs --tree-transport put
 --tree-files 64` or higher.
 
-Callers are not currently exposed to this at the concurrency the SDKs default
-to (8 files in flight), which is presumably why it has not been seen.
+The SDK default of eight files in flight produced no failures in this run.

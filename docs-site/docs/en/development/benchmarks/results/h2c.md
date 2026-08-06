@@ -12,25 +12,21 @@ tags: [benchmarks, http2, performance]
 Raw data: `tree-bench-20260727_012223.csv`, `tree-bench-20260727_012612.csv`.
 Harness: `bench/scripts/run-tree-bench.sh` with `FILEGATE_BENCH_PRESET=h2c`.
 
-Ticket `micao586` asked for one of two things: support h2c on the plain listener,
-or document that the listener is HTTP/1.1 only. h2c was added, so this is the
-rerun the ticket required — confirm it changes nothing for small files and does
-not regress large ones.
+This benchmark compares HTTP/1.1 and h2c directly on the same Filegate listener.
+The results show no measurable difference for small-file throughput and no
+large-file regression.
 
-It confirms both.
+## Measurement scope
 
-## Why this measurement replaces the earlier one
-
-`2026-07-26-many-small-files.md` compared HTTP/1.1 against HTTP/2 through a Caddy
-edge that terminated TLS, because the listener had no h2c and there was no other
-way to get HTTP/2 to it. That comparison carried the proxy in both arms.
+The many-small-files benchmark compared HTTP/1.1 with HTTP/2 through a Caddy
+edge that terminated TLS. That comparison carried the proxy in both arms.
 
 These pairs hit the listener directly on the same port, with no proxy in between,
 so the only difference is the protocol.
 
 ## Setup
 
-Same host and harness as the earlier results: Apple M1 Max, Docker Desktop Linux
+Same host and harness as the many-small-files results: Apple M1 Max, Docker Desktop Linux
 VM, ext4 on a named volume, detector parked, versioning off, stack recreated
 between every run. Two runs of the preset, two repeats each, so four samples per
 configuration. `FILEGATE_SERVER_HTTP2_CLEARTEXT` is on for the whole preset; the
@@ -56,21 +52,16 @@ spread of its own arm: the HTTP/1.1 photos arm alone ranges 240–628 MiB/s, a
 factor of 2.6 for identical work. There is no measurable difference, which matches
 what the edge comparison found.
 
-## A first run that said otherwise
+## Variance check
 
-The first run of the session pair looked like a clean regression: h2c at 280–300
+The first run of the session pair measured h2c at 280–300
 files/s against HTTP/1.1 at 360–374, all four samples separated, which is the
-shape of a real signal rather than noise. There was even a plausible mechanism —
-HTTP/2 multiplexes onto one connection where HTTP/1.1 opens a socket per
-concurrent request, and against a local server there is no handshake cost to
-amortize.
+shape of a possible signal. HTTP/2 multiplexes onto one connection where
+HTTP/1.1 opens a socket per concurrent request.
 
-The second run reversed it: h2c 354–377 against HTTP/1.1 288–341. The mechanism
-was a story fitted to four numbers.
-
-Recorded because it is the failure mode this host invites. Two repeats of one
-configuration are not enough to separate a 20% effect here, however cleanly they
-appear to line up.
+The second run reversed it: h2c 354–377 against HTTP/1.1 288–341. Two repeats
+of one configuration are therefore insufficient to separate a 20% effect on
+this host.
 
 ## Large files do not regress
 
@@ -78,9 +69,9 @@ The photos arm is the large-file check: 150 files, 2.3 GiB, median 414 MiB/s on
 HTTP/1.1 and 404 on h2c. The h2c arm's best sample is lower (429 against 628), but
 that 628 is a single high outlier and the medians are 2.6% apart.
 
-## What this does not measure
+## Scope limit
 
-Concurrency past 32 in flight. HTTP/2's single connection could plausibly become
-a bottleneck where HTTP/1.1's pool would not, and the earlier work found the knee
-for this server at 32–64 in flight. Nothing here rules that out; it was not the
-question the ticket asked, and h2c is off by default.
+The benchmark does not cover concurrency above 32 in flight. The
+many-small-files results place the throughput knee at 32–64 in flight. h2c
+remains off by default and is intended for upstream compatibility rather than
+throughput tuning.

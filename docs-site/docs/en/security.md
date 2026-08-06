@@ -3,7 +3,7 @@ title: Security model
 navTitle: Security model
 section: Operate
 order: 130
-description: Understand Filegate authentication boundaries, fixed deployment scope, direct URL tokens, CORS, trusted proxies, and secret handling.
+description: Understand Filegate authentication, direct URL tokens, CORS, trusted proxies, and secret handling.
 tags: [security, auth, cors]
 ---
 
@@ -11,11 +11,11 @@ tags: [security, auth, cors]
 
 This page is for operators and developers who need to understand Filegate authentication boundaries and browser-safe transfer patterns.
 
-## Fixed security scope
+## Authorization model
 
-Filegate's authorization and tenancy model is deliberately small. Single-node
-and single-tenant operation are permanent product boundaries, not features
-planned for a later release. Read this before deciding where to put it.
+Filegate provides service-level REST authorization and scoped credentials for
+S3 and direct transfers. Run the REST and Admin surfaces on a trusted network
+behind TLS termination.
 
 | Property | State |
 |---|---|
@@ -28,7 +28,9 @@ planned for a later release. Read this before deciding where to put it.
 | Transport | Filegate listeners are cleartext. Terminate TLS at a trusted reverse proxy or private service boundary. |
 | REST rate limiting | Not built in. Enforce request and abuse limits at the reverse proxy. S3 keys have their own optional limits. |
 
-The practical consequence: anyone holding the bearer token can read and delete every file on every mount, and can change the service's own configuration. Give it to services, not to people, and use S3 keys when you need to hand out something narrower.
+The bearer token can read and delete every file on every mount and change the
+service configuration. Keep it in trusted services. Use scoped S3 keys or
+direct-transfer URLs for narrower access.
 
 ## Authentication surfaces
 
@@ -45,7 +47,11 @@ The practical consequence: anyone holding the bearer token can read and delete e
 
 A REST bearer token always exists. When `auth.bearer_token` is unset, the first start generates one, stores it in the runtime config store, and prints it once. There is no unauthenticated REST deployment.
 
-The config routes deserve separate thought. An actor who can `POST /v1/config/apply` can widen CORS, disable access logs, raise upload limits, and stage static changes for the next restart. Revision preconditions prevent accidental concurrent overwrites; they are not an authorization boundary. The bearer token's blast radius includes the service's own settings.
+An actor who can `POST /v1/config/apply` can widen CORS, disable access logs,
+raise upload limits, and stage static changes for the next restart. Revision
+preconditions prevent accidental concurrent overwrites; they are not an
+authorization boundary. Configuration access is part of the bearer token's
+authority.
 
 ## Actor logging
 

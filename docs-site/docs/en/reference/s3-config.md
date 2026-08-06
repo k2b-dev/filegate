@@ -73,7 +73,8 @@ Filegate refuses to start when:
 - Two `keys` entries share the same `access_key` (paste-twice typo — silent override would be a security hazard).
 - A `keys` entry's `buckets` list references a mount name that doesn't exist (catches typos like `"buckte"` instead of `"bucket"`).
 
-These errors are loud and fail-fast — operators catch the misconfiguration up-front instead of debugging mysterious 403s later.
+Each validation error identifies the invalid credential or bucket reference at
+startup.
 
 ### Combining single-key and multi-key seeds
 
@@ -141,7 +142,7 @@ When `s3.enabled=true`, every mount basename must:
 - Be 3-63 characters.
 - Use only lowercase letters, digits, and hyphens.
 - Not start or end with a hyphen.
-- Not contain dots; Filegate deliberately keeps bucket names path-style-safe.
+- Not contain dots; bucket names are path-style-safe.
 - Not match an IP-address shape (`192.168.1.1`).
 - Not start with `xn-`, `sthree-`, or `amzn-s3-demo-` (AWS reservations).
 - Not end with `-s3alias`, `--ol-s3`, `--x-s3`, or `--table-s3`.
@@ -155,7 +156,9 @@ Filegate fails startup with a clear error when any mount fails this check.
 
 The S3 listener speaks **plain HTTP**. Production deployments must put a reverse proxy (Traefik, Caddy, nginx) in front for TLS termination.
 
-This is intentional: SigV4 already authenticates and integrity-protects the request body, so plain-HTTP between a trusted reverse proxy and filegate is safe **inside the same trusted network**. Adding TLS inside the daemon would duplicate work the proxy is already doing better.
+SigV4 authenticates and integrity-protects the request body. Keep the plain-HTTP
+upstream connection inside the same trusted network as the TLS-terminating
+proxy.
 
 ### Traefik example
 
@@ -184,7 +187,8 @@ S3 path-style addressing means the bucket name is in the URL path (`https://s3.e
 
 ## Region
 
-Set `s3.region` to whatever string you want clients to sign with. Filegate doesn't care about the value; it only matters that the client's signature scope matches.
+Set `s3.region` to the region string clients use in their signature scope. The
+client and Filegate values must match.
 
 ```yaml
 s3:

@@ -3,27 +3,26 @@ title: Reducing durable writes during commit
 navTitle: Durable writes
 section: Benchmark results
 order: 420
-description: Evidence behind the upload commit durable-write changes.
+description: Upload commit durable-write counts, phase timings, and safety guarantees.
 tags: [benchmarks, uploads, durability]
 ---
 
-# Cutting durable writes out of upload commit
+# Upload commit durable writes
 
-Follow-up to `2026-07-26-commit-cost.md`, which established that commit is fsync
-bound rather than copy bound, and that the bookkeeping around publishing a file
-costs more than publishing it.
+The commit-cost benchmark established that commit is fsync-bound rather than
+copy-bound. This report measures the durable writes around file publication.
 
-## What the evidence is, and why it is not wall time
+## Evidence
 
 The claim here is about a count, so it is measured as a count.
 
 `domain/service_durable_writes_linux_test.go` wraps the index with a decorator
 that counts write batches. Every batch commits with `pebble.Sync`, so the count
 is the number of durable writes on the path. It is deterministic and independent
-of machine load, which matters because the host was saturated while this work
-landed — load average 34 on ten cores, thirty unrelated containers running — and
-wall-clock arms taken in that window disagreed with each other by 3x in both
-directions. Numbers that cannot be reproduced are not reported here.
+of machine load. The measurement host had a load average of 34 on ten cores and
+thirty unrelated containers running, while wall-clock arms differed by 3x in
+both directions. The report therefore uses reproducible counts rather than
+those wall-clock samples.
 
 | Operation | Before | After |
 |---|---:|---:|
@@ -50,7 +49,7 @@ untouched phase in the same run, so machine drift cancels:
 Read as "how many publish-steps does a commit cost", a node-modules commit went
 from 4.6 to 2.8.
 
-## The three changes
+## Implementation under test
 
 ### The parent directory is resolved, not re-created
 
@@ -80,14 +79,12 @@ since it is rebuildable from the filesystem. A crash after leaves them present a
 indexed. There is no in-between, because the batch is atomic. This is strictly
 better than the per-level path, where a crash could leave a chain indexed halfway.
 
-**The bug this introduced, and the invariant that caught it.** The caller reports
-the levels it created, and under concurrency that list can skip a middle level:
+**Concurrent directory creation.** The caller reports the levels it created,
+and under concurrency that list can skip a middle level:
 another request creates it between this one's lstat and its mkdir. Chaining across
 that gap anchored a directory to its grandparent and silently dropped a path
-component, so writes landed at the wrong place instead of failing. The
-shared-parent regression test from `0hj2gkrk` caught it on the first run.
-`indexNewDirChain` now keeps only the trailing contiguous run and lets the parent
-resolution index the rest, and
+component. `indexNewDirChain` keeps only the trailing contiguous run and lets
+the parent resolution index the rest, and
 `TestDirectoriesResolveWhenAnIntermediateLevelIsCreatedConcurrently` pins it.
 
 ### Staged artifacts are derived, not scanned, and not fsynced
@@ -107,7 +104,7 @@ a committed session answers from its commit record without consulting segments, 
 aborted one is closed to writes, and the cleanup loop already sweeps committed and
 aborted sessions. Nothing reads those paths expecting them absent.
 
-## What was left alone, and why
+## Preserved durability guarantees
 
 Two synced writes remain on the commit path and both earn their fsync.
 
@@ -118,9 +115,8 @@ phase says `committing`, and the recovery path checks whether the file landed.
 Without it the retry re-publishes, and under `onConflict=error` a successful
 upload turns into a permanent conflict.
 
-The **commit record** is what makes commit idempotent. It is already batched with
-the session update, so the two are one write, not two — the original ticket
-description was wrong about that.
+The **commit record** makes commit idempotent. It is batched with the session
+update, so both changes use one durable write.
 
 The directory fsync in `writeSegmentFile` also stays. Dropping it would make a
 segment's existence non-durable, and unlike staging garbage that is load-bearing:

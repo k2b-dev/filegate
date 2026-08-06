@@ -51,9 +51,9 @@ The Settings page is read-only, but the admin app still holds the Filegate beare
 | `ADMIN_COOKIE_SECURE` | Browser session cookie | No | `auto` (default), `true` or `false`. Auto sets `Secure` unless the request host is localhost. |
 | `REDIS_URL` | Rate limiting | No | Shares the login rate limit across replicas. In-memory when unset. |
 
-`ADMIN_TOKEN` must differ from `FILEGATE_TOKEN`. It previously defaulted to it,
-which meant brute-forcing the admin login yielded the Filegate master token;
-startup now refuses that configuration.
+`ADMIN_TOKEN` must differ from `FILEGATE_TOKEN`; startup rejects identical
+values. This keeps the Admin login credential separate from the Filegate bearer
+token.
 
 ## Single sign-on
 
@@ -75,11 +75,10 @@ nonce all checked. Sessions last 12 hours and are never refreshed; the admin app
 does not talk to the provider again after login. Logout is local and does not end
 the provider session.
 
-`OIDC_ALLOWED_GROUPS` is optional on purpose. Providers such as Authentik bind a
-group policy to the application itself, so a second allowlist in the admin would
-be duplicate bookkeeping. When it is unset, any account the provider lets through
-this client becomes an admin, and the admin logs a warning at startup stating
-that access control is delegated to the identity provider.
+`OIDC_ALLOWED_GROUPS` adds an Admin-side group allowlist. When it is unset, the
+identity provider controls which accounts may use the client, and every accepted
+account becomes an administrator. The Admin app logs this delegated access model
+at startup.
 
 Keeping `ADMIN_TOKEN` alongside OIDC gives you a break-glass login for when the
 provider is unreachable. Omitting it makes single sign-on the only way in and
@@ -118,10 +117,9 @@ Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
 
 ## Production deployment
 
-The Admin app is source-shipped and currently has no published Filegate release
-package or container. Build `admin/Dockerfile` from a pinned Filegate commit, or
-deploy the SSR app from `admin/` after `bun install --frozen-lockfile` and
-`bun run build`.
+The Admin app is source-shipped. Build `admin/Dockerfile` from a pinned Filegate
+commit, or deploy the SSR app from `admin/` after
+`bun install --frozen-lockfile` and `bun run build`.
 
 Terminate TLS at the reverse proxy and keep the Admin app on an operator-only
 network. It is not a read-only dashboard: any authenticated Admin user has the

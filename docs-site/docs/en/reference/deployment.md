@@ -53,7 +53,8 @@ The package installs:
 - systemd unit: `/lib/systemd/system/filegate.service`
 - data/log dirs: `/var/lib/filegate`, `/var/log/filegate`
 
-Service is installed but not auto-started by design.
+The package installs the service without starting it. Enable and start it after
+configuring the storage paths and credentials.
 
 The `fg` command works after package install. To also install the optional shell alias at package install time:
 
@@ -110,8 +111,7 @@ accepts connections, so changing it needs a restart. It applies to the REST
 listener only. The S3 listener stays HTTP/1.1: S3 clients sign and stream over
 HTTP/1.1 in practice, so h2c there would be surface without a consumer.
 
-It is off by default because accepting a second protocol on a listener should be
-an operator's decision, not something that arrives with an upgrade.
+It is off by default. Enable it when the upstream proxy or service mesh uses h2c.
 
 Measurements are in [HTTP/1.1 compared with h2c](/docs/en/development/benchmarks/results/h2c): across four repeats per
 configuration, HTTP/1.1 and h2c differ by 1.5% to 6.7% at the median, inside a
@@ -159,7 +159,7 @@ For production, mount:
 
 and inject token/config through env vars or mounted config file.
 
-The published container is currently Linux AMD64 only. Release packages are
+The published container targets Linux AMD64. Release packages are
 published for Linux AMD64 and ARM64. The container runs as UID/GID `65532`; bind
 mounts must be writable by that identity and must preserve `user.*` xattrs.
 
@@ -183,13 +183,13 @@ sessions. Downloads use scoped direct download URLs. If the browser reaches
 Filegate at a different URL than the admin server, set `server.public_url` in
 Filegate and configure CORS for the admin origin.
 
-The Admin app is source-shipped, not currently published as a release package
-or container. Build `admin/Dockerfile` at a pinned Filegate commit or deploy the
-SSR app from `admin/` with `bun install --frozen-lockfile`. Treat it as a
+The Admin app is source-shipped. Build `admin/Dockerfile` at a pinned Filegate
+commit or deploy the SSR app from `admin/` with
+`bun install --frozen-lockfile`. Treat it as a
 full-authority operator surface, put it behind TLS, and do not expose it
 directly to the public internet.
 
-## Production Boundaries
+## Production requirements
 
 - Filegate is single-node and single-tenant. One REST bearer token has full
   file and configuration authority; only S3 keys provide narrower bucket

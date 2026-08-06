@@ -54,9 +54,9 @@ The plan reports additions, changes, removals, their activation class, the curre
 
 For a local daemon, `--host` can be omitted because the bootstrap config
 contains `server.listen`. Token flags can be omitted only when the bootstrap
-config contains an explicit `auth.bearer_token`. A generated token exists only
-in the runtime store and is deliberately not read back by the CLI; pass it via
-`--token-file` or `FILEGATE_TOKEN`.
+config contains an explicit `auth.bearer_token`. A generated token remains in
+the runtime store and is never exposed to the CLI; pass it via `--token-file`
+or `FILEGATE_TOKEN`.
 
 ## Apply the manifest
 

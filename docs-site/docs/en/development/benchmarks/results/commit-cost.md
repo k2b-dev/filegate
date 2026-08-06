@@ -7,19 +7,17 @@ description: Measurements and conclusions for Filegate upload commit latency.
 tags: [benchmarks, uploads, performance]
 ---
 
-# What commit actually costs
+# Upload commit cost
 
 Raw data: `tree-bench-20260726_220709-copy-assembly.csv` (copy assembly),
 `tree-bench-20260726_221045-move-assembly.csv` (move assembly).
 Harness: `bench/scripts/run-tree-bench.sh` with `FILEGATE_BENCH_PRESET=commit`.
 
-Ticket `pvov58oj` asked for two changes and named a cause: commit dominates every
-upload-session run "because `assembleUploadSession` reads every staged segment
-back and writes the whole file a second time". This measures whether removing
-that second write does what the ticket expected.
-
-It does not, for small files. The second write was never the dominant term
-there. The number the ticket wanted comes from the other half of the ticket.
+This benchmark isolates upload-session assembly cost and compares it with the
+one-shot path. For small files, durable session bookkeeping dominates the
+second content write. Moving a single staged segment improves assembly and
+large-file throughput, while direct one-shot uploads provide the largest
+small-file gain.
 
 ## Setup
 
@@ -29,8 +27,8 @@ recreated between every run, 2 repeats. Both arms ran back to back in one
 sitting, because identical configurations on this host differ by up to 2.4x
 across tens of minutes.
 
-The two arms differ only in `assembleUploadSession`: the copy arm is the previous
-implementation, the move arm renames a lone staged segment into place.
+The two arms differ only in `assembleUploadSession`: the copy arm copies a lone
+staged segment, while the move arm renames it into place.
 
 ## Assembly got cheaper. Commit did not.
 
@@ -76,9 +74,9 @@ phases drift and the drift has to be visible to read the table honestly.
 - `cleanup` — remove staged segments and the assembled file
 
 Assembly halves: 2288 µs to a 914–1176 µs band that holds across three runs
-while `replace` drifts 3546 → 5724 and `parent` drifts 1423 → 2494. The phases
-this change does not touch move by 60–75% between runs; the phase it does touch
-moves down and stays down. That is as clean a signal as this host gives.
+while `replace` drifts 3546 → 5724 and `parent` drifts 1423 → 2494. The
+unmodified phases move by 60–75% between runs; the assembly phase moves down
+and stays down. That is as clean a signal as this host gives.
 
 But assembly is 8–20% of a commit. Publishing and recording the file is 40%,
 and the three bookkeeping phases — parent, state, cleanup — are another 47%
@@ -89,11 +87,11 @@ A one-shot PUT of the same file costs about 38 ms of server time against about
 76 ms for a commit. Commit is roughly a one-shot PUT plus session bookkeeping,
 which is what the phase table shows.
 
-## What actually fixed the small-file shapes
+## Small-file fast path
 
-The ticket's second change: both SDKs now default `DirectThresholdBytes` to the
-segment size, so a file that would have been a single segment takes one PUT
-instead of create, segment, commit.
+Both SDKs default `DirectThresholdBytes` to the segment size, so a file that
+would have been a single segment takes one PUT instead of create, segment, and
+commit.
 
 From the table above, on the same host in the same sitting:
 
@@ -102,14 +100,12 @@ From the table above, on the same host in the same sitting:
 | session, 32, batch 100 | 14.4–14.5 | 345–348 |
 | one-shot PUT, 32 | 5.9–6.0 | 829–843 |
 
-2.4x, and it needs a third of the requests. That is where the small-file win is,
-and it is now what callers get without opting in.
+2.4x, and it needs a third of the requests. The SDK default selects this path
+without additional caller configuration.
 
-## What would make commit itself cheaper
+## Remaining commit cost
 
-Not more work on assembly. The remaining cost is the number of durable writes per
+The remaining cost is the number of durable writes per
 commit: the session state write and the commit record, the staged-artifact
 removal with its two directory syncs, and the parent-directory ensure. Together
-those are 47% of a commit and none of them touch file content. Batching or
-deferring them is a separate piece of work with its own crash-safety argument to
-make, and it is not attempted here.
+those are 47% of a commit and none of them touch file content.
