@@ -11,7 +11,7 @@ tags: [reference, http]
 
 This reference catalogs Filegate HTTP routes for developers using the REST API directly or through SDKs.
 
-Request and response type fields are documented in [HTTP JSON types reference](http-types).
+Request and response type fields are documented in [HTTP JSON types reference](/docs/en/reference/http-types).
 
 ## Common request rules
 
@@ -93,7 +93,7 @@ These change service behavior and credentials. They exist only when the server w
 | `POST` | `/v1/s3/keys/{accessKey}/rotate` | Bearer | None | `S3KeyCreated` | Issue a new secret for an existing key. |
 | `DELETE` | `/v1/s3/keys/{accessKey}` | Bearer | None | `204` | Delete a key. Deleting the last key leaves nothing able to authenticate against S3. |
 
-`values` is a map of dotted config paths to values. Omission removes a previously managed path; `null`, bootstrap-owned, secret, resource-owned, and unknown keys are rejected. The bearer token grants configuration authority as well as data access. See [Security model](../security).
+`values` is a map of dotted config paths to values. Omission removes a previously managed path; `null`, bootstrap-owned, secret, resource-owned, and unknown keys are rejected. The bearer token grants configuration authority as well as data access. See [Security model](/docs/en/security).
 
 ## Listing query
 

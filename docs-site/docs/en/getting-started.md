@@ -24,7 +24,7 @@ None of these are strictly required — `fg serve` with no configuration at all 
 
 ## Start a disposable instance
 
-Docker keeps the first run self-contained. For production Linux hosts, install the `.deb` or `.rpm` package and run Filegate through systemd; see [Installation](installation).
+Docker keeps the first run self-contained. For production Linux hosts, install the `.deb` or `.rpm` package and run Filegate through systemd; see [Installation](/docs/en/installation).
 
 ```sh
 mkdir -p ./filegate-data
@@ -94,8 +94,8 @@ docker stop filegate
 
 | Task | Page |
 |---|---|
-| Install Filegate on a Linux host | [Installation](installation) |
-| Understand the application architecture | [Use Filegate in an app](application-architecture) |
-| Configure mounts, uploads, metrics, and S3 | [Configuration](configuration) |
-| Build browser uploads with signed URLs | [Uploads and downloads](uploads-downloads) |
-| Use S3 clients | [S3 compatibility](s3) |
+| Install Filegate on a Linux host | [Installation](/docs/en/installation) |
+| Understand the application architecture | [Use Filegate in an app](/docs/en/application-architecture) |
+| Configure mounts, uploads, metrics, and S3 | [Configuration](/docs/en/configuration) |
+| Build browser uploads with signed URLs | [Uploads and downloads](/docs/en/uploads-downloads) |
+| Use S3 clients | [S3 compatibility](/docs/en/s3) |

@@ -71,4 +71,4 @@ REST file-write and transfer routes default to `error`; clients must choose a no
 | Direct downloads | `/v1/downloads/direct` | Short-lived browser GET URLs. |
 | Versions | `/v1/nodes/{id}/versions...` | Per-file version listing, snapshots, pinning, restore, and purge. |
 
-See [HTTP routes reference](reference/http-routes) for every route and [HTTP JSON types reference](reference/http-types) for request and response fields.
+See [HTTP routes reference](/docs/en/reference/http-routes) for every route and [HTTP JSON types reference](/docs/en/reference/http-types) for request and response fields.

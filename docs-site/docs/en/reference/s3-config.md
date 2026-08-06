@@ -1,3 +1,12 @@
+---
+title: S3 server configuration
+navTitle: S3 configuration
+section: Deep reference
+order: 286
+description: Configure the Filegate S3 listener, credentials, buckets, TLS edge, and cleanup.
+tags: [reference, s3, configuration]
+---
+
 # S3 Listener Configuration
 
 The S3-compatible HTTP listener is **off by default**. This page covers turning it on, the auth model, the mount→bucket mapping, and the TLS-termination requirement.
@@ -226,5 +235,5 @@ Both are filegate-private. Object keys can't reach them: the validator rejects `
 
 ## See also
 
-- [s3-api.md](./s3-api.md) — supported operations + deviations.
-- [s3-clients.md](./s3-clients.md) — config snippets for clients.
+- [S3 API compatibility](/docs/en/reference/s3-api) — supported operations and deviations.
+- [S3 client recipes](/docs/en/reference/s3-clients) — config snippets for clients.

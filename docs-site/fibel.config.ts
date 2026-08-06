@@ -13,6 +13,6 @@ export default defineFibel({
   },
   footerLinks: [
     { label: "GitHub", value: "https://github.com/valentinkolb/filegate" },
-    { label: "Raw index", value: "/en.md" },
+    { label: "LLM index", value: "https://filegate.dev/docs/en/llms.txt" },
   ],
 });

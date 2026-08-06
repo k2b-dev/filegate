@@ -38,7 +38,8 @@ Don't enable these in routine work — they take minutes.
 The real-btrfs suite also contains one explicit known-limitation skip:
 externally deleting a nested subvolume inside a watched root can stall the
 parent detector until restart. Do not report that skip as tested support; it is
-an operator constraint documented in `docs/sysadmin.md`.
+an operator constraint documented in
+`docs-site/docs/en/reference/sysadmin.md`.
 
 CI uses loopback btrfs images for the deterministic capability gates:
 

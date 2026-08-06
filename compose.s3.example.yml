@@ -19,7 +19,8 @@
 #   4. Replace the bind-mount paths under volumes: with your real
 #      data directories.
 #   5. docker compose up -d
-#   6. Connect Cyberduck / rclone / awscli per docs/s3-clients.md
+#   6. Connect Cyberduck / rclone / awscli per
+#      https://filegate.dev/docs/en/reference/s3-clients
 #      using the access_key / secret_key from your filegate.yaml.
 
 services:
@@ -96,7 +97,8 @@ volumes:
 #         credentials: "scrape-secret"
 #
 # Grafana dashboards are yours to build — filegate exposes the
-# metrics, you visualize them. See docs/metrics.md for the full
+# metrics, you visualize them. See
+# https://filegate.dev/docs/en/reference/observability for the full
 # metric reference and ready-to-use PromQL (5xx rate, p95 latency,
 # disk-fill alert, FD-leak detection, multipart-Complete phase
 # breakdown).

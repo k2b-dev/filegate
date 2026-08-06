@@ -69,7 +69,7 @@ versioning:
   # each mount (filegate-private — clients can't reach them).
   # Versioning is REST-only; S3 writes participate in the
   # capture-on-overwrite hook but the version surface itself isn't
-  # exposed via S3 (see docs/s3-api.md).
+  # exposed via S3 (see https://filegate.dev/docs/en/reference/s3-api).
   enabled: "auto"
   cooldown: "15m"
 
@@ -126,7 +126,8 @@ s3:
 # Served on the REST listener (server.listen, :8080 above) — no
 # extra port. Off by default. Auth is layered: metrics.token if
 # set, else the always-present REST bearer token. See
-# docs/metrics.md for the full metric reference + PromQL examples.
+# https://filegate.dev/docs/en/reference/observability for the full
+# metric reference and PromQL examples.
 metrics:
   enabled: false
   path: "/metrics"

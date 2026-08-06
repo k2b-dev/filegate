@@ -1,3 +1,12 @@
+---
+title: Prometheus and observability reference
+navTitle: Observability
+section: Deep reference
+order: 280
+description: Filegate metrics, PromQL examples, cardinality rules, and deliberate omissions.
+tags: [reference, metrics, prometheus]
+---
+
 # Prometheus Metrics
 
 Filegate exposes Prometheus metrics on the **existing REST listener** (no

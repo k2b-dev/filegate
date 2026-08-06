@@ -1,3 +1,12 @@
+---
+title: Benchmarking Filegate
+navTitle: Benchmarks
+section: Development
+order: 340
+description: Reproduce Filegate microbenchmarks, HTTP load tests, and tree-upload measurements.
+tags: [development, benchmarks, performance]
+---
+
 # Benchmarks
 
 This repository provides reproducible benchmark entry points for:
@@ -122,7 +131,12 @@ because this comparison is only meaningful when both arms ran back to back.
 Use `h2c` to compare HTTP/1.1 against cleartext HTTP/2 on the listener itself;
 both arms run against the same server, so it needs no rebuild between them.
 
-Results and interpretation: `bench/results/`.
+Committed results and interpretation:
+
+- [What upload commit costs](/docs/en/development/benchmarks/results/commit-cost)
+- [Reducing durable writes during commit](/docs/en/development/benchmarks/results/commit-durable-writes)
+- [Many small files](/docs/en/development/benchmarks/results/many-small-files)
+- [HTTP/1.1 compared with h2c](/docs/en/development/benchmarks/results/h2c)
 
 ## Notes
 
@@ -132,4 +146,4 @@ Results and interpretation: `bench/results/`.
   - same filesystem
   - same client matrix
   - same duration and payload sizes
-- Nightly detector pipeline is defined in `.github/workflows/detector-nightly.yml`.
+- The detector stress pipeline is defined in `.github/workflows/detector-soak.yml`.

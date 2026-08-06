@@ -176,9 +176,11 @@ If you changed any of:
 
 Then update the corresponding docs in the same commit:
 
-- `docs/http-routes.md` — for HTTP API
-- `docs/ts-client.md` — for TS SDK changes
-- `docs/cli.md` — for CLI changes
+- `docs-site/docs/en/reference/http-routes.md` and
+  `docs-site/docs/en/reference/http-types.md` — for HTTP API
+- `docs-site/docs/en/ts-sdk.md` and
+  `docs-site/docs/en/reference/typescript-client.md` — for TS SDK changes
+- `docs-site/docs/en/reference/cli.md` — for CLI changes
 - `README.md` — for top-level user-facing changes
 
 Reviewers look at this. PRs without doc updates for behavior changes get bounced.

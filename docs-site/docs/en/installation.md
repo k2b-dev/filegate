@@ -216,3 +216,6 @@ Build from source only when developing Filegate itself:
 ```sh
 go build -o ./bin/fg ./cmd/filegate
 ```
+
+For reverse-proxy examples, systemd hardening, package layout, and upgrade
+details, see the [deployment reference](/docs/en/reference/deployment).

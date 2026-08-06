@@ -1,3 +1,12 @@
+---
+title: What upload commit costs
+navTitle: Commit cost
+section: Benchmark results
+order: 410
+description: Measurements and conclusions for Filegate upload commit latency.
+tags: [benchmarks, uploads, performance]
+---
+
 # What commit actually costs
 
 Raw data: `tree-bench-20260726_220709-copy-assembly.csv` (copy assembly),

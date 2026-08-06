@@ -1,3 +1,12 @@
+---
+title: Repository structure
+navTitle: Repository structure
+section: Development
+order: 320
+description: Find the owning Filegate package for a change.
+tags: [development, repository]
+---
+
 # Repository Structure
 
 Top-level layout:

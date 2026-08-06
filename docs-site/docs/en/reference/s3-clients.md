@@ -1,3 +1,12 @@
+---
+title: S3 client recipes
+navTitle: S3 clients
+section: Deep reference
+order: 287
+description: Known-good Filegate configuration for common S3-compatible clients.
+tags: [reference, s3, clients]
+---
+
 # S3 Client Configuration
 
 Tested config snippets for popular S3 clients pointing at a filegate listener.
@@ -235,5 +244,5 @@ A 403 here is the **expected** response — it means the listener is alive and r
 
 ## See also
 
-- [s3-api.md](./s3-api.md) — supported operations + deviations.
-- [s3-config.md](./s3-config.md) — server-side config + auth model.
+- [S3 API compatibility](/docs/en/reference/s3-api) — supported operations and deviations.
+- [S3 server configuration](/docs/en/reference/s3-config) — server-side config and auth model.

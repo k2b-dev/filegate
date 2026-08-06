@@ -1,3 +1,12 @@
+---
+title: Versioning internals and operations
+navTitle: Versioning internals
+section: Deep reference
+order: 295
+description: Filegate version capture, retention, storage layout, caveats, and operator runbook.
+tags: [reference, versioning, storage]
+---
+
 # Per-file Versioning
 
 Filegate captures point-in-time copies of files overwritten through its REST

@@ -1,3 +1,12 @@
+---
+title: Runtime model and guarantees
+navTitle: Runtime model
+section: Development
+order: 310
+description: Filegate sources of truth, consistency boundaries, write semantics, and fixed assumptions.
+tags: [development, consistency, storage]
+---
+
 # Behavior and Assumptions
 
 This document lists core runtime assumptions and behavioral guarantees.

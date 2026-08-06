@@ -59,4 +59,7 @@ curl -fsS -H 'Authorization: Bearer dev-token' \
 
 ## Metric reference
 
-See [Metrics reference](reference/metrics) for every Filegate-specific Prometheus metric and every REST stats field.
+See [Metrics reference](/docs/en/reference/metrics) for every Filegate-specific
+Prometheus metric and every REST stats field. The [observability
+reference](/docs/en/reference/observability) adds PromQL examples, alerting guidance,
+and cardinality notes.

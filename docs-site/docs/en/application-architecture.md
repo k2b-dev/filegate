@@ -161,7 +161,7 @@ Both surfaces write to the configured Linux mounts.
 
 ## Related pages
 
-- [Uploads and downloads](uploads-downloads) documents transfer patterns and integrity rules.
-- [TypeScript SDK](ts-sdk) documents the browser upload helper.
-- [HTTP API](http-api) documents the REST route groups.
-- [S3 compatibility](s3) documents path-style S3 access.
+- [Uploads and downloads](/docs/en/uploads-downloads) documents transfer patterns and integrity rules.
+- [TypeScript SDK](/docs/en/ts-sdk) documents the browser upload helper.
+- [HTTP API](/docs/en/http-api) documents the REST route groups.
+- [S3 compatibility](/docs/en/s3) documents path-style S3 access.

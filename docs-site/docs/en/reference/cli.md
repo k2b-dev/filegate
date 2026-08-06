@@ -58,7 +58,7 @@ Config `plan/apply` also accept `FILEGATE_HOST` and `FILEGATE_TOKEN`. Without ex
 |---|---|---:|---|
 | `--format` | enum | `table` | Output format: `table`, `json` or `markdown`. |
 
-`markdown` renders the published [Config reference](config); `make docs-config` regenerates it.
+`markdown` renders the published [Config reference](/docs/en/reference/config); `make docs-config` regenerates it.
 
 ## `fg config set`
 
@@ -83,6 +83,18 @@ Both commands require a version 1 manifest through `--file` / `-f` and use the a
 | `--timeout` | duration | `15s` | Per-request timeout. |
 
 `apply` plans first and sends the observed current revision to the apply route. A concurrent apply returns a conflict instead of overwriting newer desired state.
+
+## Host and token resolution
+
+For `health`, `status`, and config `plan/apply`, host resolution uses `--host`,
+then `FILEGATE_HOST`, then `server.listen` from the selected bootstrap config.
+Listener values such as `:8080`, `0.0.0.0:8080`, and `[::]:8080` are normalized
+to localhost for local CLI calls.
+
+Authenticated commands resolve their token from `--token`, `--token-file`
+where supported, `FILEGATE_TOKEN`, then an explicit bootstrap
+`auth.bearer_token`. A generated token exists only in the runtime store and is
+not read back by the CLI; pass it explicitly for local or remote automation.
 
 ## S3 key commands
 

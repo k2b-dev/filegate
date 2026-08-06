@@ -1,3 +1,12 @@
+---
+title: TypeScript client deep reference
+navTitle: TypeScript client
+section: Deep reference
+order: 290
+description: Complete TypeScript construction, relay, upload, download, error, and versioning patterns.
+tags: [reference, typescript, sdk]
+---
+
 # TypeScript Client (In-Depth)
 
 This document describes the intended stateless TS client pattern for Filegate.

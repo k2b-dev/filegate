@@ -1,3 +1,12 @@
+---
+title: Many small files
+navTitle: Many small files
+section: Benchmark results
+order: 430
+description: Measurements and decisions for tree uploads with many small files.
+tags: [benchmarks, uploads, performance]
+---
+
 # Many small files: what actually costs time
 
 Raw data: `tree-bench-20260726_192834.csv` (every row, both repeats).

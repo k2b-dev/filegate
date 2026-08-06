@@ -11,7 +11,7 @@ tags: [operations, systemd, index]
 
 This page is for operators running Filegate as a service.
 
-Use the [Admin UI](admin) for browser-based file operations, runtime metrics, activity inspection, and index rescans.
+Use the [Admin UI](/docs/en/admin) for browser-based file operations, runtime metrics, activity inspection, and index rescans.
 
 ## Service lifecycle
 
@@ -159,3 +159,6 @@ promise; rehearse upgrades and rollbacks on a copy of production state.
   version history is administered through REST.
 - The published Filegate container is Linux AMD64 only; packages cover Linux
   AMD64 and ARM64. The Admin app currently has no published release artifact.
+
+For backup and restore procedures, filesystem repair, detector recovery, and
+operational checklists, see the [system administration reference](/docs/en/reference/sysadmin).

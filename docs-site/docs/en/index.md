@@ -11,7 +11,7 @@ tags: [overview, architecture]
 
 Filegate is the file layer between your application and Linux storage.
 
-> **Beta.** Filegate is single-node and single-tenant, authorizes the REST API with one all-or-nothing bearer token, and expects to run on a trusted network behind a reverse proxy. It has no replication or shared-index mode. Read [Security model](security) before deciding where to put it.
+> **Beta.** Filegate is single-node and single-tenant, authorizes the REST API with one all-or-nothing bearer token, and expects to run on a trusted network behind a reverse proxy. It has no replication or shared-index mode. Read [Security model](/docs/en/security) before deciding where to put it.
 
 Your application keeps its business logic, users, permissions, and product model. Filegate handles file APIs, indexed metadata, resumable uploads, direct browser transfers, activity records, and optional S3-compatible access.
 
@@ -90,9 +90,9 @@ This differs from systems that store user files as opaque blobs, chunk stores, o
 
 ## Read next
 
-- [Getting started](getting-started) gets one local service running and uploads a file.
-- [Use Filegate in an app](application-architecture) shows the recommended application architecture with direct signed uploads and downloads.
-- [Configuration](configuration) explains how Filegate resolves and validates configuration.
-- [Operations](operations) defines backup, restore, readiness, upgrade, and fixed production boundaries.
-- [HTTP API](http-api) documents the REST surface.
-- [Uploads and downloads](uploads-downloads) describes one-shot, resumable, and direct browser transfer patterns.
+- [Getting started](/docs/en/getting-started) gets one local service running and uploads a file.
+- [Use Filegate in an app](/docs/en/application-architecture) shows the recommended application architecture with direct signed uploads and downloads.
+- [Configuration](/docs/en/configuration) explains how Filegate resolves and validates configuration.
+- [Operations](/docs/en/operations) defines backup, restore, readiness, upgrade, and fixed production boundaries.
+- [HTTP API](/docs/en/http-api) documents the REST surface.
+- [Uploads and downloads](/docs/en/uploads-downloads) describes one-shot, resumable, and direct browser transfer patterns.

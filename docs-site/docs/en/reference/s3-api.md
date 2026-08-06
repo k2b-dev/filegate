@@ -1,3 +1,12 @@
+---
+title: S3 API compatibility reference
+navTitle: S3 API compatibility
+section: Deep reference
+order: 285
+description: Implemented S3 operations, AWS deviations, limits, and reserved namespaces.
+tags: [reference, s3, compatibility]
+---
+
 # S3-Compatible API
 
 Filegate exposes an S3-compatible HTTP API alongside its native REST API. The S3 listener is **disabled by default**; enable it in config (`s3.enabled: true`) and configure at least one credential.
@@ -16,7 +25,7 @@ Filegate uses **path-style addressing**:
 http://filegate.local:9100/{bucket}/{key}
 ```
 
-Virtual-hosted-style (`{bucket}.s3.example.com`) is not supported. Configure your client for path-style explicitly — most clients have a flag for this (see [s3-clients.md](./s3-clients.md)).
+Virtual-hosted-style (`{bucket}.s3.example.com`) is not supported. Configure your client for path-style explicitly — most clients have a flag for this (see [S3 client recipes](/docs/en/reference/s3-clients)).
 
 A bucket maps 1:1 to a configured Filegate mount; the mount name is the bucket name. Bucket-name validation runs at startup when `s3.enabled=true`: every mount name must satisfy AWS S3 bucket rules (3-63 chars, lowercase alphanumeric + hyphens, no IP-like names, no AWS-reserved prefixes/suffixes, not `.fg-versions` or `.fg-uploads`).
 
@@ -35,7 +44,7 @@ The streaming chunked-payload mode (`x-amz-content-sha256: STREAMING-AWS4-HMAC-S
 
 Region is configurable (`s3.region`). Clients must use the same region in their credential scope. Operators who don't care about region should keep `us-east-1`.
 
-Authorization is per-key: each key has an explicit bucket whitelist. ListBuckets is filtered to the requesting key's set, and any access to a bucket outside the whitelist returns `AccessDenied` — bucket existence is **never leaked** for forbidden buckets. See [s3-config.md](./s3-config.md) for the key-store schema.
+Authorization is per-key: each key has an explicit bucket whitelist. ListBuckets is filtered to the requesting key's set, and any access to a bucket outside the whitelist returns `AccessDenied` — bucket existence is **never leaked** for forbidden buckets. See [S3 server configuration](/docs/en/reference/s3-config) for the key-store schema.
 
 ---
 
@@ -159,6 +168,6 @@ These segments also cannot appear inside a key path (e.g. `dir/.fg-uploads/file.
 
 ## See also
 
-- [s3-config.md](./s3-config.md) — config schema, key store, mount mapping, TLS.
-- [s3-clients.md](./s3-clients.md) — known-good config snippets for popular clients.
-- [behavior-and-assumptions.md](./behavior-and-assumptions.md) — cross-protocol consistency rules.
+- [S3 server configuration](/docs/en/reference/s3-config) — config schema, key store, mount mapping, and TLS.
+- [S3 client recipes](/docs/en/reference/s3-clients) — known-good config snippets for popular clients.
+- [Runtime model and guarantees](/docs/en/development/runtime-model) — cross-protocol consistency rules.

@@ -35,7 +35,7 @@ The Filegate bearer token stays on the admin server. Browser uploads and downloa
 
 The System page polls and patches values in place. It is server-rendered first, so it is complete without JavaScript; the poll only keeps it current, and it shows a stale banner rather than frozen numbers when Filegate stops answering.
 
-The Settings page is read-only, but the admin app still holds the Filegate bearer token. File operations and S3 resource actions therefore carry its full authority. See [Security model](security) for what admin access actually grants.
+The Settings page is read-only, but the admin app still holds the Filegate bearer token. File operations and S3 resource actions therefore carry its full authority. See [Security model](/docs/en/security) for what admin access actually grants.
 
 ## Environment
 

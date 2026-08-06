@@ -83,7 +83,7 @@ segment goes direct with no configuration.
 Your `allow` endpoint has to handle both kinds. A direct item carries no
 `checksum` and no `segments`, and it expects a `{ kind: "direct", direct }`
 directive minted from `POST /v1/uploads/direct`; a session item expects a
-`session`. Measurements in `bench/results/2026-07-26-commit-cost.md` put the
+`session`. [Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the
 one-shot path at 2.4x the throughput of sessions for small files, which is why
 this is the default rather than an opt-in.
 
@@ -98,3 +98,6 @@ only the session path computes.
 | Server REST calls | `error` | Return a conflict unless the caller opts into another mode. |
 | Browser `upload()` helper | Caller config | The helper sends the configured mode to the app server allow endpoint. |
 | Upload sessions | `error` | Resumable sessions accept `error` or `overwrite`. |
+
+For the complete method inventory, framework integration patterns, and raw
+response helpers, see the [TypeScript client reference](/docs/en/reference/typescript-client).

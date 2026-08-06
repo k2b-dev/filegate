@@ -89,3 +89,6 @@ versioning:
 | `max_count` | integer | Retention bucket | Versions retained in the window. `-1` means unlimited. |
 
 Pinned versions are protected until the configured pin cap or post-delete grace rules apply.
+
+For storage layout, capture ordering, pruning, and restore internals, see the
+[versioning internals reference](/docs/en/reference/versioning-internals).

@@ -309,7 +309,8 @@ restorable as a fresh sibling file.
   Manual snapshots ignore the cooldown and are pinned by default.
 - Raw filesystem writes do not create automatic versions.
 
-Use the SDK `versions` client where available; see `docs/versioning.md` for
+Use the SDK `versions` client where available; see the
+[versioning documentation](https://filegate.dev/docs/en/versioning) for
 retention and operator details.
 
 ## Index maintenance

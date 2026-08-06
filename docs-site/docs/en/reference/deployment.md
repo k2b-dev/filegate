@@ -1,3 +1,12 @@
+---
+title: Deployment reference
+navTitle: Deployment
+section: Deep reference
+order: 260
+description: Filegate package, systemd, container, HTTP protocol, and Admin deployment details.
+tags: [reference, deployment, systemd, docker]
+---
+
 # Deployment
 
 ## Build Targets
@@ -104,7 +113,7 @@ HTTP/1.1 in practice, so h2c there would be surface without a consumer.
 It is off by default because accepting a second protocol on a listener should be
 an operator's decision, not something that arrives with an upgrade.
 
-Measurements are in `bench/results/2026-07-27-h2c.md`: across four repeats per
+Measurements are in [HTTP/1.1 compared with h2c](/docs/en/development/benchmarks/results/h2c): across four repeats per
 configuration, HTTP/1.1 and h2c differ by 1.5% to 6.7% at the median, inside a
 spread that reaches 2.6x within a single arm. Enable it because a proxy requires
 it, not to make anything faster.
@@ -197,5 +206,5 @@ directly to the public internet.
   config store holds applied config and generated credentials. The metadata
   index is rebuildable but still must not be shared by running daemons.
 
-See [Sysadmin Guide](sysadmin.md) for backup, restore, upgrade, rollback, and
+See [System administration reference](/docs/en/reference/sysadmin) for backup, restore, upgrade, rollback, and
 readiness checks.

@@ -91,7 +91,7 @@ have been a single segment goes direct without any configuration.
 That default is worth understanding rather than overriding. A session costs three
 round trips and several fsyncs per file, and for a file that fits in one segment
 its resumability amounts to retrying that one segment. Measurements in
-`bench/results/2026-07-26-commit-cost.md` put the one-shot path at 2.4x the
+[Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the one-shot path at 2.4x the
 throughput of sessions on a 5000-file corpus averaging 16 KiB.
 
 Set `DirectThresholdBytes` to a negative value to send everything through
@@ -115,4 +115,4 @@ its opt-out.
 | Activity | In-memory activity log | Yes |
 | Capabilities | Runtime upload limits | Yes |
 
-See [HTTP routes reference](reference/http-routes) for the underlying REST contract.
+See [HTTP routes reference](/docs/en/reference/http-routes) for the underlying REST contract.

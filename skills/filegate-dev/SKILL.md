@@ -19,7 +19,7 @@ Filegate is treated as production infrastructure: durability and security come b
 3. **Plan the change with tests in mind.** [`references/testing.md`](references/testing.md) lists the patterns this repo uses, including the channel-based synchronization rule (no `time.Sleep` for sync between goroutines, ever).
 4. **Implement.** Surgical edits, no drive-by refactors of unrelated code, no speculative abstractions.
 5. **Run the verification gates.** [`references/verification.md`](references/verification.md) is the canonical list — `go vet`, `staticcheck`, race tests, Linux Docker tests for `_linux_test.go` files, fuzz smoke. Skipping any of these has historically allowed real bugs through.
-6. **Update docs.** If `api/v1/types.go`, the HTTP routes, the CLI surface, or any public SDK changed, update `docs/` in the same change. The repo's own check-list ([`references/verification.md`](references/verification.md)) calls this out.
+6. **Update docs.** If `api/v1/types.go`, the HTTP routes, the CLI surface, or any public SDK changed, update the owning Fibel pages under `docs-site/docs/en/` in the same change. The repo's own check-list ([`references/verification.md`](references/verification.md)) calls this out.
 
 ## Hard Rules — non-negotiable
 
@@ -121,7 +121,7 @@ These come from past incidents in this codebase, not abstract style preferences:
 
 - Adding HTTP fields without updating `api/v1/types.go` AND the TS SDK in
   `sdk/ts/src/types.ts` AND the Go SDK in `sdk/filegate/` AND the
-  corresponding `docs/`.
+  corresponding Fibel pages under `docs-site/docs/en/`.
 - Calling `s.svc.X()` from inside a long-held lock — leads to lock-ordering
   deadlocks.
 - Mishandling `os.ErrNotExist` in rescan walks. Two classes:

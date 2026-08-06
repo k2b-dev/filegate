@@ -102,7 +102,7 @@ Every manifest-owned key has one activation class:
 
 `GET /v1/config` and the Settings page report effective and desired values separately. A static difference appears in `restartRequired`; after a successful restart, effective and desired match.
 
-See [Config reference](reference/config) for each key's activation and owner.
+See [Config reference](/docs/en/reference/config) for each key's activation and owner.
 
 ## Bootstrap and resource boundaries
 

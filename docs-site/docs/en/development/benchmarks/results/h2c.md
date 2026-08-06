@@ -1,3 +1,12 @@
+---
+title: HTTP/1.1 compared with h2c
+navTitle: HTTP/1.1 and h2c
+section: Benchmark results
+order: 440
+description: Controlled Filegate listener measurements for HTTP/1.1 and cleartext HTTP/2.
+tags: [benchmarks, http2, performance]
+---
+
 # HTTP/1.1 against h2c on the same listener
 
 Raw data: `tree-bench-20260727_012223.csv`, `tree-bench-20260727_012612.csv`.

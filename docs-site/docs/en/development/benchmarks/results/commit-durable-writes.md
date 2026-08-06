@@ -1,3 +1,12 @@
+---
+title: Reducing durable writes during commit
+navTitle: Durable writes
+section: Benchmark results
+order: 420
+description: Evidence behind the upload commit durable-write changes.
+tags: [benchmarks, uploads, durability]
+---
+
 # Cutting durable writes out of upload commit
 
 Follow-up to `2026-07-26-commit-cost.md`, which established that commit is fsync

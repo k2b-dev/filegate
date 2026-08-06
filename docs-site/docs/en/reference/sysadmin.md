@@ -1,3 +1,12 @@
+---
+title: System administration reference
+navTitle: System administration
+section: Deep reference
+order: 265
+description: Detailed production operation, storage, backup, restore, upgrade, and recovery guidance.
+tags: [reference, operations, recovery]
+---
+
 # Sysadmin Guide
 
 This guide is for deploying, operating, and maintaining Filegate in production.

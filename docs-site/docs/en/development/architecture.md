@@ -1,3 +1,12 @@
+---
+title: Internal architecture
+navTitle: Architecture
+section: Development
+order: 300
+description: Understand Filegate modules, runtime flow, index layout, and repair paths.
+tags: [development, architecture, pebble]
+---
+
 # Architecture
 
 ## High-level Modules

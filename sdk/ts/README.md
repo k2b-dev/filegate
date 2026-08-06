@@ -162,5 +162,5 @@ const checksum = await uploads.checksum.sha256(file);
 ## Documentation
 
 - Project README: https://github.com/ValentinKolb/filegate#readme
-- TypeScript guide: https://github.com/ValentinKolb/filegate/blob/main/docs/ts-client.md
-- HTTP routes: https://github.com/ValentinKolb/filegate/blob/main/docs/http-routes.md
+- TypeScript guide: https://filegate.dev/docs/en/ts-sdk
+- HTTP routes: https://filegate.dev/docs/en/reference/http-routes

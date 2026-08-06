@@ -1,3 +1,12 @@
+---
+title: Engineering patterns
+navTitle: Engineering patterns
+section: Development
+order: 330
+description: Filegate layering, concurrency, streaming, encoding, testing, and review conventions.
+tags: [development, patterns, testing]
+---
+
 # Code Patterns
 
 ## Principles

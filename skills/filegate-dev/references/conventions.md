@@ -31,7 +31,8 @@ When you add a new field to a request body or a new option:
 3. Pass it through to the domain method's signature — do **not** re-parse strings inside `domain/`.
 4. Update the TS SDK at `sdk/ts/src/types.ts` AND the relevant client file (`paths.ts`, `nodes.ts`, `uploads.ts`, ...).
 5. Update the Go SDK at `sdk/filegate/<area>.go`.
-6. Update `docs/http-routes.md` and (if user-facing) `docs/ts-client.md`.
+6. Update the owning pages under `docs-site/docs/en/`, including the deep
+   HTTP or TypeScript reference when the public contract changed.
 
 Forgetting any of these has caused user-facing bugs in this repo. There is no automation that catches the omission.
 
