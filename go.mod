@@ -1,6 +1,6 @@
 module github.com/valentinkolb/filegate
 
-go 1.25
+go 1.25.0
 
 toolchain go1.25.7
 
@@ -21,7 +21,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	go.yaml.in/yaml/v3 v3.0.4
-	golang.org/x/image v0.36.0
+	golang.org/x/image v0.43.0
 	golang.org/x/sys v0.37.0
 )
 
@@ -72,6 +72,6 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 )
