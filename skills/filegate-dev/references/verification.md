@@ -101,7 +101,7 @@ docker run --rm -v "$PWD":/src -w /src golang:1.25 sh -c "go test -count=2 -race
 make fuzz-smoke
 ```
 
-10 seconds per fuzz target × 4 targets. Required if your change touched:
+10 seconds per fuzz target × 2 targets. Required if your change touched:
 
 - `infra/fgbin/` (record codec)
 - `adapter/http/upload_sessions.go` (segment hashing/writing)

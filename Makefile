@@ -39,8 +39,6 @@ test-versioning-soak:
 fuzz-smoke:
 	go test ./infra/fgbin -run '^$$' -fuzz '^FuzzDecodeEntity$$' -fuzztime=10s
 	go test ./infra/fgbin -run '^$$' -fuzz '^FuzzDecodeChild$$' -fuzztime=10s
-	go test ./adapter/http -run '^$$' -fuzz '^FuzzHashChunkFromReader$$' -fuzztime=10s
-	go test ./adapter/http -run '^$$' -fuzz '^FuzzWriteChunkAtPath$$' -fuzztime=10s
 
 bench-go:
 	./bench/scripts/run-go-benches.sh

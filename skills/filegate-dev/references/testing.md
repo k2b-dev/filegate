@@ -94,8 +94,6 @@ CI on overloaded runners has caught time-sleep-based tests as flakes; the conver
 
 - `infra/fgbin.FuzzDecodeEntity`
 - `infra/fgbin.FuzzDecodeChild`
-- `adapter/http.FuzzParseContentRange`
-- `adapter/http.FuzzSegmentChecksum`
 
 Run before opening a PR that touches the codec. New crash inputs land in
 `testdata/fuzz/<func>/` — commit them.
