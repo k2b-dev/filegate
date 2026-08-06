@@ -186,6 +186,12 @@ Efficiency note:
 - The standard distroless container has no `btrfs` CLI, so `auto` selects
   `poll`; the System page reports this reason instead of hiding the fallback.
 
+Do not place nested btrfs subvolumes inside a root watched by the btrfs
+detector. Externally deleting a nested subvolume can stop generation processing
+for the parent until Filegate restarts. Use separate configured roots, or
+restart Filegate and verify `/v1/health` plus detector cycles in
+`/v1/system/runtime` after such a deletion.
+
 ## 8. Capacity and Sizing
 
 Main levers:
@@ -341,6 +347,8 @@ with a copy of production state before an upgrade that changes on-disk formats.
   successful write publishes its own result atomically.
 - External writers are eventually indexed; the reconciliation interval bounds
   missed detector events when enabled.
+- Nested btrfs subvolumes are not supported inside a watched btrfs root; an
+  external nested-subvolume deletion requires a Filegate restart.
 - S3 is path-style and does not expose S3 object versioning. S3 overwrites can
   feed Filegate's internal version capture, which is administered through REST.
 - No durable audit log and no OpenTelemetry traces. Export logs/metrics and

@@ -118,6 +118,8 @@ not create automatic Filegate versions.
   support. ext4, XFS, and btrfs are valid choices when those requirements hold.
 - The btrfs detector is an optimization for external-change ingestion; polling
   is the portable fallback.
+- Watched btrfs roots must not contain nested subvolumes. Externally deleting a
+  nested subvolume can stall parent generation processing until daemon restart.
 - Reflink support is probed with the kernel `FICLONE` operation, not inferred
   from the filesystem name.
 - `versioning.enabled=auto` enables versioning only when all configured mounts

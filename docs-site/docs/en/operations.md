@@ -148,6 +148,9 @@ promise; rehearse upgrades and rollbacks on a copy of production state.
   transaction or cross-request point-in-time snapshot.
 - External filesystem changes become visible eventually through detection and
   reconciliation. Raw external writes do not create automatic versions.
+- Do not nest btrfs subvolumes inside a root watched by the btrfs detector.
+  After an external nested-subvolume deletion, restart Filegate and verify
+  detector cycles before relying on further external-change ingestion.
 - Filegate does not terminate TLS and has no REST request limiter. Enforce TLS,
   exposure policy, and REST limits at a reverse proxy or private network.
 - Activity is not a durable audit log, and OpenTelemetry tracing is not

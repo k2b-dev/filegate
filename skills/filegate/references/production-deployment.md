@@ -17,6 +17,8 @@ Filegate is a Linux-only, single-node, single-tenant storage gateway.
 - HTTP and S3 writes update the index immediately. Raw filesystem changes are
   eventual through detection and reconciliation and do not create automatic
   versions.
+- Do not nest btrfs subvolumes inside a watched btrfs root. External deletion
+  of a nested subvolume can stall the parent detector until daemon restart.
 - Filegate listeners are cleartext and REST has no built-in rate limiter.
   Terminate TLS and enforce exposure/rate policy at a proxy or private network.
 - Activity is an in-memory ring, not a durable audit log. OpenTelemetry tracing
@@ -93,3 +95,7 @@ fallback. Versioning probes real `FICLONE` support:
 Read `/v1/system/info` for effective detector/versioning modes and mount
 capabilities. Use `/v1/health` for readiness; `/health` is liveness only and
 `/v1/stats` is not readiness.
+
+After any external nested-subvolume deletion, restart Filegate and confirm
+detector cycles advance in `/v1/system/runtime` before trusting external-change
+ingestion.

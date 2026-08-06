@@ -464,6 +464,9 @@ The default ring buffer retains 500 records. Set `activity.ring_buffer_size` to 
 - `X-Filegate-Actor` can attach delegated actor context to activity records.
 - S3 is path-style only.
 - External filesystem changes are reconciled eventually by the detector or by a manual rescan.
+- Do not nest btrfs subvolumes inside a root watched by the btrfs detector. If
+  one is deleted externally, restart Filegate before relying on further
+  external-change ingestion.
 - Version history is REST-side and not exposed as S3 object versioning.
 - OpenTelemetry tracing is not implemented.
 - The published Filegate container is currently Linux AMD64 only. Linux AMD64

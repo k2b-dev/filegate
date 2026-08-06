@@ -30,6 +30,10 @@ Detector behavior by filesystem/backend:
 
 - `btrfs`: reads generation deltas via `btrfs subvolume find-new` and resolves changed inodes to paths.
 - `poll` (typical on ext4/xfs): relies on directory/file polling (`readdir`/`lstat` patterns) because no btrfs-like change journal API exists.
+
+Watched btrfs roots must not contain nested subvolumes. Externally deleting a
+nested subvolume can stall generation processing for the parent until the
+daemon restarts; configure those subvolumes as separate roots instead.
 - Independent of the backend, a configurable daily full reconciliation uses
   the existing serialized rescan path to repair any missed namespace changes.
 

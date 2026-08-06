@@ -54,6 +54,14 @@ This page is for operators and developers diagnosing Filegate runtime and integr
 |---|---:|---|---|
 | Versioning is disabled in `auto` | Service selection | At least one configured mount failed the real reflink probe. | Read `/v1/system/info`. Use `on` only when byte-copy cost is acceptable, or make all mounts reflink-capable. |
 | Version writes consume full file size | Mount copy mode | Effective mode is `byte-copy` or `mixed`. | This is expected fallback behavior in `on`; use reflink-capable storage or disable versioning. |
+
+## Btrfs detector stops after deleting a nested subvolume
+
+Nested subvolumes are not supported inside a root watched by the btrfs
+detector. Externally deleting one can stall generation processing for the
+parent. Restart Filegate, verify `/v1/health`, and confirm detector cycles resume
+in `/v1/system/runtime`. Use separate configured roots instead of nesting
+subvolumes under a watched root.
 | Snapshot label rejected | File version | Label exceeds `versioning.max_label_bytes`. | Use a shorter label. |
 | Pin fails with conflict | File version set | `versioning.max_pinned_per_file` reached. | Unpin older versions or raise the cap. |
 
