@@ -40,7 +40,7 @@ fg config apply -f filegate.manifest.yaml --config /etc/filegate/conf.yaml
 sudo systemctl restart filegate
 ```
 
-If `metrics.token` is set, scrapers must use `Authorization: Bearer <metrics-token>`. If it is empty, Filegate falls back to the REST bearer token. If neither token is set in an S3-only deployment, the metrics endpoint is open on the configured listener.
+If `metrics.token` is set, scrapers must use `Authorization: Bearer <metrics-token>`. If it is empty, Filegate falls back to the REST bearer token. A REST token always exists: Filegate generates and persists one on first start when none is configured. Metrics therefore never becomes open merely because the bootstrap token was left empty.
 
 ## Activity query
 

@@ -150,6 +150,14 @@ For production, mount:
 
 and inject token/config through env vars or mounted config file.
 
+The published container is currently Linux AMD64 only. Release packages are
+published for Linux AMD64 and ARM64. The container runs as UID/GID `65532`; bind
+mounts must be writable by that identity and must preserve `user.*` xattrs.
+
+Run exactly one Filegate daemon against a given index path, runtime config
+store, and writable mount set. Embedded Pebble databases are not shared stores,
+and Filegate has no leader election or active-active replication.
+
 ## Admin App
 
 The admin UI is shipped as a standalone SSR app in `admin/`, not as part of the
@@ -165,3 +173,29 @@ and folder uploads go browser-to-Filegate after the admin app creates the
 sessions. Downloads use scoped direct download URLs. If the browser reaches
 Filegate at a different URL than the admin server, set `server.public_url` in
 Filegate and configure CORS for the admin origin.
+
+The Admin app is source-shipped, not currently published as a release package
+or container. Build `admin/Dockerfile` at a pinned Filegate commit or deploy the
+SSR app from `admin/` with `bun install --frozen-lockfile`. Treat it as a
+full-authority operator surface, put it behind TLS, and do not expose it
+directly to the public internet.
+
+## Production Boundaries
+
+- Filegate is single-node and single-tenant. One REST bearer token has full
+  file and configuration authority; only S3 keys provide narrower bucket
+  scopes.
+- Filegate listeners are cleartext. Terminate TLS and enforce network policy at
+  a reverse proxy or private service boundary.
+- REST has no built-in request rate limiter. Apply limits at the proxy. S3 keys
+  can have per-key request limits.
+- File operations publish atomically one operation at a time. There is no
+  multi-file transaction and no cross-request snapshot isolation.
+- External filesystem changes become visible eventually through detection and
+  reconciliation. HTTP and S3 writes update the index in their write path.
+- The filesystem holds file bytes, paths, and stable-ID xattrs. The runtime
+  config store holds applied config and generated credentials. The metadata
+  index is rebuildable but still must not be shared by running daemons.
+
+See [Sysadmin Guide](sysadmin.md) for backup, restore, upgrade, rollback, and
+readiness checks.

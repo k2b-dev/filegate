@@ -73,12 +73,16 @@ The package creates or preserves `/etc/filegate/conf.yaml`. Existing config file
 
 ## Configure the service
 
-Set a REST bearer token before starting Filegate:
+Set a strong REST bearer token before starting Filegate:
 
 ```sh
 sudo fg config set --config /etc/filegate/conf.yaml \
   --auth-bearer-token '<strong-token>'
 ```
+
+Alternatively, leave it empty. The first start generates a strong token,
+stores it in `/var/lib/filegate/config`, and prints it once to the journal.
+Capture that value immediately; it cannot be read back through the API.
 
 Add at least one storage mount:
 
@@ -106,6 +110,16 @@ Verify the REST listener:
 
 ```sh
 curl -fsS http://127.0.0.1:8080/health
+```
+
+Then verify authenticated dependency readiness and the effective storage
+capabilities:
+
+```sh
+curl -fsS -H 'Authorization: Bearer <token>' \
+  http://127.0.0.1:8080/v1/health
+curl -fsS -H 'Authorization: Bearer <token>' \
+  http://127.0.0.1:8080/v1/system/info
 ```
 
 ## Behind a reverse proxy
@@ -189,6 +203,11 @@ docker run --rm -d \
 Keep both named volumes when replacing the container. `filegate-config` is
 authoritative: it holds the applied manifest, S3 access keys, and generated API
 token. `filegate-index` is rebuildable but avoids a full data walk.
+
+The published container is currently Linux AMD64 only and runs as UID/GID
+`65532`. Bind mounts must be writable by that identity and preserve `user.*`
+xattrs. Run only one container against a given data mount set and its config and
+index volumes.
 
 ## Development build
 

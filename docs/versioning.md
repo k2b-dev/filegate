@@ -1,15 +1,19 @@
 # Per-file Versioning
 
-Filegate captures point-in-time copies of files written through its
-HTTP API. Older versions are listable, downloadable, and restorable —
+Filegate captures point-in-time copies of files overwritten through its REST
+and S3 write paths. Older versions are listable, downloadable, and restorable through REST —
 either back into the live file or as a fresh sibling.
 
-The feature captures **HTTP-mediated writes only**. Writes that bypass the
-HTTP layer (`cp` / `rsync` / SSH / shell into a container) are NOT
+The feature captures **Filegate-mediated writes only**. Writes that bypass
+Filegate (`cp` / `rsync` / SSH / shell into a container) are NOT
 captured because there is no point at which Filegate can save the
 "before" bytes. Filegate tries the Linux `FICLONE` API to make stored
 versions cheap. In `auto` mode every configured mount must pass that real
 reflink probe; explicit `on` mode falls back to full byte copies where needed.
+
+S3 overwrites participate in capture, but the S3 adapter does not expose S3
+object versioning. List, download, pin, restore, and delete versions through
+the REST API or Admin app.
 
 ## Configuration
 
@@ -41,7 +45,7 @@ live-version pruning and have planned for the storage growth.
 
 ## Lifecycle
 
-**Auto-capture on write.** Every HTTP write to an existing file
+**Auto-capture on write.** Every REST or S3 write to an existing file
 (`PUT /v1/paths/...`, `PUT /v1/nodes/{id}/content`, ReplaceFile via
 upload-session commit) snapshots the existing bytes first — but only
 if the last captured version is older than `cooldown`. Within the
@@ -133,8 +137,8 @@ fetching version content or restoring.
 
 ## Caveats
 
-1. External writes are not versioned. Files modified by `cp`, `rsync`,
-   or any non-HTTP path bypass the capture point.
+1. External writes are not versioned. Files modified by `cp`, `rsync`, or any
+   path that bypasses Filegate do not reach the capture point.
 2. The cooldown window can swallow rapid edits. A file edited at T+14m
    and again at T+16m (with the default 15m cooldown) only captures
    the T+16m state — the T+14m bytes are lost. Lower the cooldown for

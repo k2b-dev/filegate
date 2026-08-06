@@ -39,7 +39,7 @@ sudo rpm -Uvh /tmp/filegate.rpm
 
 For ARM64 hosts, replace `amd64` with `arm64` in the package URL.
 
-Set the initial token and start the service:
+Set a strong initial token and start the service:
 
 ```bash
 sudo fg config set --config /etc/filegate/conf.yaml \
@@ -49,6 +49,10 @@ sudo systemctl enable filegate
 sudo systemctl start filegate
 sudo systemctl status filegate
 ```
+
+Leaving `auth.bearer_token` empty is also safe: the first start generates a
+token, stores it in `/var/lib/filegate/config`, and prints it once to the
+service log. Capture it immediately; it cannot be read back through the API.
 
 Smoke test:
 
@@ -446,6 +450,13 @@ The default ring buffer retains 500 records. Set `activity.ring_buffer_size` to 
 ## Limits
 
 - Single-node service; no replication.
+- Run exactly one active daemon for an index/runtime-store pair and writable
+  mount set. Filegate has no leader election or shared-index mode.
+- The filesystem is authoritative for file bytes, paths, and stable-ID xattrs;
+  the runtime config store is authoritative for applied config and generated
+  credentials; the metadata index is rebuildable.
+- Individual file operations publish atomically, but Filegate does not provide
+  multi-file transactions or point-in-time consistency across separate calls.
 - Bootstrap config changes are offline. Manifest runtime keys apply immediately; static keys take effect after restart.
 - REST uses one bearer token. S3 supports multiple keys and per-key bucket allowlists.
 - REST has no request rate limiting. S3 supports per-key request limits.
@@ -455,6 +466,10 @@ The default ring buffer retains 500 records. Set `activity.ring_buffer_size` to 
 - External filesystem changes are reconciled eventually by the detector or by a manual rescan.
 - Version history is REST-side and not exposed as S3 object versioning.
 - OpenTelemetry tracing is not implemented.
+- The published Filegate container is currently Linux AMD64 only. Linux AMD64
+  and ARM64 packages are published.
+- The Admin app is built and deployed separately; no Admin container or package
+  is currently published with Filegate releases.
 
 ## More docs
 

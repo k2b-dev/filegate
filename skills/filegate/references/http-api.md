@@ -187,8 +187,10 @@ POST   /v1/nodes/{id}/versions/{versionId}/restore
 DELETE /v1/nodes/{id}/versions/{versionId}          → purge that version
 ```
 
-Versioning is REST-only and btrfs-backed. Unsupported mounts return 404
-with the versioning-unsupported error shape.
+The version-management surface is REST-only. REST and S3 overwrite paths can
+capture versions, but S3 does not expose object versioning. Filegate probes real
+reflink support: `auto` enables only when every mount supports it, while `on`
+uses byte-copy fallback where needed.
 
 ## Index maintenance
 

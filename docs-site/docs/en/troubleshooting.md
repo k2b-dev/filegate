@@ -16,7 +16,7 @@ This page is for operators and developers diagnosing Filegate runtime and integr
 | Symptom | Likely scope | Check | Fix |
 |---|---:|---|---|
 | `storage.base_paths is required` | Config | `fg config show --config ...` | Set at least one storage mount. |
-| `auth.bearer_token is required` | REST config | `auth.bearer_token` | Set a bearer token unless running S3-only. |
+| Generated bearer token was missed | Runtime store and journal | First-start log and persistent `storage.runtime_config_path` | Stop creating new runtime stores. Use the printed token, or set an explicit bootstrap token and restart. Empty config never enables unauthenticated REST. |
 | Mount health check fails | Storage mount | Filesystem permissions, free space, xattr support | Fix mount permissions and ensure user xattrs are enabled. |
 | Invalid trusted proxy | Server config | `server.trusted_proxies` | Use valid IP or CIDR values. |
 | S3 startup fails on bucket name | Mount name | Mount basename | Rename or remount using an S3-valid bucket name. |
@@ -52,7 +52,8 @@ This page is for operators and developers diagnosing Filegate runtime and integr
 
 | Symptom | Scope | Meaning | Action |
 |---|---:|---|---|
-| `versioning not supported on this mount` | Mount | Filesystem does not support configured versioning mode. | Use btrfs or set `versioning.enabled=auto/off`. |
+| Versioning is disabled in `auto` | Service selection | At least one configured mount failed the real reflink probe. | Read `/v1/system/info`. Use `on` only when byte-copy cost is acceptable, or make all mounts reflink-capable. |
+| Version writes consume full file size | Mount copy mode | Effective mode is `byte-copy` or `mixed`. | This is expected fallback behavior in `on`; use reflink-capable storage or disable versioning. |
 | Snapshot label rejected | File version | Label exceeds `versioning.max_label_bytes`. | Use a shorter label. |
 | Pin fails with conflict | File version set | `versioning.max_pinned_per_file` reached. | Unpin older versions or raise the cap. |
 
@@ -62,6 +63,9 @@ This page is for operators and developers diagnosing Filegate runtime and integr
 |---|---:|---|
 | `systemctl status filegate` | Service | Process status and recent logs. |
 | `journalctl -u filegate` | Service | Full service logs. |
-| `GET /v1/stats` | Service | Current index, cache, disk, and runtime state. |
+| `GET /v1/health` | Service dependencies | Authenticated readiness: index, detector staleness, and mount reachability. |
+| `GET /v1/system/info` | Service and mounts | Effective detector/versioning choices and writable/xattr/reflink probes. |
+| `GET /v1/system/runtime` | Service memory | Pollable queues, detector state, caches, and upload sessions. |
+| `GET /v1/stats` | Service | Index, cache, mount, disk, and process capacity data; not readiness. |
 | `GET /v1/activity` | Service ring buffer | Recent operation failures and durations. |
 | `/metrics` | Prometheus | Request rates, latency, storage pressure, cleanup and pruning counters. |

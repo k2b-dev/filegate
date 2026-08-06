@@ -12,7 +12,7 @@ You are integrating Filegate into an application. Filegate is a Linux-only HTTP 
 - **Resumable, duplicate-safe upload sessions** with explicit commit
 - **Tar-stream downloads** of whole subtrees
 - **On-demand thumbnails** with LRU caching for images
-- **Per-file versioning** for HTTP-mediated writes on btrfs mounts
+- **Per-file versioning** with probed reflinks or explicit byte-copy fallback
 - **Glob-based search** scoped to virtual mounts
 - **Automatic external change detection** (btrfs find-new or polling)
 - **Bearer-token authentication** on every `/v1/*` endpoint
@@ -29,15 +29,17 @@ You are integrating Filegate into an application. Filegate is a Linux-only HTTP 
 | Direct browser upload URL from a backend          | [`references/ts-sdk.md`](references/ts-sdk.md) and [`references/http-api.md`](references/http-api.md) |
 | User uploads a file with a name that already exists | [`references/conflict-handling.md`](references/conflict-handling.md) |
 | Build a thumbnail gallery / glob search           | [`references/function-overview.md`](references/function-overview.md) (sections "Thumbnails" + "Search") |
-| Wire up auth, handle errors, build deployment     | [`references/auth-and-errors.md`](references/auth-and-errors.md)    |
+| Wire up auth and handle errors                    | [`references/auth-and-errors.md`](references/auth-and-errors.md)    |
+| Decide production fit, deploy, back up, or restore | [`references/production-deployment.md`](references/production-deployment.md) |
 | Raw HTTP — no SDK                                 | [`references/http-api.md`](references/http-api.md)                  |
 | Something is broken, weird status code, slow      | [`references/troubleshooting.md`](references/troubleshooting.md)    |
 
 ## Hard rules — non-negotiable
 
 - **All `/v1/*` requests need `Authorization: Bearer <token>` except
-  signed direct-upload PUT URLs.** The other auth-free endpoint is
-  `GET /health`.
+  scoped direct upload and download URLs.** The other auth-free endpoint is
+  `GET /health`. An empty bootstrap token generates and persists a token; it
+  never enables unauthenticated REST.
 - **Use the right client construction for your runtime.** Server (Node/Bun)
   → env-based default. **Public browser apps must NOT construct a
   `Filegate` client at all** — Filegate's bearer token must never reach an
@@ -52,6 +54,10 @@ You are integrating Filegate into an application. Filegate is a Linux-only HTTP 
 - **Stream relays must not buffer.** When proxying browser uploads/downloads through your backend, pass through `ReadableStream` / `io.Reader` end-to-end. See [`references/relay-patterns.md`](references/relay-patterns.md).
 - **Persist file IDs, not paths.** Filegate's `id` is stable across renames/moves; the virtual `path` is not. If you store something in your own database that points to a Filegate node, store the `id`.
 - **Treat external filesystem changes as eventually consistent.** If something else writes to a mount, Filegate's index converges via the change detector — but not instantly. Don't race against the detector in tests; use `POST /v1/index/rescan` to force convergence when you need it.
+- **Do not design Filegate as a shared or replicated daemon.** Run one active
+  process per runtime/index store and writable mount set. Preserve data xattrs
+  and the separate runtime config store in backups. See
+  [`references/production-deployment.md`](references/production-deployment.md).
 
 ## Required output pattern
 

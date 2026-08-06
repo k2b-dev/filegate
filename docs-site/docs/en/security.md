@@ -23,6 +23,8 @@ Filegate is in beta, and the authorization model is deliberately small. Read thi
 | Admin authorization | Any account that passes the admin login is a full administrator. There are no admin roles. |
 | Network | Assumes a trusted network. Filegate expects to sit behind a reverse proxy or inside a private network, not on the public internet with the REST port exposed. |
 | Audit | Activity records name the credential that acted. They are a ring buffer in memory, not a durable audit log. |
+| Transport | Filegate listeners are cleartext. Terminate TLS at a trusted reverse proxy or private service boundary. |
+| REST rate limiting | Not built in. Enforce request and abuse limits at the reverse proxy. S3 keys have their own optional limits. |
 
 The practical consequence: anyone holding the bearer token can read and delete every file on every mount, and can change the service's own configuration. Give it to services, not to people, and use S3 keys when you need to hand out something narrower.
 
@@ -107,3 +109,7 @@ Behind Traefik, Caddy, or nginx, list the proxy address or CIDR. Do not trust fo
 Secrets are never returned by the config API or printed by `fg config show`; those surfaces report only whether a value is configured.
 
 The runtime config store at `storage.runtime_config_path` holds the generated bearer token and every S3 secret. Protect and back it up like a credential store, because that is what it is.
+
+Do not run two Filegate daemons against the same runtime store, index, or
+writable mount set. Filegate has no shared-store coordination or leader
+election; this is an operational integrity boundary, not a scaling mechanism.

@@ -11,7 +11,7 @@ tags: [overview, architecture]
 
 Filegate is the file layer between your application and Linux storage.
 
-> **Beta.** Filegate is single-tenant, authorizes the REST API with one all-or-nothing bearer token, and expects to run on a trusted network behind a reverse proxy. Read [Security model](security) before deciding where to put it.
+> **Beta.** Filegate is single-node and single-tenant, authorizes the REST API with one all-or-nothing bearer token, and expects to run on a trusted network behind a reverse proxy. It has no replication or shared-index mode. Read [Security model](security) before deciding where to put it.
 
 Your application keeps its business logic, users, permissions, and product model. Filegate handles file APIs, indexed metadata, resumable uploads, direct browser transfers, activity records, and optional S3-compatible access.
 
@@ -83,6 +83,8 @@ This differs from systems that store user files as opaque blobs, chunk stores, o
 | Linux | `fg serve` host | The service uses Linux filesystem behavior and xattrs. |
 | User xattrs | Each storage mount | Required for stable node IDs. |
 | Persistent index path | Per service | Stores the Pebble index and upload/session metadata. |
+| Persistent runtime config path | Per service | Stores the applied manifest and generated REST/S3 credentials. It is authoritative and not rebuildable. |
+| One active daemon | Per writable mount set | Filegate has no leader election; do not share its Pebble stores between processes. |
 | btrfs | Per mount, recommended | Enables fast change detection and commonly provides reflink copies. |
 | ext4 or other Linux filesystems | Per mount | Supported with polling detection; versioning follows the mount's probed reflink support or explicit byte-copy mode. |
 
@@ -91,5 +93,6 @@ This differs from systems that store user files as opaque blobs, chunk stores, o
 - [Getting started](getting-started) gets one local service running and uploads a file.
 - [Use Filegate in an app](application-architecture) shows the recommended application architecture with direct signed uploads and downloads.
 - [Configuration](configuration) explains how Filegate resolves and validates configuration.
+- [Operations](operations) defines backup, restore, readiness, upgrade, and fixed production boundaries.
 - [HTTP API](http-api) documents the REST surface.
 - [Uploads and downloads](uploads-downloads) describes one-shot, resumable, and direct browser transfer patterns.

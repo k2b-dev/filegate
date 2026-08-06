@@ -116,6 +116,22 @@ bun run dev
 
 Open `http://127.0.0.1:3000` and sign in with `ADMIN_TOKEN`.
 
+## Production deployment
+
+The Admin app is source-shipped and currently has no published Filegate release
+package or container. Build `admin/Dockerfile` from a pinned Filegate commit, or
+deploy the SSR app from `admin/` after `bun install --frozen-lockfile` and
+`bun run build`.
+
+Terminate TLS at the reverse proxy and keep the Admin app on an operator-only
+network. It is not a read-only dashboard: any authenticated Admin user has the
+Filegate bearer token's full effective authority through the server.
+
+One Admin replica works with the in-memory login limiter. Multiple replicas
+must share the same `ADMIN_SESSION_SECRET` and set `REDIS_URL` so login limits
+are shared. Filegate itself remains single-node; scaling the UI does not make
+the storage daemon active-active.
+
 ## Browser transfer behavior
 
 | Operation | Data path | Meaning |

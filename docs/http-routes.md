@@ -138,7 +138,8 @@ mkdir). For directory replacement use `POST /v1/transfers` with `overwrite`.
 
 ## Versions
 
-Per-file version history for HTTP-mediated writes. Reflink-capable mounts use
+Per-file version history for Filegate-mediated REST and S3 writes. The
+management routes below remain REST-only. Reflink-capable mounts use
 cheap clones; explicit `versioning.enabled: on` uses byte copies elsewhere.
 Disabled versioning returns `404` with `versioning_unsupported`. See
 [versioning.md](versioning.md) for behaviour, retention, and operator

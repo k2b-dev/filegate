@@ -9,7 +9,7 @@ tags: [configuration, yaml, cli, gitops]
 
 # Configuration
 
-Use a manifest for service behavior that belongs in source control. Filegate validates and stores the complete last-applied desired state in Pebble. The Settings page shows that state but does not edit it.
+Use a manifest for service behavior that belongs in source control. Filegate validates and stores the complete last-applied desired state in its runtime config store. The Settings page shows that state but does not edit it.
 
 Bootstrap settings and credentials stay outside the manifest. This keeps recovery possible when the runtime store is unavailable and keeps secrets out of the desired-state document.
 
@@ -50,9 +50,13 @@ fg config plan -f filegate.manifest.yaml \
   --token-file /run/secrets/filegate-token
 ```
 
-The plan reports additions, changes, removals, their activation class, the current revision, and the proposed revision. It does not write Pebble or change the running process.
+The plan reports additions, changes, removals, their activation class, the current revision, and the proposed revision. It does not write the runtime store or change the running process.
 
-For a local daemon, `--host` and the token flags can be omitted when the bootstrap config contains `server.listen` and `auth.bearer_token`.
+For a local daemon, `--host` can be omitted because the bootstrap config
+contains `server.listen`. Token flags can be omitted only when the bootstrap
+config contains an explicit `auth.bearer_token`. A generated token exists only
+in the runtime store and is deliberately not read back by the CLI; pass it via
+`--token-file` or `FILEGATE_TOKEN`.
 
 ## Apply the manifest
 

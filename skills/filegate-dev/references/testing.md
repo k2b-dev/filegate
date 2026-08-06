@@ -10,6 +10,9 @@
 | Upload session segment/commit paths   | Both Docker tests AND `make fuzz-smoke`                      |
 | The Pebble index format               | `make fuzz-smoke` (fgbin codec) + Docker rescan tests        |
 | Adapter/HTTP                          | Docker (almost all HTTP tests are Linux-tagged)              |
+| Runtime config or container layout    | `make test-docker-runtime-state`                              |
+| Detector/versioning capability logic  | Real btrfs Docker targets below                               |
+| Admin app                             | Frozen install, audit, typecheck, tests, build, container     |
 
 ## Running Linux tests on macOS dev
 
@@ -20,8 +23,8 @@ docker run --rm -v "$PWD":/src -w /src golang:1.25 sh -c "go test ./..."
 docker run --rm -v "$PWD":/src -w /src golang:1.25 sh -c "go test -count=2 -race ./..."
 ```
 
-There is no Makefile target for this — call docker directly. Two iterations
-with race is the standard "it's really green" check (`-count=2 -race`).
+`make test-race` runs the full Linux suite twice under the race detector in
+Docker. Two iterations with race is the standard "it's really green" check.
 Bump to `-count=3` or higher when stress-hunting an intermittent flake.
 
 Some tests are explicitly skipped without env vars:
@@ -31,6 +34,19 @@ Some tests are explicitly skipped without env vars:
 - `FILEGATE_BTRFS_REAL=1` (+ `FILEGATE_BTRFS_REAL_ROOT`) — real btrfs subvolume tests
 
 Don't enable these in routine work — they take minutes.
+
+CI uses loopback btrfs images for the deterministic capability gates:
+
+```bash
+make test-detector-btrfs-real-docker
+make test-versioning-btrfs-real-docker
+```
+
+The container recreation contract is checked with:
+
+```bash
+make test-docker-runtime-state
+```
 
 ## Test naming + organization
 
@@ -73,6 +89,8 @@ CI on overloaded runners has caught time-sleep-based tests as flakes; the conver
 
 - `infra/fgbin.FuzzDecodeEntity`
 - `infra/fgbin.FuzzDecodeChild`
+- `adapter/http.FuzzParseContentRange`
+- `adapter/http.FuzzSegmentChecksum`
 
 Run before opening a PR that touches the codec. New crash inputs land in
 `testdata/fuzz/<func>/` — commit them.

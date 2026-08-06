@@ -17,22 +17,13 @@ The `/metrics` endpoint auth follows a layered rule so you rarely need a
 dedicated credential, but can have one:
 
 1. If `metrics.token` is set → that token is required (`Authorization: Bearer <token>`).
-2. Else if `auth.bearer_token` (the REST token) is set → that token is required.
-3. Else → the endpoint is served **openly** (no auth).
+2. Otherwise the REST bearer token is required.
 
-The open case is intentional: on a trusted internal network where the
-Prometheus scraper holds no filegate credentials, leave both empty and
-rely on network isolation. Use `metrics.token` when you want the scraper
-to authenticate with a credential distinct from the REST API token (e.g.
-a read-only scrape secret you can rotate independently).
-
-> **Reaching the open mode:** `auth.bearer_token` is normally required at
-> startup. It may be left empty **only when `s3.enabled=true`** — an
-> S3-only deployment authenticates via SigV4 and runs with the REST API
-> locked down (every `/v1` route returns 401). That is the configuration
-> in which both tokens can be blank and `/metrics` is served openly. A
-> REST-enabled daemon always has a bearer token, so `/metrics` falls back
-> to it rather than serving openly.
+Use `metrics.token` when the scraper should authenticate with a credential
+distinct from the full-authority REST token. A REST bearer token always exists:
+when bootstrap config leaves it empty, Filegate generates and persists one on
+first start. Metrics therefore does not become open in an S3 deployment merely
+because both bootstrap token fields are empty.
 
 `metrics.path` must not collide with the REST surface — `/health` and
 anything under `/v1` are rejected at startup.
@@ -60,8 +51,6 @@ scrape_configs:
       type: Bearer
       credentials: "<metrics.token or auth.bearer_token>"
 ```
-
-Drop the `authorization` block when the endpoint is open.
 
 ---
 

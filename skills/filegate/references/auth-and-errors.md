@@ -2,7 +2,10 @@
 
 ## Authentication
 
-Filegate has exactly one auth mechanism: a single bearer token configured at daemon startup.
+The REST API has one bearer token, resolved at daemon startup. If bootstrap
+configuration leaves it empty, Filegate generates a strong token, stores it in
+`storage.runtime_config_path`, and prints it once. Empty never enables
+unauthenticated REST, including in S3 deployments.
 
 ```http
 Authorization: Bearer <token>
@@ -21,8 +24,8 @@ Auth-free endpoints:
 
 - **No per-user auth.** Filegate is infrastructure. Per-user authorization belongs in your backend, which fronts Filegate. See [`relay-patterns.md`](relay-patterns.md).
 - **No scopes / OAuth / JWT.** A token either has full access or none.
-- **Token rotation requires a maintenance window** — Filegate accepts only
-  one configured token at a time. There is no native overlap mechanism. To
+- **Token rotation requires a restart and usually a maintenance window** — the
+  token is static and Filegate accepts only one at a time. There is no native overlap mechanism. To
   rotate without downtime you'd need an external auth proxy in front of
   the daemon that translates between an old and new token; that's outside
   Filegate's scope.
@@ -149,7 +152,9 @@ This makes it trivial to find "user X tried to upload Y at time Z and got status
 
 ## Health & readiness probes
 
-For Kubernetes:
+For Kubernetes, keep the unauthenticated liveness probe on `/health`. The deep
+readiness route requires the bearer token, so inject its header with your
+platform's secret mechanism or check it through a trusted sidecar/proxy:
 
 ```yaml
 livenessProbe:
@@ -161,10 +166,17 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /v1/health
     port: 8080
+    httpHeaders:
+      - name: Authorization
+        value: Bearer <injected-secret>
   initialDelaySeconds: 5
   periodSeconds: 5
 ```
 
-`/health` doesn't require auth and doesn't exercise the index, so it's a true liveness signal. For deeper readiness (index reachable, mounts mounted), call `/v1/stats` — that does touch the index.
+`/health` doesn't require auth and doesn't exercise dependencies, so it is only
+liveness. `/v1/health` checks the index, detector staleness, and mount
+reachability; `fail` returns 503. Read `/v1/system/info` after start for slower
+writability, xattr, reflink, and effective-mode checks. `/v1/stats` is not a
+readiness endpoint.

@@ -149,7 +149,8 @@ The S3 listener speaks plain HTTP. Production deployments **must** put a reverse
 
 Object keys starting with these segments are reserved by filegate and rejected with `InvalidArgument`:
 
-- `.fg-versions/` — internal version storage (REST-only versioning feature).
+- `.fg-versions/` — internal version storage (managed through the REST
+  versioning surface; S3 overwrites can feed capture).
 - `.fg-uploads/` — internal multipart-upload staging.
 
 These segments also cannot appear inside a key path (e.g. `dir/.fg-uploads/file.bin` is rejected).

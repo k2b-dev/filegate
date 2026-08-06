@@ -233,7 +233,9 @@ download as tar streams.
 
 ### Versions
 
-Per-file version history is REST-only and available when versioning is enabled.
+Per-file version history is managed through REST and available when versioning
+is enabled. S3 overwrites can participate in capture, but S3 does not expose
+object versioning.
 Automatic mode requires reflink support on every mount; explicit `on` mode can
 use full byte copies.
 

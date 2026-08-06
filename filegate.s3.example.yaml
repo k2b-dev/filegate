@@ -24,10 +24,10 @@ server:
   shutdown_timeout: "60s"
   access_log_enabled: true
 
-# Bearer token for the REST adapter. Independent from S3
-# credentials. Set to "" only for an S3-only deployment: the REST
-# listener still binds server.listen for /health and optional
-# /metrics, but every /v1 route is locked down with 401.
+# Bearer token for the REST adapter. Independent from S3 credentials.
+# Leaving it empty generates a strong token on first start, persists it
+# in storage.runtime_config_path, and prints it once. Empty never means
+# unauthenticated REST, including in an S3 deployment.
 auth:
   bearer_token: "your-rest-bearer-token-please-rotate-me"
 
@@ -62,8 +62,10 @@ activity:
   ring_buffer_size: 500
 
 versioning:
-  # "auto" enables per-file versioning on btrfs mounts and silently
-  # disables it elsewhere. Versions live under .fg-versions/ inside
+  # "auto" enables per-file versioning only when every configured mount
+  # passes Filegate's real reflink probe; otherwise it disables versioning
+  # globally. "on" enables reflink or byte-copy fallback per mount.
+  # Versions live under .fg-versions/ inside
   # each mount (filegate-private — clients can't reach them).
   # Versioning is REST-only; S3 writes participate in the
   # capture-on-overwrite hook but the version surface itself isn't
@@ -123,12 +125,12 @@ s3:
 # ─── Prometheus metrics (optional) ─────────────────────────────
 # Served on the REST listener (server.listen, :8080 above) — no
 # extra port. Off by default. Auth is layered: metrics.token if
-# set, else the auth.bearer_token above, else open. See
+# set, else the always-present REST bearer token. See
 # docs/metrics.md for the full metric reference + PromQL examples.
 metrics:
   enabled: false
   path: "/metrics"
   # Dedicated scrape token. Leave blank to fall back to
-  # auth.bearer_token; blank both for an open endpoint (only on a
-  # trusted internal network).
+  # auth.bearer_token (configured or generated). This fallback does not
+  # create an open metrics endpoint.
   token: ""

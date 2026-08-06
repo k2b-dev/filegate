@@ -25,21 +25,34 @@ Reference config template:
 
 - [packaging/config/conf.yaml](https://github.com/ValentinKolb/filegate/blob/main/packaging/config/conf.yaml)
 
-## 3. Required Settings
+## 3. Required Settings and Durable State
 
-Minimum required for REST or mixed REST+S3 deployments:
+Minimum explicit production configuration:
 
 ```yaml
-auth:
-  bearer_token: "REPLACE_ME"
 storage:
   base_paths:
     - /var/lib/filegate/data
+  index_path: /var/lib/filegate/index
+  runtime_config_path: /var/lib/filegate/config
 ```
 
-For S3-only deployments, `auth.bearer_token` may be empty when
-`s3.enabled: true`; the REST `/v1` API stays locked down with 401,
-while `/health` and optional `/metrics` remain on `server.listen`.
+Set `auth.bearer_token` through a protected bootstrap file or environment. If
+it is empty, Filegate generates a strong token on first start, stores it in the
+runtime config store, and prints it once. Empty never means unauthenticated
+REST, including in S3 deployments.
+
+The three durable state classes have different recovery semantics:
+
+| State | Default path | Authority | Recovery |
+|---|---|---|---|
+| File tree and `user.filegate.id` xattrs | `storage.base_paths` | File bytes, paths, stable IDs, and version blobs | Restore from a backup that preserves xattrs. |
+| Runtime config store | `/var/lib/filegate/config` | Applied manifest, generated REST token, and S3 keys | Restore from backup; it is not reconstructable from the file tree. |
+| Metadata index | `/var/lib/filegate/index` | Listings, lookup, and upload-session metadata | Restore only with the matching data snapshot, or rebuild offline. |
+
+The bootstrap config at `/etc/filegate/conf.yaml` and any environment-backed
+secrets are deployment inputs; back them up in their owning secret/config
+system.
 
 Strongly recommended explicit settings:
 
@@ -104,9 +117,10 @@ sudo systemctl daemon-reload
 sudo systemctl restart filegate
 ```
 
-## 6. Filesystem Choice (ext4 vs btrfs)
+## 6. Filesystem Choice
 
-Both ext4 and btrfs are supported.
+ext4, XFS, and btrfs are supported when the mounted roots are writable and
+support user xattrs.
 
 ### ext4
 
@@ -130,11 +144,24 @@ Tradeoffs:
 
 If your team does not already operate btrfs confidently, start with ext4.
 
+### XFS
+
+- Supported with polling detection.
+- User xattrs must be enabled and preserved by backup tooling.
+- Reflink availability depends on how the filesystem was created; Filegate
+  probes `FICLONE` instead of trusting the filesystem name.
+
 ### Practical impact for Filegate detectors
 
 - On btrfs, Filegate can process foreign filesystem activity (NFS writers, local tools, sidecar processes) much more efficiently by reading transid/generation deltas.
 - On ext4/xfs, Filegate cannot use `find-new`; detector fallback is polling-based and must repeatedly scan/check directory trees and files.
 - As tree size and churn increase, ext4/xfs polling overhead can grow sharply compared to btrfs delta-based ingestion.
+
+Versioning is not selected by filesystem name. `versioning.enabled=auto`
+enables versioning only when every configured mount passes the real reflink
+probe. `on` enables it on all mounts and falls back to byte copies where
+reflinks are unavailable. The System API reports the effective `reflink`,
+`mixed`, `byte-copy`, or `disabled` mode and its reason.
 
 ## 7. Detector Backend Strategy
 
@@ -191,15 +218,32 @@ Rule of thumb:
 - Keep base paths explicit and minimal.
 - Run as dedicated service user (`filegate`).
 - Audit systemd overrides after upgrades.
+- Terminate TLS at a reverse proxy; Filegate listeners are cleartext.
+- Apply REST rate limits at the proxy. Filegate has no built-in REST request
+  limiter; S3 has optional per-key limits.
+- Treat the Admin app as full Filegate authority and keep its bearer token
+  server-side.
+- Run one daemon only for each runtime/index store and writable mount set.
 
 ## 10. Routine Operations
 
-Health and stats:
+Liveness, readiness, and diagnostics:
 
 ```bash
 curl -fsS http://127.0.0.1:8080/health
-curl -fsS -H 'Authorization: Bearer <token>' http://127.0.0.1:8080/v1/stats
+curl -fsS -H 'Authorization: Bearer <token>' http://127.0.0.1:8080/v1/health
+curl -fsS -H 'Authorization: Bearer <token>' http://127.0.0.1:8080/v1/system/info
 ```
+
+- `/health` is an unauthenticated liveness check and only proves that the
+  process accepts HTTP.
+- `/v1/health` is the readiness signal: it checks the index, detector
+  staleness, and mount reachability. `fail` returns 503; `degraded` returns 200.
+- `/v1/system/info` performs the slower write/xattr/reflink mount probes and
+  shows effective detector/versioning choices. Read it after start and
+  occasionally, not as a frequent probe.
+- `/v1/system/runtime` is safe to poll for live queues, detector state, cache
+  ratios, and upload sessions. `/v1/stats` is capacity data, not readiness.
 
 Index ops:
 
@@ -221,16 +265,51 @@ Important for `index rescan --new`:
 
 Recommended cadence:
 
-- check health and error logs continuously
+- poll authenticated readiness and error logs continuously
 - review stats trends daily (index size, cache usage, disk usage)
 - run `index rescan --new` for severe index corruption scenarios (daemon stopped)
 
-## 11. Upgrade and Rollback
+## 11. Backup and Restore
+
+Create a point-in-time backup with the service stopped, or use coordinated
+filesystem snapshots that cover every data root and the runtime store. Do not
+copy a live Pebble directory independently from the file tree.
+
+Back up:
+
+1. Every `storage.base_paths` tree, including `.fg-versions`, `.fg-uploads`,
+   ownership, modes, and `user.filegate.id` xattrs.
+2. `storage.runtime_config_path` because it contains desired state and generated
+   credentials.
+3. `/etc/filegate/conf.yaml`, environment/secret-manager inputs, reverse-proxy
+   config, and Admin secrets in their normal deployment backup.
+4. Optionally `storage.index_path`, but only from the same point in time. The
+   index speeds recovery; it is not a substitute for data/runtime backups.
+
+For file-copy backups, use tooling that preserves xattrs, for example
+`rsync -aHAX --numeric-ids`. Verify a restored sample with
+`getfattr -n user.filegate.id <file>` before starting Filegate.
+
+Restore in this order:
+
+1. Keep every Filegate instance stopped.
+2. Restore data roots and their xattrs.
+3. Restore the runtime config store and bootstrap/secret inputs.
+4. Restore an index only when it belongs to the same backup point. Otherwise
+   leave the daemon stopped and run `fg index rescan --new --config ...`.
+5. Start exactly one instance. Verify `/v1/health`, inspect
+   `/v1/system/info`, resolve a known ID, and perform a controlled read/write.
+
+Rebuilding the index discards in-progress upload-session metadata; staged
+`.fg-uploads` bytes alone cannot resume those sessions. Recent activity is an
+in-memory ring and is never restored.
+
+## 12. Upgrade and Rollback
 
 Before upgrade:
 
-- backup config
-- snapshot or backup data roots and index path
+- make a verified backup using the procedure above
+- record the current binary/package/image version and manifest revision
 - validate package signature/source in your normal process
 
 Upgrade:
@@ -238,17 +317,38 @@ Upgrade:
 - stop `filegate` before installing a `.deb`/`.rpm` upgrade
 - install the new package or container image
 - start service
-- verify `/health`, `/v1/stats`, and key read/write flows
+- verify `/health`, authenticated `/v1/health`, `/v1/system/info`, and key
+  read/write flows
 
 Package upgrades fail before replacing files when `filegate.service` is still active. The package script prints the stop instruction and leaves the existing install in place.
 
 Rollback:
 
-- restore previous package/image
-- restore index/data snapshot if required
-- restart and validate critical paths
+- stop Filegate and restore the previous package or image
+- restore data, runtime store, and matching index together only if the failed
+  upgrade changed durable state; otherwise keep the current state
+- start one instance and repeat the readiness, ID-resolution, and read/write
+  checks
 
-## 12. Troubleshooting Quick Table
+There is no automatic schema downgrade promise. Test forward and rollback paths
+with a copy of production state before an upgrade that changes on-disk formats.
+
+## 13. Fixed Operating Boundaries
+
+- Single node, no replication, leader election, or shared Pebble deployment.
+- Single tenant. The REST bearer token grants all file and config authority.
+- No multi-file transactions or cross-request point-in-time snapshot. Each
+  successful write publishes its own result atomically.
+- External writers are eventually indexed; the reconciliation interval bounds
+  missed detector events when enabled.
+- S3 is path-style and does not expose S3 object versioning. S3 overwrites can
+  feed Filegate's internal version capture, which is administered through REST.
+- No durable audit log and no OpenTelemetry traces. Export logs/metrics and
+  activity to external systems if those are requirements.
+- The published Filegate container is Linux AMD64 only. Packages cover Linux
+  AMD64 and ARM64. The Admin app has no published release artifact.
+
+## 14. Troubleshooting Quick Table
 
 - `401 unauthorized`: wrong/missing bearer token.
 - `permission denied` on write: systemd `ReadWritePaths` mismatch.

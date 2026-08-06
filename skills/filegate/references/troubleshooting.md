@@ -6,9 +6,9 @@ Symptoms → causes → fixes, ranked roughly by frequency.
 
 - **Missing `Authorization` header.** SDK construction without a token, or a fresh `fetch` call that bypasses the SDK.
 - **Wrong token format.** Must be exactly `Bearer <token>`, single space, no quotes.
-- **Daemon started without a REST token.** REST-only deployments require
-  `auth.bearer_token`. S3-only deployments may leave it empty; in that mode
-  `/v1/*` fails closed with 401 while S3 uses SigV4.
+- **Generated token was missed or the wrong runtime store is mounted.** An empty
+  bootstrap token generates and persists one; it never enables unauthenticated
+  REST. Use the once-printed value or configure an explicit token and restart.
 
 ## 404 Not Found on a path that should exist
 
@@ -116,5 +116,7 @@ separate Filegate calls.
 
 ## I changed something in the daemon config and it's not picking up
 
-- The daemon does NOT hot-reload config. Restart the daemon process.
+- Bootstrap and static config needs a restart. Manifest-owned runtime keys
+  activate immediately after `fg config apply`; static differences appear in
+  `restartRequired` until restart.
 - The TS SDK's lazy default reads env vars at first property access, which may have happened before you changed them. Use explicit construction in tests.

@@ -298,15 +298,16 @@ POST /v1/nodes/{fileID}/versions/snapshot
 POST /v1/nodes/{fileID}/versions/{versionID}/restore
 ```
 
-HTTP-mediated writes can capture btrfs-backed per-file versions. Older
+REST and S3 overwrite paths can capture per-file versions. Older
 versions are listable, downloadable, pinnable, restorable in place, or
 restorable as a fresh sibling file.
 
-- The feature is REST-only; S3 does not expose S3 object versions.
-- btrfs reflinks are required for efficient storage. Unsupported mounts
-  return 404 with the versioning-unsupported error shape.
+- The management surface is REST-only; S3 does not expose S3 object versions.
+- Filegate probes real reflink support. `auto` enables only when every mount
+  supports it; `on` uses byte-copy fallback where needed.
 - Automatic captures happen on overwrite subject to the configured cooldown.
   Manual snapshots ignore the cooldown and are pinned by default.
+- Raw filesystem writes do not create automatic versions.
 
 Use the SDK `versions` client where available; see `docs/versioning.md` for
 retention and operator details.
@@ -334,7 +335,16 @@ GET /v1/stats
 
 GET /health
 → 200 OK   ← no auth required, for liveness probes
+
+GET /v1/health
+→ dependency readiness: index, detector staleness, mount reachability
+
+GET /v1/system/info
+→ effective detector/versioning choices and mount capability probes
 ```
+
+Use `/v1/system/runtime` for pollable live counters. `/v1/stats` is capacity
+and metadata information, not a readiness probe.
 
 ## Conflict handling
 
@@ -355,7 +365,10 @@ paths (segment duplicate-content rejects, fallback envelope) return only
 
 ## Authentication
 
-A single bearer token, configured at daemon startup. Sent on every `/v1/*` request:
+A single bearer token, resolved at daemon startup. When bootstrap config leaves
+it empty, Filegate generates one, persists it in the runtime config store, and
+prints it once. Empty never means unauthenticated REST. Send it on authenticated
+`/v1/*` requests:
 
 ```
 Authorization: Bearer <token>
@@ -374,6 +387,8 @@ during write are mapped to 507 too.
 ## What Filegate does NOT do
 
 - **No multi-user authentication.** Single bearer token. Per-user logic goes in your backend.
+- **No active-active or shared index.** One daemon owns a runtime/index store
+  and writable mount set; there is no replication or leader election.
 - **No transactions / multi-file atomicity.** Each operation is independent. There is no "upload these 5 files atomically".
 - **No S3 object versioning.** REST has per-file versioning when configured, but the S3 surface does not expose object versions.
 - **No user-visible file locks.** Filegate serializes its own write paths, but it does not expose leases or locks that clients can hold across separate operations.
