@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/valentinkolb/filegate/domain"
 	"github.com/valentinkolb/filegate/infra/eventbus"
@@ -320,6 +322,86 @@ func TestMkdirRelativeAppliesOwnershipToCreatedChain(t *testing.T) {
 	}
 	if got := modeOf(t, createdPath); got != 0o700 {
 		t.Fatalf("x/y/z mode = %o, want %o", got, 0o700)
+	}
+}
+
+type blockingMkdirStore struct {
+	domain.Store
+	target  string
+	reached chan struct{}
+	proceed chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingMkdirStore) MkdirAll(path string, perm os.FileMode) error {
+	if err := s.Store.MkdirAll(path, perm); err != nil {
+		return err
+	}
+	if filepath.Clean(path) == filepath.Clean(s.target) {
+		s.once.Do(func() {
+			close(s.reached)
+			<-s.proceed
+		})
+	}
+	return nil
+}
+
+func TestMkdirRelativeDoesNotChangeConcurrentSiblingOwnership(t *testing.T) {
+	baseDir := t.TempDir()
+	idx, err := indexpebble.Open(t.TempDir(), 16<<20)
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	defer idx.Close()
+
+	shared := filepath.Join(baseDir, "shared")
+	store := &blockingMkdirStore{
+		Store:   filesystem.New(),
+		target:  shared,
+		reached: make(chan struct{}),
+		proceed: make(chan struct{}),
+	}
+	svc, err := domain.NewService(idx, store, eventbus.New(), []string{baseDir}, 1000)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	root := svc.ListRoot()[0].ID
+
+	done := make(chan error, 1)
+	go func() {
+		_, mkdirErr := svc.MkdirRelative(root, "shared/owned", true, &domain.Ownership{
+			Mode:    "600",
+			DirMode: "700",
+		}, domain.ConflictError)
+		done <- mkdirErr
+	}()
+
+	select {
+	case <-store.reached:
+	case err := <-done:
+		t.Fatalf("mkdir relative returned before creating shared parent: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("mkdir relative did not reach shared parent")
+	}
+	foreign := filepath.Join(shared, "foreign")
+	if err := os.Mkdir(foreign, 0o711); err != nil {
+		t.Fatalf("create concurrent sibling: %v", err)
+	}
+	close(store.proceed)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("mkdir relative: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mkdir relative did not finish")
+	}
+
+	if got := modeOf(t, foreign); got != 0o711 {
+		t.Fatalf("concurrent sibling mode = %o, want 711", got)
+	}
+	if got := modeOf(t, filepath.Join(shared, "owned")); got != 0o700 {
+		t.Fatalf("created directory mode = %o, want 700", got)
 	}
 }
 

@@ -1675,7 +1675,6 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 	parts := strings.Split(rel, "/")
 	current := parentAbs
 	createdAny := false
-	firstCreated := ""
 	// The exact levels this call created, top down. The loop creates one level
 	// per iteration -- it walks down, so a segment's parent always exists by the
 	// time MkdirAll runs -- which makes this the precise chain to index.
@@ -1727,18 +1726,22 @@ func (s *Service) MkdirRelative(parentID FileID, relPath string, recursive bool,
 			return nil, err
 		}
 		createdAny = true
-		if firstCreated == "" {
-			firstCreated = next
-		}
 		createdChain = append(createdChain, next)
 		current = next
 	}
 
 	targetAbs := current
 	if createdAny {
-		// Apply ownership to the full newly-created subtree, including intermediate dirs.
-		if err := s.applyOwnership(firstCreated, effectiveOwnership, true); err != nil {
-			return nil, err
+		// Only touch the exact directory levels in this request's creation chain.
+		// A recursive walk from the first new parent can enter sibling requests'
+		// temporary files while they are being atomically renamed, turning a
+		// successful concurrent write into an ENOENT from chown/chmod.
+		if normalized != nil {
+			for _, created := range createdChain {
+				if err := applyOwnershipOne(created, true, normalized); err != nil {
+					return nil, err
+				}
+			}
 		}
 		// One batch for the whole chain instead of one synced write per level.
 		if err := s.indexNewDirChain(createdChain); err != nil {
@@ -3747,10 +3750,16 @@ func (s *Service) rescanWithScope(targetMounts map[string]struct{}) error {
 //     rename whose ReKey missed this entry — caused by a same-id
 //     directory rename that fell through detector/race seams.
 //
-// Sweep is run from Rescan after the entity-level prune. Iteration
-// is read-only via the public Index API, so the sweep can chunk its
-// deletes without holding any long-running iterator.
+// Sweep is run from Rescan after the entity-level prune. Each iterator callback
+// only copies one bounded page. Entity/path lookups and deletes happen after
+// IterateFlatKeys releases the index read lock, so this sweep cannot deadlock
+// Close by re-entering the index while a writer is waiting.
 func (s *Service) sweepStaleFlatKeysForMounts(targetMounts map[string]struct{}) error {
+	const pageSize = 4096
+	type entry struct {
+		rel string
+		id  FileID
+	}
 	type stale struct{ mount, rel string }
 	mounts := s.mountNames
 	for _, mountName := range mounts {
@@ -3759,50 +3768,59 @@ func (s *Service) sweepStaleFlatKeysForMounts(targetMounts map[string]struct{}) 
 				continue
 			}
 		}
-		var orphans []stale
-		err := s.idx.IterateFlatKeys(mountName, "", "", 0, func(rel string, id FileID) (bool, error) {
-			entity, err := s.idx.GetEntity(id)
-			if err != nil && !errors.Is(err, ErrNotFound) {
-				return false, err
-			}
-			if entity == nil {
-				orphans = append(orphans, stale{mountName, rel})
+		after := ""
+		for {
+			page := make([]entry, 0, pageSize)
+			err := s.idx.IterateFlatKeys(mountName, "", after, pageSize, func(rel string, id FileID) (bool, error) {
+				page = append(page, entry{rel: rel, id: id})
 				return true, nil
-			}
-			// Path drift: derive the entity's current path and
-			// compare to this flat-key entry. If it differs, the
-			// flat-key is from an old position the rename missed.
-			vp, vpErr := s.VirtualPath(id)
-			if vpErr != nil {
-				// Can't resolve current path → conservative: leave
-				// the entry, don't risk false-positive deletion of
-				// a key whose entity briefly looks unresolvable.
-				return true, nil
-			}
-			gotMount, gotRel, ok := splitVirtualPath(vp)
-			if !ok || gotMount != mountName || gotRel != rel {
-				orphans = append(orphans, stale{mountName, rel})
-			}
-			return true, nil
-		})
-		if err != nil {
-			return err
-		}
-		// Chunk deletes the same way rescan stale-cleanup chunks
-		// entity deletes, to avoid huge single batches.
-		for start := 0; start < len(orphans); start += 4096 {
-			end := start + 4096
-			if end > len(orphans) {
-				end = len(orphans)
-			}
-			chunk := orphans[start:end]
-			if err := s.idx.Batch(func(b Batch) error {
-				for _, o := range chunk {
-					b.DelFlatKey(o.mount, o.rel)
-				}
-				return nil
-			}); err != nil {
+			})
+			if err != nil {
 				return err
+			}
+			if len(page) == 0 {
+				break
+			}
+
+			orphans := make([]stale, 0, len(page))
+			for _, indexed := range page {
+				entity, err := s.idx.GetEntity(indexed.id)
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				if entity == nil {
+					orphans = append(orphans, stale{mountName, indexed.rel})
+					continue
+				}
+				// Path drift: derive the entity's current path and compare to
+				// this flat-key entry. If it differs, the flat-key is stale.
+				vp, vpErr := s.VirtualPath(indexed.id)
+				if vpErr != nil {
+					// Can't resolve current path → conservative: leave the entry,
+					// don't risk deleting a briefly unresolvable live key.
+					continue
+				}
+				gotMount, gotRel, ok := splitVirtualPath(vp)
+				if !ok || gotMount != mountName || gotRel != indexed.rel {
+					orphans = append(orphans, stale{mountName, indexed.rel})
+				}
+			}
+
+			// A page is also the maximum delete batch size.
+			if len(orphans) > 0 {
+				if err := s.idx.Batch(func(b Batch) error {
+					for _, o := range orphans {
+						b.DelFlatKey(o.mount, o.rel)
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+
+			after = page[len(page)-1].rel
+			if len(page) < pageSize {
+				break
 			}
 		}
 	}

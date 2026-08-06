@@ -246,7 +246,11 @@ func TestConsumeDetectorEventsStressWithDuplicates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := make(chan []detect.Event, 8192)
-	go consumeDetectorEvents(ctx, svc, ch, nil, 0)
+	consumerDone := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		consumeDetectorEvents(ctx, svc, ch, nil, 0)
+	}()
 
 	rnd := rand.New(rand.NewSource(42))
 	for round := 0; round < 12; round++ {
@@ -297,6 +301,11 @@ func TestConsumeDetectorEventsStressWithDuplicates(t *testing.T) {
 	})
 
 	close(ch)
+	select {
+	case <-consumerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detector consumer did not stop after its event channel closed")
+	}
 }
 
 func TestCoalesceDetectorBatchesDrainsQueue(t *testing.T) {
