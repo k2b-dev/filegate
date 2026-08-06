@@ -10,7 +10,7 @@ test-short:
 	go test -short ./...
 
 test-race:
-	go test -race ./adapter/http ./domain ./infra/pebble
+	go test -count=2 -race ./...
 
 test-docker-runtime-state:
 	./bench/scripts/run-docker-runtime-state-smoke.sh

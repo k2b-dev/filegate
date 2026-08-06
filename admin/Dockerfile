@@ -3,7 +3,7 @@ WORKDIR /app
 COPY sdk/ts ./sdk/ts
 COPY admin ./admin
 WORKDIR /app/admin
-RUN bun install --frozen-lockfile || bun install
+RUN bun install --frozen-lockfile
 
 FROM deps AS build
 WORKDIR /app/admin
