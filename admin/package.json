@@ -9,7 +9,7 @@
     "build:sdk": "bunx tsc -p ../sdk/ts/tsconfig.json && rm -rf node_modules/@valentinkolb/filegate/dist && cp -R ../sdk/ts/dist node_modules/@valentinkolb/filegate/dist",
     "start": "bun dist/server.js",
     "test": "bun test --isolate",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "bun run build:sdk && tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@valentinkolb/filegate": "file:../sdk/ts",
