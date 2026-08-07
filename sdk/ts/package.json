@@ -37,7 +37,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/k2b-dev/filegate"
+    "url": "git+https://github.com/k2b-dev/filegate.git"
   },
   "bugs": {
     "url": "https://github.com/k2b-dev/filegate/issues"
