@@ -5,7 +5,7 @@ import type {
   ConfigValue,
   ConfigValuesResponse,
   S3Key,
-} from "@valentinkolb/filegate";
+} from "@k2b/filegate";
 import { ConfigSection } from "../components/ConfigReadout";
 import { IconLabel } from "../components/Icons";
 import { Layout } from "../components/Layout";

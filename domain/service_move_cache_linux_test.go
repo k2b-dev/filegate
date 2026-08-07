@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // TestTransferMoveInvalidatesDescendantPathCache pins the targeted

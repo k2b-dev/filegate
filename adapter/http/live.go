@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // liveConfig reads runtime-scoped settings from the published snapshot.

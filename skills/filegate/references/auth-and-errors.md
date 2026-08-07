@@ -97,7 +97,7 @@ body larger than the planned segment size returns **413 Payload Too Large**.
 ### TS
 
 ```ts
-import { FilegateError } from "@valentinkolb/filegate/client";
+import { FilegateError } from "@k2b/filegate/client";
 
 try {
   await fg.paths.put(path, body);

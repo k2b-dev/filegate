@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentinkolb/filegate/infra/metrics"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // scrapeMetrics renders the registry's exposition text (what Prometheus

@@ -33,7 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 )
 
 type treeConfig struct {

@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 func setID(path string, id domain.FileID) error {

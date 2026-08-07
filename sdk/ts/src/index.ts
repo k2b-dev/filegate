@@ -91,7 +91,7 @@ export type {
 
 // Pure helpers are intentionally NOT re-exported here. Import them from the
 // dedicated entrypoint to keep tree-shaking honest:
-//   import { uploads } from "@valentinkolb/filegate/utils";
+//   import { uploads } from "@k2b/filegate/utils";
 
 export type {
   ActivityActor,

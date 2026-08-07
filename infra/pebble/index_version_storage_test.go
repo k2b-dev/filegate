@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // openTempIndex opens a fresh Pebble index in t.TempDir(). Cleanup is

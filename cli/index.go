@@ -6,7 +6,7 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	indexpebble "github.com/k2b-dev/filegate/v3/infra/pebble"
 )
 
 func newDaemonIndexCmd() *cobra.Command {

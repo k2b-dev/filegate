@@ -1,4 +1,4 @@
-import type { ConfigKeySchema, ConfigValue } from "@valentinkolb/filegate";
+import type { ConfigKeySchema, ConfigValue } from "@k2b/filegate";
 import { text } from "@valentinkolb/stdlib";
 import { Icon } from "./Icons";
 

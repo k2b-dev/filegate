@@ -40,7 +40,7 @@ with `arm64` on ARM hosts.
 
 ```sh
 curl -fL -o /tmp/filegate.deb \
-  https://github.com/valentinkolb/filegate/releases/latest/download/filegate_linux_amd64.deb
+  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_amd64.deb
 sudo dpkg -i /tmp/filegate.deb
 sudo systemctl enable --now filegate
 ```
@@ -95,7 +95,7 @@ bun run dev
 ## Agent skills
 
 ```sh
-bunx skills add ValentinKolb/filegate
+bunx skills add k2b-dev/filegate
 ```
 
 - Integration skill: [`skills/filegate/SKILL.md`](skills/filegate/SKILL.md)

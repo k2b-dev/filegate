@@ -1,11 +1,11 @@
 # Go SDK
 
-Module: `github.com/valentinkolb/filegate/sdk/filegate`. Stateless, scoped, mirrors the TS SDK shape.
+Module: `github.com/k2b-dev/filegate/v3/sdk/filegate`. Stateless, scoped, mirrors the TS SDK shape.
 
 ## Construction
 
 ```go
-import "github.com/valentinkolb/filegate/sdk/filegate"
+import "github.com/k2b-dev/filegate/v3/sdk/filegate"
 
 fg, err := filegate.New(filegate.Config{
     BaseURL:    "http://127.0.0.1:8080",
@@ -46,8 +46,8 @@ a client:
 
 ```go
 import (
-    "github.com/valentinkolb/filegate/sdk/filegate/segments"
-    "github.com/valentinkolb/filegate/sdk/filegate/relay"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/relay"
 )
 
 sum := segments.SHA256Bytes(data)
@@ -191,7 +191,7 @@ in memory.
 ```go
 import (
     "io"
-    "github.com/valentinkolb/filegate/sdk/filegate/segments"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
 )
 
 f, err := os.Open(srcPath)

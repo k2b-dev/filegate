@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/viper"
 
-	httpadapter "github.com/valentinkolb/filegate/adapter/http"
-	"github.com/valentinkolb/filegate/domain"
+	httpadapter "github.com/k2b-dev/filegate/v3/adapter/http"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 func loadConfig(configFile string) (domain.Config, error) {

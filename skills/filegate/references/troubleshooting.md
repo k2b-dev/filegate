@@ -65,7 +65,7 @@ This is also returned eagerly from `POST /v1/uploads/sessions` — no segments l
 ## Upload session commits but downloaded file is wrong size or corrupted
 
 - **Wrong overall checksum** in the create request. The server hashes the assembled file at commit and rejects on mismatch. Compute `sha256` over the whole file and pass `sha256:<hex>` (lowercase hex, with the prefix).
-- **Wrong segment boundaries.** Use `uploads.segments.bounds(index, size, segmentSize)` from `@valentinkolb/filegate/utils` (or the Go `segments` package) instead of manual arithmetic.
+- **Wrong segment boundaries.** Use `uploads.segments.bounds(index, size, segmentSize)` from `@k2b/filegate/utils` (or the Go `segments` package) instead of manual arithmetic.
 - **Trailing segment uploaded with wrong size.** The last segment is `size - (totalSegments-1) * segmentSize` bytes, not `segmentSize`. The bounds helper handles this.
 
 ## Resume loses already-uploaded segments

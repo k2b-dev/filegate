@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
-	"github.com/valentinkolb/filegate/infra/detect"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	s3adapter "github.com/k2b-dev/filegate/v3/adapter/s3"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // scrapeReg renders a registry's exposition text for assertions.

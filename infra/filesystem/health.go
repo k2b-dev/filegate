@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // MountHealth is the per-mount probe result. Operators see a

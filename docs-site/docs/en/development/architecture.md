@@ -63,7 +63,7 @@ Additional reserved meta key:
 
 - index format version key (`index_format_version` guard)
 
-See implementation in [`infra/pebble/index.go`](https://github.com/ValentinKolb/filegate/blob/main/infra/pebble/index.go).
+See implementation in [`infra/pebble/index.go`](https://github.com/k2b-dev/filegate/blob/main/infra/pebble/index.go).
 
 ## fgbin Record Format (Index Values)
 

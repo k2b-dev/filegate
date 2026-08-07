@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // InMemory is an in-memory event bus with bounded asynchronous handler dispatch.

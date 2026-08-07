@@ -14,13 +14,13 @@ The TypeScript SDK is for Node, Bun, and browser-assisted applications that call
 ## Install
 
 ```sh
-npm i @valentinkolb/filegate
+npm i @k2b/filegate
 ```
 
 ## Server-side client
 
 ```ts
-import { Filegate } from "@valentinkolb/filegate";
+import { Filegate } from "@k2b/filegate";
 
 const client = new Filegate({
   baseUrl: "http://127.0.0.1:8080",
@@ -54,7 +54,7 @@ const roots = await client.paths.get("");
 Use `upload()` when the browser should upload files directly to Filegate while the app server mints scoped sessions.
 
 ```ts
-import { upload } from "@valentinkolb/filegate";
+import { upload } from "@k2b/filegate";
 
 await upload({
   files,

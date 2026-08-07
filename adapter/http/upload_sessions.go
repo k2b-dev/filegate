@@ -26,9 +26,9 @@ import (
 
 	"github.com/puzpuzpuz/xsync/v4"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/filesystem"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
 )
 
 const (

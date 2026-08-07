@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // AWS S3 ListObjectsV2 limits.

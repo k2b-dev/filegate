@@ -5,7 +5,7 @@ Filegate ships three integration paths. Pick based on your runtime:
 | Runtime                                 | Use                                                                  |
 |-----------------------------------------|----------------------------------------------------------------------|
 | Node / Bun / Deno (server-side)         | TS SDK — [`ts-sdk.md`](ts-sdk.md)                                    |
-| Browser (trusted internal only)         | TS SDK with explicit construction — [`ts-sdk.md`](ts-sdk.md). For public browser apps, **do NOT** construct the client; relay through your backend ([`relay-patterns.md`](relay-patterns.md)) or use direct upload sessions; import only `@valentinkolb/filegate/utils` for hashing/segment math. |
+| Browser (trusted internal only)         | TS SDK with explicit construction — [`ts-sdk.md`](ts-sdk.md). For public browser apps, **do NOT** construct the client; relay through your backend ([`relay-patterns.md`](relay-patterns.md)) or use direct upload sessions; import only `@k2b/filegate/utils` for hashing/segment math. |
 | Go service                              | Go SDK — [`go-sdk.md`](go-sdk.md)                                    |
 | Anything else (Python, Rust, curl, ...) | Raw HTTP — [`http-api.md`](http-api.md)                              |
 | Just need sha256/segment math, no I/O  | Tree-shakeable subpackage — see "Pure helpers" below                 |
@@ -38,7 +38,7 @@ Both SDKs split off pure, non-network helpers into dedicated subpackages so call
 **TypeScript:**
 
 ```ts
-import { uploads } from "@valentinkolb/filegate/utils";
+import { uploads } from "@k2b/filegate/utils";
 
 await uploads.checksum.sha256(uint8Array);
 uploads.segments.count({ size: fileSize, segmentSize });
@@ -51,8 +51,8 @@ The `/utils` subpath strips the entire HTTP client from the bundle — typically
 
 ```go
 import (
-    "github.com/valentinkolb/filegate/sdk/filegate/segments"
-    "github.com/valentinkolb/filegate/sdk/filegate/relay"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/relay"
 )
 
 sum := segments.SHA256Bytes(data)
@@ -76,16 +76,16 @@ Every endpoint is documented in [`http-api.md`](http-api.md). Three rules:
 **TypeScript:**
 
 ```bash
-npm i @valentinkolb/filegate
+npm i @k2b/filegate
 # or yarn / pnpm / bun
 ```
 
 **Go:**
 
 ```bash
-go get github.com/valentinkolb/filegate/sdk/filegate
-go get github.com/valentinkolb/filegate/sdk/filegate/segments # if you need pure helpers
-go get github.com/valentinkolb/filegate/sdk/filegate/relay    # if you need the relay helper
+go get github.com/k2b-dev/filegate/v3/sdk/filegate
+go get github.com/k2b-dev/filegate/v3/sdk/filegate/segments # if you need pure helpers
+go get github.com/k2b-dev/filegate/v3/sdk/filegate/relay    # if you need the relay helper
 ```
 
 ## Backend + Browser? Use the relay pattern

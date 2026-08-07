@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/valentinkolb/filegate/cli"
+	"github.com/k2b-dev/filegate/v3/cli"
 )
 
 func main() {

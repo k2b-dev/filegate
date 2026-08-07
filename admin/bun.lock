@@ -3,9 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@valentinkolb/filegate-admin",
+      "name": "@k2b/filegate-admin",
       "dependencies": {
-        "@valentinkolb/filegate": "file:../sdk/ts",
+        "@k2b/filegate": "file:../sdk/ts",
         "@valentinkolb/ssr": "^0.11.2",
         "@valentinkolb/stdlib": "^0.16.0",
         "@valentinkolb/sync": "^5.6.0",
@@ -117,7 +117,7 @@
 
     "@types/sax": ["@types/sax@1.2.7", "", { "dependencies": { "@types/node": "*" } }, "sha512-rO73L89PJxeYM3s3pPPjiPgVVcymqU490g0YO5n5By0k2Erzj6tay/4lr1CHAAU4JyOWd1rpQ8bCf6cZfHU96A=="],
 
-    "@valentinkolb/filegate": ["@valentinkolb/filegate@file:../sdk/ts", { "devDependencies": { "typescript": "^5.8" } }],
+    "@k2b/filegate": ["@k2b/filegate@file:../sdk/ts", { "devDependencies": { "typescript": "^5.8" } }],
 
     "@valentinkolb/ssr": ["@valentinkolb/ssr@0.11.2", "", { "dependencies": { "@babel/core": "^7.29.7", "@babel/preset-typescript": "^7.29.7", "@types/babel__core": "^7.20.5", "babel-preset-solid": "^1.9.12", "seroval": "^1.5.5" }, "peerDependencies": { "elysia": "^1.0.0", "hono": "^4.0.0", "solid-js": "^1.9.0" }, "optionalPeers": ["elysia", "hono"] }, "sha512-tL6youm0IcD8AETxgDtfgxBiBlCweE3WUL2Cj3ofmMWjgT9GslhLfH++8el/synBu27CAZO5+5D+F8L+svk4ig=="],
 

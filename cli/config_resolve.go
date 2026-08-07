@@ -14,9 +14,9 @@ import (
 
 	"github.com/spf13/viper"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/runtimecfg"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/runtimecfg"
 )
 
 // ConfigSource says where a desired value came from.

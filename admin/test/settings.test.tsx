@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ConfigKeySchema, ConfigValue } from "@valentinkolb/filegate";
+import type { ConfigKeySchema, ConfigValue } from "@k2b/filegate";
 import { renderToString } from "solid-js/web";
 import { Settings } from "../src/pages/Settings";
 

@@ -68,7 +68,7 @@ node" message otherwise.
 ## TS SDK usage
 
 ```ts
-import { FilegateError } from "@valentinkolb/filegate/client";
+import { FilegateError } from "@k2b/filegate/client";
 
 try {
   await fg.paths.put("photos/sunset.jpg", bytes);

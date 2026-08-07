@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // Every key must carry a scope decision. Without this guard a newly added key

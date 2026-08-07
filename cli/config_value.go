@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // configValueByPath reads a config value addressed by its dotted path.

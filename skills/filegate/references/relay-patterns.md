@@ -31,7 +31,7 @@ ad-hoc in TS.
 
 ```ts
 // Bun handler
-import { filegate } from "@valentinkolb/filegate/client";
+import { filegate } from "@k2b/filegate/client";
 
 app.put("/api/upload/:path{.+}", async (c) => {
   const userId = c.get("userId");                  // your auth
@@ -62,7 +62,7 @@ body straight through hits this. Two ways to handle it:
 
 ```ts
 // Option A: drop in a Node-aware fetchImpl when constructing the client
-import { Filegate } from "@valentinkolb/filegate/client";
+import { Filegate } from "@k2b/filegate/client";
 const fg = new Filegate({
   baseUrl, token,
   fetchImpl: (url, init) => fetch(url, { ...init, duplex: "half" } as RequestInit),
@@ -103,8 +103,8 @@ streamed on the fly). Don't assume it's always present.
 
 ```go
 import (
-    "github.com/valentinkolb/filegate/sdk/filegate"
-    "github.com/valentinkolb/filegate/sdk/filegate/relay"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/relay"
 )
 
 func downloadHandler(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +218,7 @@ catch `FilegateError` and rebuild the JSON response:
 // Option A: call the typed method, catch FilegateError, rebuild the
 // response from its body/status (loses some response headers, fine for
 // JSON bodies)
-import { FilegateError } from "@valentinkolb/filegate/client";
+import { FilegateError } from "@k2b/filegate/client";
 try {
   const result = await filegate.uploads.sessions.create(body);
   return Response.json(result);

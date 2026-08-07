@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/activity"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/activity"
 )
 
 // ConfigService is the declarative configuration surface the router exposes.

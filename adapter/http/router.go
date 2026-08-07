@@ -27,11 +27,11 @@ import (
 	"syscall"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/activity"
-	"github.com/valentinkolb/filegate/infra/detect"
-	"github.com/valentinkolb/filegate/infra/jobs"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/activity"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
+	"github.com/k2b-dev/filegate/v3/infra/jobs"
 )
 
 // RouterOptions configures the HTTP router including authentication, upload limits,

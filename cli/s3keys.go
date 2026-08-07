@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/infra/runtimecfg"
+	s3adapter "github.com/k2b-dev/filegate/v3/adapter/s3"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/infra/runtimecfg"
 )
 
 // resourceS3Key is the runtime-store kind holding access keys.

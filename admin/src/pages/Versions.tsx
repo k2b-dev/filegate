@@ -1,4 +1,4 @@
-import type { VersionResponse } from "@valentinkolb/filegate";
+import type { VersionResponse } from "@k2b/filegate";
 import { formatBytes, formatUnix } from "../lib/format";
 import { Icon, IconLabel } from "../components/Icons";
 

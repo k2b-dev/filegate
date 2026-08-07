@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/sdk/filegate"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/sdk/filegate"
 )
 
 // fakeServer is a minimal stand-in for the upload-session endpoints. It records

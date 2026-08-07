@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/valentinkolb/filegate/sdk/filegate"
+	"github.com/k2b-dev/filegate/v3/sdk/filegate"
 )
 
 type HTTPDoer interface {

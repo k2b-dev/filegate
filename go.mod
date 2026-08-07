@@ -1,4 +1,4 @@
-module github.com/valentinkolb/filegate
+module github.com/k2b-dev/filegate/v3
 
 go 1.25.0
 

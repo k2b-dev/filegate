@@ -33,8 +33,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valentinkolb/filegate/sdk/filegate"
-	"github.com/valentinkolb/filegate/sdk/filegate/segments"
+	"github.com/k2b-dev/filegate/v3/sdk/filegate"
+	"github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
 )
 
 // Source is one file to upload.

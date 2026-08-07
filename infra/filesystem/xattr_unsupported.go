@@ -5,7 +5,7 @@ package filesystem
 import (
 	"fmt"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 func setID(_ string, _ domain.FileID) error {

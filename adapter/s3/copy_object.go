@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // handleCopyObject implements S3 CopyObject. The wire shape is

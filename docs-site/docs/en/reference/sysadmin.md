@@ -32,7 +32,7 @@ Canonical package config path: `/etc/filegate/conf.yaml`.
 
 Reference config template:
 
-- [packaging/config/conf.yaml](https://github.com/ValentinKolb/filegate/blob/main/packaging/config/conf.yaml)
+- [packaging/config/conf.yaml](https://github.com/k2b-dev/filegate/blob/main/packaging/config/conf.yaml)
 
 ## 3. Required Settings and Durable State
 
@@ -75,7 +75,7 @@ Strongly recommended explicit settings:
 
 Unit file:
 
-- [packaging/systemd/filegate.service](https://github.com/ValentinKolb/filegate/blob/main/packaging/systemd/filegate.service)
+- [packaging/systemd/filegate.service](https://github.com/k2b-dev/filegate/blob/main/packaging/systemd/filegate.service)
 
 Typical commands:
 

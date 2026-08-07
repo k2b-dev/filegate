@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	httpadapter "github.com/valentinkolb/filegate/adapter/http"
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/eventbus"
-	"github.com/valentinkolb/filegate/infra/filesystem"
-	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	httpadapter "github.com/k2b-dev/filegate/v3/adapter/http"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/eventbus"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
+	indexpebble "github.com/k2b-dev/filegate/v3/infra/pebble"
 )
 
 const (

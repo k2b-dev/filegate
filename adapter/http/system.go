@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/cache"
-	"github.com/valentinkolb/filegate/infra/detect"
-	"github.com/valentinkolb/filegate/infra/filesystem"
-	"github.com/valentinkolb/filegate/infra/jobs"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/cache"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/infra/jobs"
 )
 
 // systemReporter answers the operational endpoints. It reads state that the

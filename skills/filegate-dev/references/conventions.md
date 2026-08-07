@@ -77,7 +77,7 @@ Don't comment what well-named code already says. Don't write changelogs in comme
   `Transfers`, `Search`, `Index`, `Stats`.
 - Pure helpers (segment planning/checksums, relay) live in dedicated subpackages
   (`sdk/filegate/segments`, `sdk/filegate/relay`) and a dedicated subpath
-  export (`@valentinkolb/filegate/utils`) so callers without a token can
+  export (`@k2b/filegate/utils`) so callers without a token can
   use them.
 - Never re-attach pure helpers as fields on the `Filegate` client — that's
   the DRY rule we explicitly removed `Utils`/`UtilsNamespace` for.

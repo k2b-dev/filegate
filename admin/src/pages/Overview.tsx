@@ -1,4 +1,4 @@
-import type { Node, StatsResponse } from "@valentinkolb/filegate";
+import type { Node, StatsResponse } from "@k2b/filegate";
 import { Layout } from "../components/Layout";
 import { NodeTable } from "../components/Table";
 import { formatBytes, formatUnix } from "../lib/format";

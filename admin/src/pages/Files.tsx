@@ -1,4 +1,4 @@
-import type { Node, StatsResponse, VersionResponse } from "@valentinkolb/filegate";
+import type { Node, StatsResponse, VersionResponse } from "@k2b/filegate";
 import { Layout } from "../components/Layout";
 import { FileIcon, FolderIcon, Icon, IconLabel } from "../components/Icons";
 import { NodeTable, type Sort } from "../components/Table";

@@ -1,6 +1,6 @@
 package filegate
 
-import apiv1 "github.com/valentinkolb/filegate/api/v1"
+import apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 
 type ErrorResponse = apiv1.ErrorResponse
 type OKResponse = apiv1.OKResponse

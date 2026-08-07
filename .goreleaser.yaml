@@ -43,7 +43,7 @@ nfpms:
     maintainer: Valentin Kolb <valentinkolb@users.noreply.github.com>
     license: MIT
     vendor: filegate
-    homepage: https://github.com/valentinkolb/filegate
+    homepage: https://github.com/k2b-dev/filegate
     section: utils
     priority: optional
     # Optional: only the btrfs detector invokes this CLI. ext4/XFS installs

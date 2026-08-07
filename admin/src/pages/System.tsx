@@ -6,7 +6,7 @@ import type {
   SystemInfoResponse,
   SystemRuntimeResponse,
   UploadSessionSummary,
-} from "@valentinkolb/filegate";
+} from "@k2b/filegate";
 import { charts } from "@valentinkolb/stdlib";
 import { Layout } from "../components/Layout";
 import { env } from "../lib/env";

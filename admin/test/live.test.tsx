@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SystemInfoResponse, SystemRuntimeResponse } from "@valentinkolb/filegate";
+import type { SystemInfoResponse, SystemRuntimeResponse } from "@k2b/filegate";
 import { renderToString } from "solid-js/web";
 import { DetectorPanel, LifecyclePanel } from "../src/pages/Live";
 

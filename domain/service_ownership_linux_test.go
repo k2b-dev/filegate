@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/eventbus"
-	"github.com/valentinkolb/filegate/infra/filesystem"
-	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/eventbus"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
+	indexpebble "github.com/k2b-dev/filegate/v3/infra/pebble"
 )
 
 func newServiceForOwnershipTest(t *testing.T) (*domain.Service, func()) {

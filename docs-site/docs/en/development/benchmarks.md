@@ -42,7 +42,7 @@ make bench-compose   # starts compose.test.yml automatically
 
 ## Go Microbenchmarks
 
-Script: [`bench/scripts/run-go-benches.sh`](https://github.com/ValentinKolb/filegate/blob/main/bench/scripts/run-go-benches.sh)
+Script: [`bench/scripts/run-go-benches.sh`](https://github.com/k2b-dev/filegate/blob/main/bench/scripts/run-go-benches.sh)
 
 Covers:
 
@@ -55,8 +55,8 @@ Output files are written to `bench/results/`.
 
 Tooling:
 
-- Go load generator: [`cmd/filegate-bench/main.go`](https://github.com/ValentinKolb/filegate/blob/main/cmd/filegate-bench/main.go)
-- matrix script: [`bench/scripts/run-http-bench.sh`](https://github.com/ValentinKolb/filegate/blob/main/bench/scripts/run-http-bench.sh)
+- Go load generator: [`cmd/filegate-bench/main.go`](https://github.com/k2b-dev/filegate/blob/main/cmd/filegate-bench/main.go)
+- matrix script: [`bench/scripts/run-http-bench.sh`](https://github.com/k2b-dev/filegate/blob/main/bench/scripts/run-http-bench.sh)
 
 Default matrix scenarios:
 
@@ -85,7 +85,7 @@ Environment variables used by scripts:
 
 ## Compose Profile
 
-Script: [`bench/scripts/run-http-bench-compose.sh`](https://github.com/ValentinKolb/filegate/blob/main/bench/scripts/run-http-bench-compose.sh)
+Script: [`bench/scripts/run-http-bench-compose.sh`](https://github.com/k2b-dev/filegate/blob/main/bench/scripts/run-http-bench-compose.sh)
 
 This script:
 
@@ -96,7 +96,7 @@ This script:
 
 ## Many-Small-Files Upload Benchmark
 
-Script: [`bench/scripts/run-tree-bench.sh`](https://github.com/ValentinKolb/filegate/blob/main/bench/scripts/run-tree-bench.sh)
+Script: [`bench/scripts/run-tree-bench.sh`](https://github.com/k2b-dev/filegate/blob/main/bench/scripts/run-tree-bench.sh)
 
 The load-generator scenarios above measure steady-state ops/s for one request
 shape. Folder uploads need a different question answered — how long a whole

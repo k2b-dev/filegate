@@ -21,7 +21,7 @@ export interface FilegateConfig {
   defaultHeaders?: Record<string, string>;
 }
 
-// Note: pure helpers (chunk math, hashing) live at "@valentinkolb/filegate/utils".
+// Note: pure helpers (chunk math, hashing) live at "@k2b/filegate/utils".
 // They intentionally do not hang off this class so callers can use them
 // without constructing a Filegate (e.g. in browsers without a token).
 export class Filegate {

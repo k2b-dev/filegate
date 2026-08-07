@@ -55,8 +55,8 @@ await fg.uploads.sessions.commit({ sessionId });
 ## TypeScript flow
 
 ```ts
-import { Filegate } from "@valentinkolb/filegate/client";
-import { uploads } from "@valentinkolb/filegate/utils";
+import { Filegate } from "@k2b/filegate/client";
+import { uploads } from "@k2b/filegate/utils";
 
 const fg = new Filegate({ baseUrl, token });
 const file: File = pickedFile;
@@ -116,7 +116,7 @@ const session = await fg.uploads.sessions.create({
 return Response.json({ session });
 
 // browser
-import { directUploads } from "@valentinkolb/filegate/client";
+import { directUploads } from "@k2b/filegate/client";
 
 await directUploads.segments.put({
   direct: session.direct!,
@@ -135,8 +135,8 @@ import (
     "io"
     "os"
 
-    "github.com/valentinkolb/filegate/sdk/filegate"
-    "github.com/valentinkolb/filegate/sdk/filegate/segments"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate"
+    "github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
 )
 
 f, err := os.Open(srcPath)

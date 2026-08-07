@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 func testFileID(t *testing.T) domain.FileID {

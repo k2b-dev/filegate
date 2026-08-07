@@ -23,7 +23,7 @@ Install the latest AMD64 package:
 
 ```sh
 curl -fL -o /tmp/filegate.deb \
-  https://github.com/valentinkolb/filegate/releases/latest/download/filegate_linux_amd64.deb
+  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_amd64.deb
 sudo dpkg -i /tmp/filegate.deb
 ```
 
@@ -31,7 +31,7 @@ Install the latest ARM64 package:
 
 ```sh
 curl -fL -o /tmp/filegate.deb \
-  https://github.com/valentinkolb/filegate/releases/latest/download/filegate_linux_arm64.deb
+  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_arm64.deb
 sudo dpkg -i /tmp/filegate.deb
 ```
 
@@ -41,7 +41,7 @@ Install the latest AMD64 package:
 
 ```sh
 curl -fL -o /tmp/filegate.rpm \
-  https://github.com/valentinkolb/filegate/releases/latest/download/filegate_linux_amd64.rpm
+  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_amd64.rpm
 sudo rpm -Uvh /tmp/filegate.rpm
 ```
 
@@ -49,7 +49,7 @@ Install the latest ARM64 package:
 
 ```sh
 curl -fL -o /tmp/filegate.rpm \
-  https://github.com/valentinkolb/filegate/releases/latest/download/filegate_linux_arm64.rpm
+  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_arm64.rpm
 sudo rpm -Uvh /tmp/filegate.rpm
 ```
 
@@ -196,7 +196,7 @@ docker run --rm -d \
   -v "$PWD/filegate-data:/data" \
   -v filegate-index:/var/lib/filegate/index \
   -v filegate-config:/var/lib/filegate/config \
-  ghcr.io/valentinkolb/filegate:latest \
+  ghcr.io/k2b-dev/filegate:latest \
   serve
 ```
 

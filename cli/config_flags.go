@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 type configFlagKind int

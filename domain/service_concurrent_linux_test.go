@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // TestRescanRaceWithConcurrentAPIMutations runs Rescan in a tight loop while

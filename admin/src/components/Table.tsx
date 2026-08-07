@@ -1,4 +1,4 @@
-import type { Node } from "@valentinkolb/filegate";
+import type { Node } from "@k2b/filegate";
 import { FileIcon, FolderIcon, Icon } from "./Icons";
 import { formatBytes, formatUnix } from "../lib/format";
 

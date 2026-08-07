@@ -1,6 +1,6 @@
 # TypeScript SDK
 
-Package: `@valentinkolb/filegate`. ESM only. Targets ES2022. Works in Node ≥ 18, Bun, Deno, and modern browsers.
+Package: `@k2b/filegate`. ESM only. Targets ES2022. Works in Node ≥ 18, Bun, Deno, and modern browsers.
 
 ## Construction — pick your runtime
 
@@ -9,7 +9,7 @@ There are two construction modes. Mixing them up causes 90% of integration bugs.
 ### Server runtime (Node / Bun) — env-based default
 
 ```ts
-import { filegate } from "@valentinkolb/filegate/client";
+import { filegate } from "@k2b/filegate/client";
 
 process.env.FILEGATE_URL = "http://127.0.0.1:8080";
 process.env.FILEGATE_TOKEN = "dev-token";
@@ -27,7 +27,7 @@ Properties:
 ### Server / trusted internal — explicit DI with `new Filegate(...)`
 
 ```ts
-import { Filegate } from "@valentinkolb/filegate/client";
+import { Filegate } from "@k2b/filegate/client";
 
 const fg = new Filegate({
   baseUrl: "https://filegate.internal.example",
@@ -85,7 +85,7 @@ endpoints with whatever auth you already have (sessions, JWT, OAuth, etc.)
 or to scoped direct URLs. See
 [`relay-patterns.md`](relay-patterns.md) for full upload/download patterns.
 For purely-client-side helpers like file hashing or segment math (no Filegate
-connection needed), import from `@valentinkolb/filegate/utils` — those are
+connection needed), import from `@k2b/filegate/utils` — those are
 pure functions and ship without the HTTP client.
 
 ## Scoped namespaces
@@ -111,10 +111,10 @@ fg.baseUrl      // string         — the configured base URL
 One-shot uploads live under `fg.paths.put()`, **not** under `fg.uploads`.
 `fg.uploads` contains direct upload URL minting and upload sessions.
 
-Pure helpers ship under `@valentinkolb/filegate/utils`:
+Pure helpers ship under `@k2b/filegate/utils`:
 
 ```ts
-import { uploads } from "@valentinkolb/filegate/utils";
+import { uploads } from "@k2b/filegate/utils";
 uploads.segments.count({ size, segmentSize });
 uploads.segments.bounds(index, size, segmentSize);
 await uploads.checksum.sha256(uint8Array);
@@ -125,7 +125,7 @@ await uploads.checksum.sha256(uint8Array);
 ### List mounts
 
 ```ts
-import type { NodeListResponse } from "@valentinkolb/filegate/client";
+import type { NodeListResponse } from "@k2b/filegate/client";
 
 const result = await fg.paths.get();              // no path → root listing
 const roots = result as NodeListResponse;         // narrow — see below
@@ -259,7 +259,7 @@ Plan before apply so the revision precondition protects concurrent changes.
 The non-`Raw` SDK methods throw `FilegateError` on non-2xx:
 
 ```ts
-import { FilegateError } from "@valentinkolb/filegate/client";
+import { FilegateError } from "@k2b/filegate/client";
 
 try {
   await fg.paths.put(path, body);
@@ -299,7 +299,7 @@ import type {
   ErrorResponse,
   FileConflictMode,    // "error" | "overwrite" | "rename"
   MkdirConflictMode,   // "error" | "skip" | "rename"
-} from "@valentinkolb/filegate/client";
+} from "@k2b/filegate/client";
 ```
 
 ## Conflict handling — quick reference

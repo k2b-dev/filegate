@@ -1,4 +1,4 @@
-import type { HealthResponse, SystemInfoResponse, SystemRuntimeResponse, UploadSessionSummary } from "@valentinkolb/filegate";
+import type { HealthResponse, SystemInfoResponse, SystemRuntimeResponse, UploadSessionSummary } from "@k2b/filegate";
 import { text } from "@valentinkolb/stdlib";
 import { formatBytes, formatUnix } from "../lib/format";
 import { IconLabel } from "../components/Icons";

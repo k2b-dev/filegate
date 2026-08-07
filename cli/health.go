@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/valentinkolb/filegate/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
 )
 
 // minSafeFreeBytes is the threshold below which the startup

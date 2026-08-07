@@ -5,9 +5,9 @@ import (
 	"log"
 	"time"
 
-	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	s3adapter "github.com/k2b-dev/filegate/v3/adapter/s3"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // resolveS3CleanupConfig fills in the adapter's defaults for any

@@ -94,7 +94,7 @@ import {
   type BrowserUploadAllowRequest,
   type BrowserUploadAllowResponse,
   type UploadSessionDirectRequest,
-} from "@valentinkolb/filegate";
+} from "@k2b/filegate";
 
 const filegate = new Filegate({
   baseUrl: process.env.FILEGATE_URL!,

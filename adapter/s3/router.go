@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/activity"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/activity"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // Options configures the S3 listener.

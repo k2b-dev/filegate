@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
 	"go.yaml.in/yaml/v3"
 )
 

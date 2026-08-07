@@ -25,7 +25,7 @@ This document describes the intended stateless TS client pattern for Filegate.
 Use this on Node/Bun server runtimes where env vars exist.
 
 ```ts
-import { filegate } from "@valentinkolb/filegate/client";
+import { filegate } from "@k2b/filegate/client";
 
 process.env.FILEGATE_URL = "http://127.0.0.1:8080";
 process.env.FILEGATE_TOKEN = "dev-token";
@@ -47,7 +47,7 @@ token in trusted server runtimes; browser uploads/downloads should use scoped
 direct URLs instead.
 
 ```ts
-import { Filegate } from "@valentinkolb/filegate/client";
+import { Filegate } from "@k2b/filegate/client";
 
 const fg = new Filegate({
   baseUrl: "https://filegate.internal.example",
@@ -77,7 +77,7 @@ const fg = new Filegate({
 
 The package also exports the browser helpers `upload`, `uploadDirect`, and
 `directUploads`. Pure segment and checksum helpers live under
-`@valentinkolb/filegate/utils` rather than on the authenticated client.
+`@k2b/filegate/utils` rather than on the authenticated client.
 
 ## Core Usage
 
@@ -111,7 +111,7 @@ make the upload land under a different name when the target exists, pass
 `"rename"`:
 
 ```ts
-import { FilegateError } from "@valentinkolb/filegate/client";
+import { FilegateError } from "@k2b/filegate/client";
 
 // File upload
 try {
@@ -150,12 +150,12 @@ Available modes per endpoint:
 
 ### Upload session
 
-Pure segment math and hashing live at `@valentinkolb/filegate/utils`. They do
+Pure segment math and hashing live at `@k2b/filegate/utils`. They do
 not require a `Filegate` instance, so they are safe in browsers, Web Workers,
 and any environment that does not have a token.
 
 ```ts
-import { uploads } from "@valentinkolb/filegate/utils";
+import { uploads } from "@k2b/filegate/utils";
 
 const bytes = new Uint8Array(10 * 1024 * 1024);
 const checksum = await uploads.checksum.sha256(bytes);
@@ -221,7 +221,7 @@ return Response.json({ uploadUrl: direct.uploadUrl });
 Browser-side upload:
 
 ```ts
-import { uploadDirect } from "@valentinkolb/filegate/client";
+import { uploadDirect } from "@k2b/filegate/client";
 
 await uploadDirect(uploadUrlFromYourServer, file, {
   onSuccess: async ({ node }) => {
@@ -379,7 +379,7 @@ This is critical for backend observability under load.
 
 Server JSON contracts live under:
 
-- [`api/v1`](https://github.com/ValentinKolb/filegate/tree/main/api/v1)
+- [`api/v1`](https://github.com/k2b-dev/filegate/tree/main/api/v1)
 
 TypeScript declarations are maintained in `sdk/ts/src/types.ts`; they are not
 generated. API changes therefore need matching SDK types, client methods, and

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 )
 
 // S3KeyService is the access-key surface the router exposes. Implemented in

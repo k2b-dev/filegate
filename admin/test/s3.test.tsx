@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ActivityListResponse, ConfigKeySchema, ConfigValue, S3Key } from "@valentinkolb/filegate";
+import type { ActivityListResponse, ConfigKeySchema, ConfigValue, S3Key } from "@k2b/filegate";
 import { renderToString } from "solid-js/web";
 import { S3 } from "../src/pages/S3";
 

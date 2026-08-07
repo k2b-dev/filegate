@@ -1,5 +1,5 @@
 {
-  "name": "@valentinkolb/filegate",
+  "name": "@k2b/filegate",
   "version": "0.0.0",
   "description": "TypeScript client for the Filegate filesystem gateway",
   "type": "module",
@@ -37,10 +37,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ValentinKolb/filegate"
+    "url": "https://github.com/k2b-dev/filegate"
   },
   "bugs": {
-    "url": "https://github.com/ValentinKolb/filegate/issues"
+    "url": "https://github.com/k2b-dev/filegate/issues"
   },
   "license": "MIT",
   "devDependencies": {

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/runtimecfg"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/runtimecfg"
 )
 
 func TestLoadConfigJobDefaults(t *testing.T) {

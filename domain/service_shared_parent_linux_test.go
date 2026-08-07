@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // Concurrent writes that create sibling directories under a shared parent must

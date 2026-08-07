@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
 )
 
 // handleCreateMultipartUpload implements the POST /{bucket}/{key}?uploads

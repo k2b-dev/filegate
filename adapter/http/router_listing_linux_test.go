@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 )
 
 func TestNodeChildrenAreDirsFirstWithStableCursor(t *testing.T) {

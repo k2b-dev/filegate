@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/filesystem"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // versionsDirName mirrors domain.versionsDirName — kept here so the CLI

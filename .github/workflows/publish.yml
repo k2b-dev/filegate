@@ -79,6 +79,13 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Use npm 11.5.1+
         run: npm install -g npm@11.5.1
+      - name: Verify release coordinates
+        working-directory: sdk/ts
+        run: |
+          test "$GITHUB_REPOSITORY" = "k2b-dev/filegate"
+          test "$GITHUB_REF_NAME" = "v${GITHUB_REF_NAME#v}"
+          test "${GITHUB_REF_NAME%%.*}" = "v3"
+          test "$(node -p "require('./package.json').name")" = "@k2b/filegate"
       - name: Read package metadata
         id: package
         working-directory: sdk/ts

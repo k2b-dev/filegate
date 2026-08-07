@@ -15,23 +15,23 @@ import (
 	"syscall"
 	"time"
 
-	httpadapter "github.com/valentinkolb/filegate/adapter/http"
-	s3adapter "github.com/valentinkolb/filegate/adapter/s3"
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/activity"
-	"github.com/valentinkolb/filegate/infra/detect"
-	"github.com/valentinkolb/filegate/infra/eventbus"
-	"github.com/valentinkolb/filegate/infra/filesystem"
-	"github.com/valentinkolb/filegate/infra/metrics"
-	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
-	"github.com/valentinkolb/filegate/infra/runtimecfg"
+	httpadapter "github.com/k2b-dev/filegate/v3/adapter/http"
+	s3adapter "github.com/k2b-dev/filegate/v3/adapter/s3"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/activity"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
+	"github.com/k2b-dev/filegate/v3/infra/eventbus"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
+	indexpebble "github.com/k2b-dev/filegate/v3/infra/pebble"
+	"github.com/k2b-dev/filegate/v3/infra/runtimecfg"
 
 	"github.com/spf13/cobra"
 )
 
 // Build identity, injectable via ldflags
-// (-X github.com/valentinkolb/filegate/cli.buildVersion=...). Default
+// (-X github.com/k2b-dev/filegate/v3/cli.buildVersion=...). Default
 // to "dev"/"none" so an unstamped build still emits a well-formed
 // filegate_build_info series.
 var (

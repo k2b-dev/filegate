@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/valentinkolb/filegate/infra/filesystem"
+	"github.com/k2b-dev/filegate/v3/infra/filesystem"
 )
 
 // Multipart upload staging layout.

@@ -1,4 +1,4 @@
-import { Filegate, type Node, type NodeListResponse } from "@valentinkolb/filegate";
+import { Filegate, type Node, type NodeListResponse } from "@k2b/filegate";
 import { currentActor } from "./actor";
 import { env } from "./env";
 

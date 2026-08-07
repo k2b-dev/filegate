@@ -34,7 +34,7 @@ cli ──► adapter/http ──► domain ◄── infra/*
                                 infra leaves; no business-logic imports back)
 ```
 
-The key inversion: **`domain` imports nothing under `github.com/valentinkolb/filegate/*`**.
+The key inversion: **`domain` imports nothing under `github.com/k2b-dev/filegate/v3/*`**.
 It defines its own interfaces (`Index`, `Store`, `EventBus` — see
 `domain/ports.go`), and `infra/*` packages **import `domain`** to
 implement those interfaces. The HTTP adapter wires it all up via
@@ -50,7 +50,7 @@ This is the ports-and-adapters / hexagonal architecture pattern. Verify
 the no-internal-imports invariant with:
 
 ```bash
-go list -f '{{ .ImportPath }}: {{ .Imports }}' ./domain | tr ' ' '\n' | grep "valentinkolb/filegate"
+go list -f '{{ .ImportPath }}: {{ .Imports }}' ./domain | tr ' ' '\n' | grep "k2b-dev/filegate/v3"
 # → expect: empty output
 ```
 

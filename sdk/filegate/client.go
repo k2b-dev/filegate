@@ -32,8 +32,8 @@ type Config struct {
 // response relaying) live in dedicated subpackages so callers can use them
 // without constructing a Filegate:
 //
-//	import "github.com/valentinkolb/filegate/sdk/filegate/segments"
-//	import "github.com/valentinkolb/filegate/sdk/filegate/relay"
+//	import "github.com/k2b-dev/filegate/v3/sdk/filegate/segments"
+//	import "github.com/k2b-dev/filegate/v3/sdk/filegate/relay"
 type Filegate struct {
 	core *clientCore
 

@@ -36,7 +36,7 @@ export default defineFibel({
     assetsPath: "/assets",
   },
   footerLinks: [
-    { label: "GitHub", value: "https://github.com/valentinkolb/filegate" },
+    { label: "GitHub", value: "https://github.com/k2b-dev/filegate" },
     { label: "LLM index", value: "https://filegate.dev/docs/en/llms.txt" },
   ],
   plugins: [

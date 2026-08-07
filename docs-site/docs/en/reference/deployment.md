@@ -17,9 +17,9 @@ tags: [reference, deployment, systemd, docker]
 
 Source files:
 
-- GoReleaser config: [`/.goreleaser.yaml`](https://github.com/ValentinKolb/filegate/blob/main/.goreleaser.yaml)
-- systemd unit: [`packaging/systemd/filegate.service`](https://github.com/ValentinKolb/filegate/blob/main/packaging/systemd/filegate.service)
-- default config: [`packaging/config/conf.yaml`](https://github.com/ValentinKolb/filegate/blob/main/packaging/config/conf.yaml)
+- GoReleaser config: [`/.goreleaser.yaml`](https://github.com/k2b-dev/filegate/blob/main/.goreleaser.yaml)
+- systemd unit: [`packaging/systemd/filegate.service`](https://github.com/k2b-dev/filegate/blob/main/packaging/systemd/filegate.service)
+- default config: [`packaging/config/conf.yaml`](https://github.com/k2b-dev/filegate/blob/main/packaging/config/conf.yaml)
 
 ## Local Release Build
 

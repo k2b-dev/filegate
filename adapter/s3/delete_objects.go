@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // deleteObjectsMaxKeys is the AWS-spec ceiling: 1000 keys per call.

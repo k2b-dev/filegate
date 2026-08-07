@@ -8,7 +8,7 @@ import {
   type BrowserUploadEvent,
   type CapabilitiesResponse,
   type UploadSessionResponse,
-} from "@valentinkolb/filegate";
+} from "@k2b/filegate";
 
 const FALLBACK_SEGMENT_SIZE = 8 * 1024 * 1024;
 const PREFERRED_SEGMENT_SIZE = 32 * 1024 * 1024;

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 func TestTransferMoveUpdatesIndexWithoutGlobalRescan(t *testing.T) {

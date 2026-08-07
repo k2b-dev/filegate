@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 )
 
 // SystemClient contains the operational endpoints.

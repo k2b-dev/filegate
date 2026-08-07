@@ -18,7 +18,7 @@ import {
   type StatsResponse,
   type UploadSessionCreateRequest,
   type UploadSessionDirectRequest,
-} from "@valentinkolb/filegate";
+} from "@k2b/filegate";
 import { Hono, type Context } from "hono";
 import { withActor } from "./lib/actor";
 import { resolveFileView } from "./lib/view";

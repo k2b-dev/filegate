@@ -6,9 +6,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/detect"
-	"github.com/valentinkolb/filegate/infra/metrics"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
+	"github.com/k2b-dev/filegate/v3/infra/metrics"
 )
 
 // metricsStatsProvider adapts a domain.Service into the

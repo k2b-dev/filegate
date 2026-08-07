@@ -1,4 +1,4 @@
-# @valentinkolb/filegate
+# @k2b/filegate
 
 TypeScript client for Filegate. Use it from trusted server runtimes to call the
 Filegate REST API, and from browsers only with scoped direct upload/download
@@ -11,7 +11,7 @@ operations, declarative configuration, S3 credentials, activity, and stats.
 ## Install
 
 ```bash
-npm i @valentinkolb/filegate
+npm i @k2b/filegate
 ```
 
 ## Server client
@@ -20,7 +20,7 @@ Use the default instance when `FILEGATE_URL` and `FILEGATE_TOKEN` are available
 in the server runtime:
 
 ```ts
-import { filegate } from "@valentinkolb/filegate/client";
+import { filegate } from "@k2b/filegate/client";
 
 process.env.FILEGATE_URL = "http://127.0.0.1:8080";
 process.env.FILEGATE_TOKEN = "dev-token";
@@ -32,7 +32,7 @@ const caps = await filegate.capabilities.get();
 Use an explicit instance for dependency injection:
 
 ```ts
-import { Filegate } from "@valentinkolb/filegate/client";
+import { Filegate } from "@k2b/filegate/client";
 
 const fg = new Filegate({
   baseUrl: "https://filegate.internal.example",
@@ -70,7 +70,7 @@ creates direct Filegate upload URLs or direct upload sessions and returns the
 scoped credentials to the browser.
 
 ```ts
-import { upload } from "@valentinkolb/filegate/client";
+import { upload } from "@k2b/filegate/client";
 
 await upload({
   files,
@@ -97,7 +97,7 @@ is the default.
 For a single direct upload URL:
 
 ```ts
-import { uploadDirect } from "@valentinkolb/filegate/client";
+import { uploadDirect } from "@k2b/filegate/client";
 
 await uploadDirect(uploadUrlFromYourServer, file, {
   onSuccess: ({ node }) => console.log(node.id),
@@ -153,17 +153,17 @@ safe to retry after success.
 
 ## Utilities
 
-Pure helpers live under `@valentinkolb/filegate/utils` and do not require a
+Pure helpers live under `@k2b/filegate/utils` and do not require a
 Filegate token:
 
 ```ts
-import { uploads } from "@valentinkolb/filegate/utils";
+import { uploads } from "@k2b/filegate/utils";
 
 const checksum = await uploads.checksum.sha256(file);
 ```
 
 ## Documentation
 
-- Project README: https://github.com/ValentinKolb/filegate#readme
+- Project README: https://github.com/k2b-dev/filegate#readme
 - TypeScript guide: https://filegate.dev/docs/en/ts-sdk
 - HTTP routes: https://filegate.dev/docs/en/reference/http-routes

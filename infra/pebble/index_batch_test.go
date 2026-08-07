@@ -7,7 +7,7 @@ import (
 
 	cpebble "github.com/cockroachdb/pebble"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 type failingBatchWriter struct {

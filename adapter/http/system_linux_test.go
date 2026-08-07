@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/detect"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/detect"
 )
 
 func decodeJSON[T any](t *testing.T, r http.Handler, target string) (T, int) {

@@ -37,7 +37,7 @@ docker run --rm -d \
   -e FILEGATE_STORAGE_BASE_PATHS=/data \
   -e FILEGATE_STORAGE_INDEX_PATH=/var/lib/filegate/index \
   -v "$PWD/filegate-data:/data" \
-  ghcr.io/valentinkolb/filegate:latest \
+  ghcr.io/k2b-dev/filegate:latest \
   serve
 ```
 

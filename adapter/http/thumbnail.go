@@ -22,9 +22,9 @@ import (
 	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp"
 
-	"github.com/valentinkolb/filegate/domain"
-	"github.com/valentinkolb/filegate/infra/cache"
-	"github.com/valentinkolb/filegate/infra/jobs"
+	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v3/infra/cache"
+	"github.com/k2b-dev/filegate/v3/infra/jobs"
 )
 
 type thumbnailCacheItem struct {

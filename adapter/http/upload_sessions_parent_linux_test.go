@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentinkolb/filegate/domain"
+	"github.com/k2b-dev/filegate/v3/domain"
 )
 
 // Committing into a deep path creates the whole chain and resolves it.

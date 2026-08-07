@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@valentinkolb/filegate-docs",
+      "name": "@k2b/filegate-docs",
       "dependencies": {
         "@k2b/fibel": "0.7.3",
       },

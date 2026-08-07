@@ -1,4 +1,4 @@
-import type { GlobSearchResponse, StatsResponse } from "@valentinkolb/filegate";
+import type { GlobSearchResponse, StatsResponse } from "@k2b/filegate";
 import { Layout } from "../components/Layout";
 import { IconLabel } from "../components/Icons";
 import { NodeTable } from "../components/Table";

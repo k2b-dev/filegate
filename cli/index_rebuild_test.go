@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	indexpebble "github.com/valentinkolb/filegate/infra/pebble"
+	indexpebble "github.com/k2b-dev/filegate/v3/infra/pebble"
 )
 
 func TestRebuildIndexPathWithBackup(t *testing.T) {

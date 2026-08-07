@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	apiv1 "github.com/valentinkolb/filegate/api/v1"
+	apiv1 "github.com/k2b-dev/filegate/v3/api/v1"
 )
 
 func TestNewRequiresBaseURL(t *testing.T) {

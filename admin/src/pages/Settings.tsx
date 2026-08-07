@@ -1,4 +1,4 @@
-import type { ConfigKeySchema, ConfigValuesResponse } from "@valentinkolb/filegate";
+import type { ConfigKeySchema, ConfigValuesResponse } from "@k2b/filegate";
 import { ConfigSection, configSections, sectionLabel } from "../components/ConfigReadout";
 import { Layout } from "../components/Layout";
 
