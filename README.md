@@ -19,17 +19,44 @@ A root without an index reads the filesystem directly and requires no xattrs.
 Indexed roots use `user.filegate.id` to keep file identities across API renames.
 Version snapshots use reflinks when available and byte copies otherwise.
 
-## Run
+## Install a Linux package
 
-Use [the example configuration](docs-site/docs/en/configuration.md). Create its data
-roots and a private token file containing at least 32 random characters.
-Keep the state directory outside all roots.
+Download the package from [GitHub Releases](https://github.com/k2b-dev/filegate/releases)
+and install it with your system's package manager. Packages include the CLI,
+`filegate.service`, a service account and an example configuration at
+`/etc/filegate/conf.yaml`.
+
+The commands below target **v4.0.0**, whose release assets are not yet published.
+For ARM64 systems, replace `amd64` with `arm64` in both the URL and filename.
+
+### Debian
 
 ```sh
-filegate validate --config /etc/filegate/conf.yaml
-filegate serve --config /etc/filegate/conf.yaml
-filegate roots
-filegate rebuild documents
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.deb
+sudo apt install ./filegate_linux_amd64.deb
+```
+
+### Rocky Linux
+
+```sh
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.rpm
+sudo dnf install ./filegate_linux_amd64.rpm
+```
+
+The service starts after you configure storage and credentials and enable it
+with systemd. For upgrades, stop it with `sudo systemctl stop filegate` before
+installing the replacement package.
+
+## Run
+
+Follow the [setup guide](https://filegate.dev/docs/en/getting-started) to configure
+storage and credentials. Create the data roots and a private token file containing
+at least 32 random characters. Keep the state directory outside all roots.
+
+```sh
+sudo -u filegate filegate validate --config /etc/filegate/conf.yaml
+sudo systemctl enable --now filegate
+sudo -u filegate filegate roots
 ```
 
 Configuration changes require a restart. Administrative commands call the

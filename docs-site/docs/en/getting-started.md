@@ -12,6 +12,34 @@ also require writable `user.*` extended attributes (xattrs), supported by ext4,
 XFS and Btrfs. Check their availability with the actual mount and service
 permissions. With `index: false`, Filegate can serve files without xattr support.
 
+## Install a Linux package
+
+Download the package from [GitHub Releases](https://github.com/k2b-dev/filegate/releases)
+and install it with your system's package manager. Packages include the CLI,
+`filegate.service`, a service account and an example configuration at
+`/etc/filegate/conf.yaml`.
+
+The commands below target **v4.0.0**, whose release assets are not yet published.
+For ARM64 systems, replace `amd64` with `arm64` in both the URL and filename.
+
+### Debian
+
+```sh
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.deb
+sudo apt install ./filegate_linux_amd64.deb
+```
+
+### Rocky Linux
+
+```sh
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.rpm
+sudo dnf install ./filegate_linux_amd64.rpm
+```
+
+The service starts after you configure storage and credentials and enable it
+with systemd. For upgrades, stop it with `sudo systemctl stop filegate` before
+installing the replacement package.
+
 ## Create storage and credentials
 
 For a package installation, use the `filegate` service account:
