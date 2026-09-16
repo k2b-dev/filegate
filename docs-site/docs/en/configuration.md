@@ -7,24 +7,24 @@ description: Static YAML settings and independent index and version policies.
 
 # Configure roots
 
-Filegate reads one strict YAML document at startup. Unknown fields fail
-validation. There are no configuration overlays, generated credentials, hot
-reload or configuration API. `--config` selects the file; the default is
-`/etc/filegate/conf.yaml`.
+Filegate reads a YAML configuration file at startup. `--config` selects the
+file; the default is `/etc/filegate/conf.yaml`. Use a single YAML document
+with the fields listed below. Unknown fields fail validation. Restart the
+daemon to apply changes.
 
 ```yaml
 server:
   listen: "127.0.0.1:8080"
   public_url: "https://files.example.org"
-  allowed_origins: ["https://cloud.example.org"]
+  allowed_origins: ["https://app.example.org"]
 auth:
   token_file: /etc/filegate/token
 state_dir: /var/lib/filegate
 uploads:
   max_file_size: 10GiB
 roots:
-  - name: cloud
-    path: /data/cloud
+  - name: documents
+    path: /srv/filegate/documents
     index: true
     versioning:
       enabled: true
@@ -34,7 +34,7 @@ roots:
         daily: 30
         monthly: 12
   - name: shared
-    path: /data/nfs
+    path: /mnt/shared
     index: false
 ```
 

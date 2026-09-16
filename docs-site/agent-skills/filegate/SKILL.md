@@ -7,7 +7,7 @@ description: Integrate or operate Filegate, the Linux filesystem gateway. Use fo
 
 Use Filegate from a trusted application backend or administer its Linux daemon.
 The public address is **root name + relative path**. Roots are independent and
-cannot overlap. Filegate has no FreeIPA/Cloud identity model.
+cannot overlap. The application authenticates users and authorizes file access.
 
 This self-contained skill covers the TypeScript API, Go API, HTTP contract and
 operations below. It is also published by the Fibel agent-skills plugin.
@@ -16,7 +16,6 @@ operations below. It is also published by the Fibel agent-skills plugin.
 
 - The daemon requires Linux. Both SDKs are portable.
 - One static YAML file and a separate token file; changes apply on restart.
-- No S3, admin application, dynamic configuration or external-change detector.
 - Index off means filesystem-based reads and no xattr requirement. Index on
   provides metadata search and stable IDs, updated by API writes or explicit
   rebuild. Versioning requires indexing.
@@ -43,8 +42,8 @@ operations below. It is also published by the Fibel agent-skills plugin.
    response bodies. Never buffer a large relay into memory.
 6. Do not delete `state_dir` to rebuild. Only the daemon owns live writable state;
    CLI rebuild/prune/stats calls its API.
-7. Diagnose from current API/types/source when available. Do not invent the old
-   `/v1/nodes`, `/v1/paths`, `/v1/config` or S3 endpoints.
+7. Use the HTTP contract below and current API types to select routes and request
+   fields when writing integration code.
 
 When writing integration code, include construction, the relevant operation,
 error handling and a read-back/status check. Operations examples are instructions
@@ -52,8 +51,8 @@ for the operator, not implicit permission to mutate a deployment.
 
 ## TypeScript API
 
-Install `@k2b/filegate` in your backend. Construct the client explicitly; it does
-not read environment variables or create credentials automatically.
+Install `@k2b/filegate` in your backend and pass the server URL and bearer token
+to the client constructor.
 
 ```ts
 import { Filegate, FilegateError } from "@k2b/filegate";
@@ -61,7 +60,7 @@ const files = new Filegate({
   baseUrl: process.env.FILEGATE_URL!,
   token: process.env.FILEGATE_TOKEN!,
 });
-const root = files.root("cloud");
+const root = files.root("documents");
 try {
   const file = await root.put("notes/today.txt", new Blob(["hello"]), {
     metadata: { message: "First note" },
@@ -103,12 +102,12 @@ session URL for larger uploads. Import token-free browser helpers from
 
 Use `files.roots()` and `files.system()` for dashboards. Unknown recursive totals
 are `null`; do not display them as zero. Indexed IDs persist through same-root
-API moves. Paths remain the universal address and are the only identity for
-index-free roots.
+API moves. Use the root name and relative path for file operations. Indexed
+roots also support resolving a file ID to its current path with `resolve(id)`.
 
 List and search pages expose `next`. Pass it unchanged as `after` until absent.
-Page limits are 1–1000. Search without an index fails when its traversal budget
-is exhausted, rather than pretending a partial result is complete.
+Page limits are 1–1000. Search without an index returns 413 when its traversal
+budget is exhausted. Narrow the search path or increase `maxEntries` to retry.
 
 Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
@@ -123,7 +122,7 @@ other than Linux; only the daemon requires Linux.
 ```go
 client, err := filegate.New("https://files.example.org", token)
 if err != nil { return err }
-root := client.Root("cloud")
+root := client.Root("documents")
 node, err := root.Put(ctx, "notes/today.txt", strings.NewReader("hello"), 5,
     filegate.WriteOptions{Metadata: filegate.Metadata{"message": "First note"}})
 if err != nil {
@@ -183,8 +182,8 @@ All `/v1/*` routes require `Authorization: Bearer TOKEN`, except signed
 uses snake_case. Unknown JSON fields are rejected.
 
 Root operations have prefix `/v1/roots/{root}`. A `path` query parameter is a
-relative path; `.` addresses the root where supported. IDs are optional metadata,
-not the universal operation address.
+relative path; `.` addresses the root where supported. Indexed roots also
+provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 
 | Method and suffix | Input | Result |
 | --- | --- | --- |
@@ -250,22 +249,22 @@ systemd unit, or `filegate serve --config /etc/filegate/conf.yaml`.
 server:
   listen: "127.0.0.1:8080"
   public_url: "https://files.example.org"
-  allowed_origins: ["https://cloud.example.org"]
+  allowed_origins: ["https://app.example.org"]
 auth:
   token_file: /etc/filegate/token
 state_dir: /var/lib/filegate
 uploads:
   max_file_size: 10GiB
 roots:
-  - name: cloud
-    path: /data/cloud
+  - name: documents
+    path: /srv/filegate/documents
     index: true
     versioning:
       enabled: true
       cooldown: 1m
       keep: { last: 10, daily: 30, monthly: 12 }
   - name: shared
-    path: /data/nfs
+    path: /mnt/shared
     index: false
 ```
 
@@ -319,13 +318,12 @@ sessions and recovery records. Never remove it as an index repair technique.
 For a consistent full rollback, stop the daemon, coordinate external writers,
 and snapshot all roots and state together, preserving xattrs and inode identity.
 Ordinary file-copy restore changes inode identity and is not a full history
-restore: copied xattrs deliberately do not reconnect old histories. Current
-contents can be imported as a new root/state; retain the original backup.
+restore: copied xattrs do not reconnect old histories. Current contents can be
+imported as a new root/state; retain the original backup.
 
 On restart, Filegate completes recorded publications/moves/deletes and cleans
-unreferenced staging artifacts. An inconsistent recovery fails startup rather
-than guessing which externally changed file is authoritative. Preserve the
-original state and logs before attempting repair.
+unreferenced staging artifacts. An inconsistent recovery fails startup with an
+error. Preserve the original state and logs before attempting repair.
 
 Dashboard totals may be null until measured; do not display unknown as zero.
 Version byte totals are logical, not allocated disk usage. Roots on the same

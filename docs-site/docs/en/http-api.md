@@ -13,8 +13,8 @@ All `/v1/*` routes require `Authorization: Bearer TOKEN`, except signed
 uses snake_case. Unknown JSON fields are rejected.
 
 Root operations have prefix `/v1/roots/{root}`. A `path` query parameter is a
-relative path; `.` addresses the root where supported. IDs are optional metadata,
-not the universal operation address.
+relative path; `.` addresses the root where supported. Indexed roots also
+provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 
 | Method and suffix | Input | Result |
 | --- | --- | --- |

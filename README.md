@@ -11,21 +11,17 @@ its TypeScript or Go client from your application backend.
 - Small direct PUT uploads and resumable direct upload sessions, including
   numeric Unix ownership selected by the trusted backend.
 - Directory browsing, bounded search, thumbnails, TAR downloads and transfers.
-- Dashboard metadata through the API. No bundled admin application.
+- Dashboard metadata through the API.
 
-The application owns user permissions and business rules. Filegate knows roots,
-relative paths and optional numeric ownership. It does not know FreeIPA or Cloud.
+The application authenticates users and authorizes their file access. Filegate
+addresses files by root name and relative path, with optional numeric ownership.
 A root without an index reads the filesystem directly and requires no xattrs.
 Indexed roots use `user.filegate.id` to keep file identities across API renames.
 Version snapshots use reflinks when available and byte copies otherwise.
 
-This is a hard API and configuration cut. There are no S3, automatic external
-change detectors, runtime configuration APIs or compatibility endpoints.
-The Cloud application is not part of this change.
-
 ## Run
 
-Use [the example configuration](packaging/config/conf.yaml). Create its data
+Use [the example configuration](docs-site/docs/en/configuration.md). Create its data
 roots and a private token file containing at least 32 random characters.
 Keep the state directory outside all roots.
 
@@ -33,7 +29,7 @@ Keep the state directory outside all roots.
 filegate validate --config /etc/filegate/conf.yaml
 filegate serve --config /etc/filegate/conf.yaml
 filegate roots
-filegate rebuild cloud
+filegate rebuild documents
 ```
 
 Configuration changes require a restart. Administrative commands call the
@@ -48,7 +44,7 @@ const files = new Filegate({
   baseUrl: process.env.FILEGATE_URL!,
   token: process.env.FILEGATE_TOKEN!,
 });
-const upload = await files.root("cloud").directUpload("homes/alex/notes.txt", 5, {
+const upload = await files.root("documents").directUpload("homes/alex/notes.txt", 5, {
   metadata: { message: "First draft" },
 });
 // Return upload.url to the authorized browser. It sends exactly 5 bytes by PUT.

@@ -7,22 +7,22 @@ description: Serve Linux files through independent roots with optional indexing 
 
 # Filegate
 
-Filegate is a Linux file gateway for application backends. One daemon serves
-ordinary directories through HTTP. Your application owns users, groups,
-authorization and presentation. Filegate owns file operations and transfers.
+Filegate serves files from Linux directories through an HTTP API, with
+TypeScript and Go clients for application backends. It supports file browsing,
+search, direct uploads, downloads and version history. Your application
+authenticates users and controls their access to files.
 
-A **root** is an independently configured directory, such as `cloud` at
-`/data/cloud` or `shared` at `/data/nfs`. Requests use the root name and a relative
-path. Their shared `/data` parent has no meaning to Filegate. Roots cannot overlap.
+A **root** is a directory made available under a configured name. Requests
+identify files by root name and relative path, for example root `documents`
+and path `reports/annual.pdf`. Each root has its own index and version settings.
 
-Enable the metadata index for roots primarily written through Filegate. It
-accelerates search and provides stable file IDs. API writes update it; external
-changes require a manual rebuild. Leave indexing off for externally managed
-files: listing, stat and bounded search read the filesystem directly.
+The optional metadata index supports filename search and stable file IDs.
+Filegate updates the index after API writes. Run a rebuild to include changes
+made outside Filegate. With indexing disabled, search reads the filesystem.
+Directory listings and file metadata always read the filesystem.
 
-Versioning is optional and requires indexing. It works with ordinary Linux
-filesystems, using reflinks when supported and byte copies otherwise. There is
-no Btrfs dependency, detector, S3 endpoint, dynamic configuration API or admin UI.
+Version history requires indexing. It preserves earlier file contents and
+supports manual snapshots, restore and configurable retention.
 
 - [Configure and start a daemon](getting-started.md)
 - [Choose roots and index settings](configuration.md)

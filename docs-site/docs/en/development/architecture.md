@@ -36,7 +36,3 @@ Integration tests cover real Linux xattrs, copied identities, confined paths,
 rebuilds, version failure, metadata revision mapping, durable sessions and
 publication recovery. Test API changes through both SDKs. Keep the installed
 skill at `skills/filegate` identical to `docs-site/agent-skills/filegate`.
-
-Hard-cut removals should disappear from code, configuration, clients, tests and
-docs together. There is no legacy endpoint, schema migration, S3 adapter,
-filesystem detector or admin application to maintain.

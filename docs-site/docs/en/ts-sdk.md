@@ -7,8 +7,8 @@ description: Use the backend client and scoped browser transfer helpers.
 
 # TypeScript client
 
-Install `@k2b/filegate` in your backend. Construct the client explicitly; it does
-not read environment variables or create credentials automatically.
+Install `@k2b/filegate` in your backend and pass the server URL and bearer token
+to the client constructor.
 
 ```ts
 import { Filegate, FilegateError } from "@k2b/filegate";
@@ -16,7 +16,7 @@ const files = new Filegate({
   baseUrl: process.env.FILEGATE_URL!,
   token: process.env.FILEGATE_TOKEN!,
 });
-const root = files.root("cloud");
+const root = files.root("documents");
 try {
   const file = await root.put("notes/today.txt", new Blob(["hello"]), {
     metadata: { message: "First note" },
@@ -58,12 +58,12 @@ session URL for larger uploads. Import token-free browser helpers from
 
 Use `files.roots()` and `files.system()` for dashboards. Unknown recursive totals
 are `null`; do not display them as zero. Indexed IDs persist through same-root
-API moves. Paths remain the universal address and are the only identity for
-index-free roots.
+API moves. Use the root name and relative path for file operations. Indexed
+roots also support resolving a file ID to its current path with `resolve(id)`.
 
 List and search pages expose `next`. Pass it unchanged as `after` until absent.
-Page limits are 1–1000. Search without an index fails when its traversal budget
-is exhausted, rather than pretending a partial result is complete.
+Page limits are 1–1000. Search without an index returns 413 when its traversal
+budget is exhausted. Narrow the search path or increase `maxEntries` to retry.
 
 Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods

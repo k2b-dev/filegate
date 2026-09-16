@@ -38,7 +38,7 @@ UTF-8 representation. Oversized values are rejected, never truncated. System
 fields such as ID, creation time and size are separate.
 
 ```ts
-await files.root("cloud").snapshot("reports/annual.pdf", {
+await files.root("documents").snapshot("reports/annual.pdf", {
   pinned: true,
   metadata: { message: "Approved draft", actor: "user-42" },
 });
@@ -51,8 +51,6 @@ its own metadata; omitting it uses the current revision's metadata.
 Pinned versions survive automatic retention and do not consume `keep.last`.
 Explicit deletion and permanent file deletion still remove them. Updating a
 version replaces its pin and metadata fields; send both values you want to keep.
-This history is not an immutable audit log: intermediate writes may be skipped,
-metadata is supplied by the application, and histories can be deleted.
 
 ## Prune calendar buckets
 
@@ -70,7 +68,6 @@ version in each requested UTC calendar bucket. Daily means calendar days, weekly
 means Monday-based weeks, and monthly means calendar months. The current bucket
 counts. Pins are retained independently. A version selected by multiple rules is
 stored once. A missing or zero tier retains nothing for that tier.
-
 
 If the entire `keep` section is absent, defaults are `last: 10`, `daily: 30`,
 and `monthly: 12`. An explicit `keep: {}` retains only pinned versions.

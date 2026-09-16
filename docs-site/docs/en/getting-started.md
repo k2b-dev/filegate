@@ -8,25 +8,25 @@ description: Configure a root, a bearer token and the Filegate service.
 # Start a daemon
 
 Filegate requires Linux and an existing writable data directory. Indexed roots
-also require writable `user.*` extended attributes. The ext4, XFS, and Btrfs filesystems support
-these; the mounted filesystem and service permissions determine availability.
-An index-free root does not require xattrs. NFS deployments should start with
-`index: false`.
+also require writable `user.*` extended attributes (xattrs), supported by ext4,
+XFS and Btrfs. Check their availability with the actual mount and service
+permissions. With `index: false`, Filegate can serve files without xattr support.
 
 ## Create storage and credentials
 
 For a package installation, use the `filegate` service account:
 
 ```sh
-sudo install -d -o filegate -g filegate -m 0750 /srv/filegate/cloud /var/lib/filegate
+sudo install -d -o filegate -g filegate -m 0750 /srv/filegate/documents /var/lib/filegate
 sudo install -d -o root -g filegate -m 0750 /etc/filegate
 sudo sh -c 'umask 027; openssl rand -hex 32 > /etc/filegate/token'
 sudo chown root:filegate /etc/filegate/token
 ```
 
 Copy the [configuration example](configuration.md) into `/etc/filegate/conf.yaml`.
-Set `server.public_url` to the externally reachable origin. Direct URLs use that
-origin; Filegate does not derive it from untrusted request headers.
+If you include the `shared` root, mount its storage at `/mnt/shared` first;
+otherwise remove that entry. Set `server.public_url` to the externally reachable
+origin used for direct URLs.
 
 ```sh
 sudo -u filegate filegate validate
@@ -42,12 +42,14 @@ private storage and indexed filesystem access. `GET /health` returns
 
 The package includes `filegate.service`. Its default writable paths are
 `/var/lib/filegate` and `/srv/filegate`. Add other roots to a service override
-before starting it:
+before starting it. For the optional `shared` root:
 
 ```ini
 [Service]
-ReadWritePaths=/data/cloud /data/nfs
+ReadWritePaths=/mnt/shared
 ```
+
+Stop the foreground daemon with Ctrl+C before starting the service:
 
 ```sh
 sudo systemctl daemon-reload

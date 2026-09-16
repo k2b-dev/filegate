@@ -13,7 +13,7 @@ other than Linux; only the daemon requires Linux.
 ```go
 client, err := filegate.New("https://files.example.org", token)
 if err != nil { return err }
-root := client.Root("cloud")
+root := client.Root("documents")
 node, err := root.Put(ctx, "notes/today.txt", strings.NewReader("hello"), 5,
     filegate.WriteOptions{Metadata: filegate.Metadata{"message": "First note"}})
 if err != nil {

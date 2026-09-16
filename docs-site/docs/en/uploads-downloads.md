@@ -13,7 +13,7 @@ directly to Filegate. The daemon bearer token stays on the backend.
 ## Small files: one PUT
 
 ```ts
-const upload = await files.root("cloud").directUpload("homes/alex/note.txt", 5, {
+const upload = await files.root("documents").directUpload("homes/alex/note.txt", 5, {
   onConflict: "overwrite",
   ownership: { uid: 10042, gid: 10042, mode: "0640", dirMode: "0750" },
   metadata: { message: "Updated note" },
@@ -30,8 +30,8 @@ or resumable. Default conflict behavior is `error` (409); `overwrite` and
 `rename` must be explicit. Rename appends `-01`, `-02`, … before the extension.
 
 An overwrite preserves existing ownership when no ownership is supplied. New
-files use the daemon account with mode 0644; newly created parents request 0755, reduced by the daemon umask (0750 with the
-packaged systemd unit).
+files use the daemon account with mode 0644; newly created parents request 0755,
+reduced by the daemon umask (0750 with the packaged systemd unit).
 Explicit UID and GID must be supplied together. Modes are octal strings limited
 to permission bits. `dirMode` applies to newly created directories. Existing
 parent directory permissions are not changed.
@@ -40,7 +40,7 @@ parent directory permissions are not changed.
 
 ```ts
 // Backend:
-const session = await files.root("cloud").createSession("videos/demo.mp4", size, {
+const session = await files.root("documents").createSession("videos/demo.mp4", size, {
   onConflict: "overwrite",
 });
 // Browser, given only session.url:

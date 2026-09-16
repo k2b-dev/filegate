@@ -7,19 +7,19 @@ description: Run systemd, rebuild indexes, inspect dashboard state and back up s
 
 # Operations
 
-Run one active daemon per state directory and writable root set. The daemon
-locks a private writable file in each root; NFS deployments require working
-server-side advisory locking. See the [Linux flock documentation](https://man7.org/linux/man-pages/man2/flock.2.html). Configuration
-is static YAML; restart to apply changes. Administrative CLI commands call the
-daemon at `server.public_url` using the token file. They never open live state.
+Run one active daemon per state directory and writable root set. NFS deployments
+require server-side advisory locking; see the
+[Linux flock documentation](https://man7.org/linux/man-pages/man2/flock.2.html).
+Restart the daemon to apply configuration changes. Administrative CLI commands
+call the daemon at `server.public_url` using the token file.
 
 ```sh
 filegate validate
 filegate status
 filegate roots
-filegate rebuild cloud
-filegate stats cloud
-filegate prune cloud
+filegate rebuild documents
+filegate stats documents
+filegate prune documents
 journalctl -u filegate -f
 ```
 
@@ -44,10 +44,10 @@ maintenance error. `GET /v1/roots` or `GET /v1/roots/{root}` returns:
 - Version count, logical version bytes, cooldown and retention settings.
 - Active upload sessions and their received staging bytes.
 
-These are operational totals, not quotas or billing. Version bytes do not
-measure actual reflink allocation. Filesystem free space includes unrelated
-users of that filesystem. Stats are invalidated when mutations change totals;
-refresh them when the dashboard needs a new measurement.
+Version bytes report logical file sizes. Actual disk usage depends on filesystem
+allocation and reflink support. Free space covers the entire filesystem,
+including data outside configured roots. Stats are invalidated when mutations
+change totals; refresh them when the dashboard needs a new measurement.
 
 ## Back up and recover
 
@@ -58,16 +58,14 @@ Stop Filegate and coordinate external writers before a consistent backup. Save:
 3. Static configuration and the token through your secret backup process.
 
 Use filesystem or VM snapshots that preserve inode identity for a full rollback.
-Restoring ordinary file copies onto new inodes is not equivalent to restoring
-that snapshot: durable identity claims intentionally reject copied xattrs, so
-files receive new IDs. Keep the original backup intact; do not delete identity
-records to try to reconnect history. File-copy recovery of current contents can
-use a new root/state, but does not import old version histories.
+Restoring ordinary file copies onto new inodes assigns new file IDs, even when
+xattrs are preserved. This does not restore the original version histories.
+To recover current contents from file copies, use a new root and state directory.
+Keep the original backup intact, including its identity records.
 
-After an unclean stop, start with the same roots and state. Filegate completes
-recorded publications and moves/deletes before serving requests, then removes
-unreferenced internal staging artifacts. It refuses inconsistent recovery rather
-than guessing which externally changed file to delete.
+After an unclean stop, start with the same roots and state. Filegate recovers
+pending writes, moves and deletions before serving requests. If recovery fails,
+startup stops with an error. Preserve the state and logs for diagnosis.
 
 ## Troubleshoot
 
@@ -81,7 +79,3 @@ than guessing which externally changed file to delete.
 | Upload returns 409 | File conflict, changed duplicate segment, incomplete session or disabled feature. |
 | Upload returns 503 | Concurrent upload capacity reached; retry with backoff. |
 | Version capture fails | Available storage, filesystem errors and private storage permissions. The previous file remains current. |
-
-No migration or compatibility mode is provided for older Filegate APIs/state.
-Keep old deployed services separate until their application integration is
-replaced. This repository change does not modify a Cloud deployment.
