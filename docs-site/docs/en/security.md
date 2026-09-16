@@ -1,123 +1,57 @@
 ---
-title: Security model
-navTitle: Security model
+title: Security and ownership
 section: Operate
-order: 130
-description: Understand Filegate authentication, direct URL tokens, CORS, trusted proxies, and secret handling.
-tags: [security, auth, cors]
+order: 30
+description: Authentication boundaries, scoped URLs and Linux service permissions.
 ---
 
-# Security model
+# Security and ownership
 
-This page is for operators and developers who need to understand Filegate authentication boundaries and browser-safe transfer patterns.
+The bearer token authorizes all roots and administrative operations. Filegate
+does not authenticate individual application users. The application backend must
+check each user's access before making a request or issuing a scoped URL.
+FreeIPA and local Cloud users are application concepts, not Filegate identities.
 
-## Authorization model
+Keep the bearer token out of browsers. Scoped upload/download/session URLs are
+bearer capabilities: anyone holding one can perform its bound operation until
+expiry. Do not log URL paths at the reverse proxy. Rotate the token by replacing
+the token file and restarting; this invalidates outstanding scoped URLs too.
 
-Filegate provides service-level REST authorization and scoped credentials for
-S3 and direct transfers. Run the REST and Admin surfaces on a trusted network
-behind TLS termination.
+Use TLS at the reverse proxy. Restrict direct daemon access to trusted networks.
+CORS only controls browser access; it is not authorization. Configure exact
+allowed origins for cross-origin direct transfers.
 
-| Property | State |
-|---|---|
-| Tenancy | Single tenant. Every mount is visible to every credential that can reach the REST API. |
-| REST authorization | One bearer token, all or nothing. There are no per-path, per-mount, or read-only REST credentials. |
-| S3 authorization | Multiple access keys, scoped to buckets and rate limited. This is the only place where credentials differ in what they may do. |
-| Admin authorization | Any account that passes the admin login is a full administrator. There are no admin roles. |
-| Network | Assumes a trusted network. Filegate expects to sit behind a reverse proxy or inside a private network, not on the public internet with the REST port exposed. |
-| Audit | Activity records name the credential that acted. They are a ring buffer in memory, not a durable audit log. |
-| Transport | Filegate listeners are cleartext. Terminate TLS at a trusted reverse proxy or private service boundary. |
-| REST rate limiting | Not built in. Enforce request and abuse limits at the reverse proxy. S3 keys have their own optional limits. |
+## Unix ownership
 
-The bearer token can read and delete every file on every mount and change the
-service configuration. Keep it in trusted services. Use scoped S3 keys or
-direct-transfer URLs for narrower access.
+The backend can provide numeric `uid`, `gid`, `mode` and `dirMode`. Filegate applies
+them to the published file and newly created parents. It does not discover users
+or groups, switch identities per request, or implement ACL inheritance policies.
+Cloud-only storage can omit ownership and use the daemon account.
 
-## Authentication surfaces
+A normal service account cannot chown files to arbitrary users. For FreeIPA-owned
+files, provide a service privilege arrangement that can both chown and later
+read/write those files. This may require narrowly configured Linux capabilities
+or a deliberately privileged daemon. `CAP_CHOWN` alone does not grant access to
+user-owned mode-0600 files. NFS `root_squash` may reject these operations even for
+local root. Test the actual mount and service identity before relying on it.
 
-| Surface | Scope | Credential |
-|---|---:|---|
-| REST API | `/v1/*` routes | Bearer token from `auth.bearer_token`, or the one generated at first start. |
-| Config API | `/v1/config*` routes | Same bearer token. Can plan and replace manifest-owned desired state. |
-| Health | `/health` | No credential. |
-| Metrics | Configured metrics path | `metrics.token`, falling back to the REST bearer token. |
-| S3 API | S3 listener | SigV4 access key and secret key. |
-| Direct upload URL | One upload target | Scoped URL token. |
-| Direct download URL | One resolved node | Scoped URL token. |
-| Direct upload session | One upload session | Scoped session token. |
+The packaged service defaults to an unprivileged `filegate` account. Granting
+additional capabilities or changing it to root is an explicit operator decision.
 
-A REST bearer token always exists. When `auth.bearer_token` is unset, the first start generates one, stores it in the runtime config store, and prints it once. There is no unauthenticated REST deployment.
+## Filesystem boundaries
 
-An actor who can `POST /v1/config/apply` can widen CORS, disable access logs,
-raise upload limits, and stage static changes for the next restart. Revision
-preconditions prevent accidental concurrent overwrites; they are not an
-authorization boundary. Configuration access is part of the bearer token's
-authority.
+Paths are relative to a named root. Parent traversal, symbolic links and reserved
+`.filegate` paths are rejected. File access uses directory descriptors and
+`O_NOFOLLOW`; publication uses atomic rename followed by directory fsync.
+Indexed regular files must not have hard links. Stable xattrs are not credentials:
+copied IDs on different inodes are reissued so they cannot inherit another file's
+history. Do not expose or modify private version/staging directories externally.
 
-## Actor logging
+Keep the root directory itself under daemon/operator control. External users may
+write in their assigned subdirectories, but must not be able to rename or replace
+the root-level `.filegate` directory or its `LOCK` file. The root lock assumes
+that private namespace remains in place.
 
-Filegate logs the authenticated credential kind as the actor. `X-Filegate-Actor` can add a delegated actor label for applications that want user-level attribution.
-
-| Field | Scope | Meaning |
-|---|---:|---|
-| `actor.kind` | Activity event | `bearer_token`, `s3_key`, `signed_url`, or `system`. |
-| `actor.id` | Activity event | Stable identifier for the authenticated credential. |
-| `actor.label` | Activity event | Optional credential label. |
-| `actor.delegatedActor` | Activity event | Optional label from `X-Filegate-Actor`. |
-
-`X-Filegate-Actor` is not authorization. Treat it as log metadata supplied by a trusted application server.
-
-## Browser uploads
-
-Do not expose the Filegate bearer token to browsers. Use an application server to create direct upload sessions or direct one-shot URLs.
-
-```txt
-browser -> app server: request upload permission
-app server -> Filegate: create scoped direct URL or session
-browser -> Filegate: upload bytes with scoped token
-```
-
-## CORS
-
-CORS is disabled when `server.cors.allowed_origins` is empty. Prefer configuring CORS at the reverse proxy. If Filegate must answer browser CORS directly, configure explicit origins.
-
-```yaml
-server:
-  cors:
-    allowed_origins:
-      - "https://app.example.com"
-    exposed_headers:
-      - "X-Node-Id"
-      - "X-Created-Id"
-```
-
-Wildcard origin with `allow_credentials: true` is rejected.
-
-CORS is a runtime setting, so a manifest apply publishes it to the next request without a restart.
-
-## Trusted proxies
-
-`server.trusted_proxies` controls whether `X-Forwarded-For` and `X-Real-Ip` are honored for logged client addresses.
-
-| Setting | Scope | Meaning |
-|---|---:|---|
-| Empty list | Service | Ignore forwarded client IP headers. Default. |
-| IP or CIDR entry | Proxy peer | Honor forwarded headers only from matching peers. |
-
-Behind Traefik, Caddy, or nginx, list the proxy address or CIDR. Do not trust forwarded headers from direct clients.
-
-## Secret handling
-
-| Secret | Storage scope | Handling |
-|---|---:|---|
-| REST bearer token | Config, environment, or runtime config store | Keep server-side. Generated and printed once when unconfigured. |
-| S3 secret keys | Runtime config store, seeded from config | Shown once at creation or rotation and never again. |
-| Metrics token | Config or environment | Use for scraper-only access. |
-| Admin app session secret | Admin process | Keep server-side. |
-
-Secrets are never returned by the config API or printed by `fg config show`; those surfaces report only whether a value is configured.
-
-The runtime config store at `storage.runtime_config_path` holds the generated bearer token and every S3 secret. Protect and back it up like a credential store, because that is what it is.
-
-Do not run two Filegate daemons against the same runtime store, index, or
-writable mount set. Filegate has no shared-store coordination or leader
-election; this is an operational integrity boundary, not a scaling mechanism.
+Root storage must be trusted infrastructure. Do not place device files or
+untrusted bind mounts inside a root. External writers bypass Filegate versioning,
+and no index setting can capture their previous bytes retroactively.

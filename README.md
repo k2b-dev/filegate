@@ -1,102 +1,71 @@
-<p align="center">
-  <img src="docs-site/assets/logo.svg" alt="Filegate" width="256"/>
-</p>
-
 # Filegate
 
-Filegate is a Linux file gateway for applications that need REST, typed SDK,
-and optional path-style S3 access to normal filesystem storage.
+Filegate exposes ordinary Linux directories through a root-scoped HTTP API.
+Run one Go binary as a systemd service. Use its CLI for administration and
+its TypeScript or Go client from your application backend.
 
-Files remain ordinary files on configured mounts. Stable IDs live in the
-`user.filegate.id` xattr, while a rebuildable Pebble index accelerates listings,
-path lookup, uploads, and metadata reads.
+- Independent named roots; no overlapping directory trees.
+- Optional metadata index, updated by API writes and an explicit rebuild.
+- Optional version history on indexed roots: cooldown, manual snapshots,
+  pinned versions, bounded JSON metadata, calendar retention.
+- Small direct PUT uploads and resumable direct upload sessions, including
+  numeric Unix ownership selected by the trusted backend.
+- Directory browsing, bounded search, thumbnails, TAR downloads and transfers.
+- Dashboard metadata through the API. No bundled admin application.
 
-## Capabilities
+The application owns user permissions and business rules. Filegate knows roots,
+relative paths and optional numeric ownership. It does not know FreeIPA or Cloud.
+A root without an index reads the filesystem directly and requires no xattrs.
+Indexed roots use `user.filegate.id` to keep file identities across API renames.
+Version snapshots use reflinks when available and byte copies otherwise.
 
-- REST API with stable path and node-ID addressing
-- resumable and direct browser uploads
-- streaming file and directory downloads
-- TypeScript and Go clients
-- optional path-style S3 listener with scoped access keys
-- per-file version history with probed reflink or byte-copy behavior
-- polling or btrfs-based external-change detection
-- separate operator Admin app
+This is a hard API and configuration cut. There are no S3, automatic external
+change detectors, runtime configuration APIs or compatibility endpoints.
+The Cloud application is not part of this change.
 
-## Production boundaries
+## Run
 
-- Linux-only, single-node, and single-tenant
-- one full-authority REST bearer token; narrower scopes exist only for S3 keys
-- exactly one daemon per runtime store, index, and writable mount set
-- TLS and REST rate limiting belong at the reverse proxy or private network
-- user xattrs are required and must be preserved by backup tooling
-
-Read the [Security model](https://filegate.dev/docs/en/security) and
-[Operations guide](https://filegate.dev/docs/en/operations) before deploying.
-
-## Install
-
-Install a release package and run Filegate through systemd. Replace `amd64`
-with `arm64` on ARM hosts.
+Use [the example configuration](packaging/config/conf.yaml). Create its data
+roots and a private token file containing at least 32 random characters.
+Keep the state directory outside all roots.
 
 ```sh
-curl -fL -o /tmp/filegate.deb \
-  https://github.com/k2b-dev/filegate/releases/latest/download/filegate_linux_amd64.deb
-sudo dpkg -i /tmp/filegate.deb
-sudo systemctl enable --now filegate
+filegate validate --config /etc/filegate/conf.yaml
+filegate serve --config /etc/filegate/conf.yaml
+filegate roots
+filegate rebuild cloud
 ```
 
-The first start generates and prints a REST token when none is configured. The
-token and applied runtime configuration are persisted under
-`/var/lib/filegate/config`.
+Configuration changes require a restart. Administrative commands call the
+running daemon; they never open its state database. Only the daemon writes state.
 
-Verify liveness, then follow the authenticated readiness procedure in the
-installation guide:
+## Integrate
+
+```ts
+import { Filegate } from "@k2b/filegate";
+
+const files = new Filegate({
+  baseUrl: process.env.FILEGATE_URL!,
+  token: process.env.FILEGATE_TOKEN!,
+});
+const upload = await files.root("cloud").directUpload("homes/alex/notes.txt", 5, {
+  metadata: { message: "First draft" },
+});
+// Return upload.url to the authorized browser. It sends exactly 5 bytes by PUT.
+```
+
+See [documentation](https://filegate.dev/docs/en/), [Go client](sdk/filegate),
+and the portable [Filegate skill](skills/filegate/SKILL.md).
+
+## Develop
 
 ```sh
-curl -fsS http://127.0.0.1:8080/health
+make test                 # native Go, SDK tests and builds
+make test-linux           # Linux filesystem and HTTP integration tests in Docker
+make test-race            # on Linux: Go race suite
+make docs                # Fibel typecheck and production build
 ```
 
-## Documentation
-
-The canonical documentation is the Fibel site at
-[filegate.dev/docs](https://filegate.dev/docs/en/).
-
-- [Getting started](https://filegate.dev/docs/en/getting-started)
-- [Installation](https://filegate.dev/docs/en/installation)
-- [Configuration](https://filegate.dev/docs/en/configuration)
-- [HTTP API](https://filegate.dev/docs/en/http-api)
-- [TypeScript SDK](https://filegate.dev/docs/en/ts-sdk)
-- [Go SDK](https://filegate.dev/docs/en/go-sdk)
-- [S3 compatibility](https://filegate.dev/docs/en/s3)
-- [Admin UI](https://filegate.dev/docs/en/admin)
-- [Reference](https://filegate.dev/docs/en/reference/http-routes)
-- [Development architecture](https://filegate.dev/docs/en/development/architecture)
-
-The site also exposes searchable pages, raw Markdown, and `llms.txt`. Its source
-lives in [`docs-site/docs/en`](docs-site/docs/en).
-
-## Development
-
-```sh
-go test ./...
-go vet ./...
-staticcheck ./...
-```
-
-Run the documentation site:
-
-```sh
-cd docs-site
-bun install --frozen-lockfile
-bun run typecheck
-bun run dev
-```
-
-## Agent skills
-
-```sh
-bunx skills add k2b-dev/filegate
-```
-
-- Integration skill: [`skills/filegate/SKILL.md`](skills/filegate/SKILL.md)
-- Contributor skill: [`skills/filegate-dev/SKILL.md`](skills/filegate-dev/SKILL.md)
+The daemon requires Linux; SDKs and configuration validation also build elsewhere.
+No external database is required. Back up roots, xattrs, private version blobs,
+and `state_dir` together while the daemon is stopped.

@@ -1,145 +1,335 @@
 ---
 name: filegate
-description: >
-  Integrate, configure, operate, or develop Filegate, the Linux file gateway
-  with REST, TypeScript, Go, and S3-compatible APIs. Use this skill for file
-  uploads and downloads, stable node IDs, virtual paths, resumable sessions,
-  direct browser transfers, S3 clients and keys, declarative configuration,
-  versioning, storage operation, deployment, recovery, or Filegate source
-  changes.
+description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, direct uploads and resumable sessions, version history, Unix ownership, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
 ---
 
-# Work with Filegate
+# Filegate
 
-Filegate exposes regular Linux files through indexed REST, TypeScript, Go, and
-S3-compatible surfaces. Applications keep their users, permissions, and
-product model. Filegate owns filesystem-backed file operations, stable IDs,
-metadata lookup, transfers, versions, and operational state.
+Use Filegate from a trusted application backend or administer its Linux daemon.
+The public address is **root name + relative path**. Roots are independent and
+cannot overlap. Filegate has no FreeIPA/Cloud identity model.
 
-Use the following gates for Filegate work. They keep exact details in the
-current documentation instead of duplicating a second API reference here.
+This self-contained skill covers the TypeScript API, Go API, HTTP contract and
+operations below. It is also published by the Fibel agent-skills plugin.
 
-## 1. Read the current contract
+## Contract
 
-Prefer the Filegate documentation MCP when it is available. Search with
-`search_docs`, then read the smallest matching page with `read_doc` before
-making exact claims about routes, types, configuration, defaults, errors, or
-deployment behavior.
+- The daemon requires Linux. Both SDKs are portable.
+- One static YAML file and a separate token file; changes apply on restart.
+- No S3, admin application, dynamic configuration or external-change detector.
+- Index off means filesystem-based reads and no xattr requirement. Index on
+  provides metadata search and stable IDs, updated by API writes or explicit
+  rebuild. Versioning requires indexing.
+- Stable IDs survive same-root API moves. Copies and cross-root moves start a
+  new destination history. Permanent deletion removes history, including pins.
+- Versions capture old contents before overwrite. Default cooldown is one minute;
+  skipped writes do not restart it. Manual snapshots and restore bypass cooldown.
+- Upload metadata belongs to the incoming revision. Versions expose arbitrary
+  JSON-object metadata, limited to 8192 serialized UTF-8 bytes. Pins are exempt
+  from automatic retention. History is not an immutable audit log.
+- Numeric ownership comes from the trusted backend. For new files, omitted
+  ownership uses the daemon account. Arbitrary chown requires OS privileges.
 
-For a local documentation server on the default port, the endpoint is:
+## Integration rules
 
-```text
-http://localhost:5173/docs/_fibel/mcp
+1. Keep the full bearer token on trusted backends. Authorize the application user
+   before issuing a scoped direct upload/download/session URL.
+2. Prefer small direct PUTs and resumable sessions for large files. Both bind
+   ownership, metadata and conflict policy when the backend creates the transfer.
+3. Default conflict policy is `error`; choose `overwrite` or `rename` explicitly.
+4. Use relative paths, never absolute server paths. Store `{root,id}` for indexed
+   identity references, or `{root,path}` when indexing is off.
+5. Raw stream methods preserve HTTP error responses. Check status and close Go
+   response bodies. Never buffer a large relay into memory.
+6. Do not delete `state_dir` to rebuild. Only the daemon owns live writable state;
+   CLI rebuild/prune/stats calls its API.
+7. Diagnose from current API/types/source when available. Do not invent the old
+   `/v1/nodes`, `/v1/paths`, `/v1/config` or S3 endpoints.
+
+When writing integration code, include construction, the relevant operation,
+error handling and a read-back/status check. Operations examples are instructions
+for the operator, not implicit permission to mutate a deployment.
+
+## TypeScript API
+
+Install `@k2b/filegate` in your backend. Construct the client explicitly; it does
+not read environment variables or create credentials automatically.
+
+```ts
+import { Filegate, FilegateError } from "@k2b/filegate";
+const files = new Filegate({
+  baseUrl: process.env.FILEGATE_URL!,
+  token: process.env.FILEGATE_TOKEN!,
+});
+const root = files.root("cloud");
+try {
+  const file = await root.put("notes/today.txt", new Blob(["hello"]), {
+    metadata: { message: "First note" },
+  });
+  console.log(file.path, file.id);
+} catch (error) {
+  if (error instanceof FilegateError && error.status === 409) {
+    console.log("Choose another name or explicitly overwrite");
+  } else throw error;
+}
 ```
 
-If the MCP connection is unavailable, read the matching Markdown below
-`docs-site/docs/en` and the public Go or TypeScript types directly. State when
-the task is using this reduced documentation mode.
+`put` mints a direct URL and uploads through it. `directUpload` returns the URL
+instead, suitable for an authorized browser. `createSession` returns a scoped
+session URL for larger uploads. Import token-free browser helpers from
+`@k2b/filegate/utils`: `DirectSession`, `putDirect`, `segments` and `sha256`.
 
-**Gate:** exact behavior comes from current documentation or public source.
+### Root operations
 
-## 2. Choose the access surface
+| Method | Result or action |
+| --- | --- |
+| `info()` | Root configuration, capabilities and dashboard metadata. |
+| `stat(path)` | Current filesystem metadata; optional indexed identity. |
+| `resolve(id)` | Current path for an indexed file ID. |
+| `list(path, { after, limit })` | Alphabetical page of immediate children. |
+| `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
+| `mkdir(path, ownership?)` | Create a directory and missing parents. |
+| `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
+| `remove(path, recursive?)` | Permanent deletion including histories. |
+| `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `rebuild(signal?)` | Rebuild this root's metadata index. |
+| `refreshStats(maxEntries?, signal?)` | Explicit bounded filesystem accounting. |
+| `versions(path)` | History, newest first. |
+| `snapshot(path, { pinned, metadata })` | Immediate manual version. |
+| `updateVersion(path, id, { pinned, metadata })` | Replace editable version attributes. |
+| `restore(path, id)` | Restore content, preserving an undo snapshot. |
+| `deleteVersion(path, id)` | Explicit version deletion, including pins. |
+| `prune()` | Run retention now. |
 
-- Use the REST API or an SDK for application file UX, metadata, stable IDs,
-  direct URLs, upload sessions, search, versions, and administration.
-- Use the TypeScript SDK from Bun or Node application servers and trusted
-  internal tools.
-- Use the Go SDK from Go services and operators.
-- Use path-style S3 for existing backup, sync, migration, and object-storage
-  clients.
-- Use the Admin app for full-authority operator workflows.
+Use `files.roots()` and `files.system()` for dashboards. Unknown recursive totals
+are `null`; do not display them as zero. Indexed IDs persist through same-root
+API moves. Paths remain the universal address and are the only identity for
+index-free roots.
 
-Do not expose the REST bearer token to a public browser. The application server
-authorizes the user and creates scoped direct upload or download credentials;
-the browser transfers bytes with those scoped credentials.
+List and search pages expose `next`. Pass it unchanged as `after` until absent.
+Page limits are 1–1000. Search without an index fails when its traversal budget
+is exhausted, rather than pretending a partial result is complete.
 
-**Gate:** the selected surface matches the caller and its trust boundary.
+Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
+`versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
+throw `FilegateError` with `status`, `code` and `message`. Supply an optional
+`fetch` in the constructor for testing or transport customization.
 
-## 3. Preserve identity and conflict behavior
+## Go API
 
-Persist Filegate node IDs rather than paths. IDs remain stable across moves and
-renames; paths do not.
+Import `github.com/k2b-dev/filegate/v3/sdk/filegate`. The SDK works on platforms
+other than Linux; only the daemon requires Linux.
 
-Choose conflict behavior explicitly. One-shot and session writes do not
-silently overwrite by default. Read the current upload or API documentation for
-the supported `onConflict` values and response diagnostics.
+```go
+client, err := filegate.New("https://files.example.org", token)
+if err != nil { return err }
+root := client.Root("cloud")
+node, err := root.Put(ctx, "notes/today.txt", strings.NewReader("hello"), 5,
+    filegate.WriteOptions{Metadata: filegate.Metadata{"message": "First note"}})
+if err != nil {
+    var apiErr *filegate.APIError
+    if errors.As(err, &apiErr) && apiErr.Status == 409 {
+        // Ask the application user to choose a conflict policy.
+    }
+    return err
+}
+fmt.Println(node.Path, node.ID)
+```
 
-Use upload sessions for large or resumable transfers. Small files can use the
-one-shot path, and direct browser flows should keep the application backend out
-of the byte stream.
+`Put` uses a scoped direct upload. To hand the transfer to another client, call
+`DirectUpload(ctx, path, size, options)` and return its URL. The byte count must
+match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
 
-**Gate:** callers preserve stable identity and handle conflicts deliberately.
+### Resumable upload
 
-## 4. Respect the security boundary
+```go
+created, err := root.CreateSession(ctx, "large.bin", size, filegate.WriteOptions{})
+if err != nil { return err }
+session := filegate.DirectSession{URL: created.URL}
+// Send each 8 MiB segment; the last contains the remaining bytes.
+_, err = session.Put(ctx, 0, firstSegment)
+if err != nil { return err }
+status, err := session.Status(ctx)
+if err != nil { return err }
+_ = status.Segments
+// After all segments:
+node, err := session.Commit(ctx)
+```
 
-The REST bearer token grants full file and configuration authority for the
-Filegate instance. Keep it in trusted services and secret stores.
+`DirectSession` needs only its scoped URL. `Status`, `Put`, `Commit` and `Abort`
+all accept a context. The `segments` subpackage provides pure segment arithmetic
+and checksums; `relay` provides streaming HTTP helpers.
 
-- Run REST and Admin surfaces on a trusted network behind TLS termination.
-- Use scoped S3 keys when an S3 client needs access to selected buckets.
-- Use direct-transfer tokens for browser uploads and downloads.
-- Treat `X-Filegate-Actor` as activity metadata, not authorization.
-- Apply REST request limits at the reverse proxy.
+### API map
 
-Never infer application authorization from Filegate paths, mount names, or
-activity labels. The application owns user and product permissions.
+The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
+`SetOwnership`, `Remove`, `Transfer`, `DirectUpload`, `DirectDownload`,
+`CreateSession`, `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
+`UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
+Each operation takes a `context.Context` first. Request structs shared with the
+wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
 
-**Gate:** no master credential crosses into an untrusted client.
+`ContentRaw`, `ArchiveRaw`, `ThumbnailRaw` and `VersionContentRaw` return
+`*http.Response` unchanged on HTTP errors. Always check `StatusCode` and close
+the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
+`Message`. Set caller deadlines through contexts; administrative rebuilds and
+large transfers can take longer than a normal request.
 
-## 5. Manage configuration and runtime resources
+## HTTP contract
 
-Keep service behavior in a versioned manifest and use `fg config plan` before
-`fg config apply`. The manifest is complete desired state, not a patch.
+All `/v1/*` routes require `Authorization: Bearer TOKEN`, except signed
+`/v1/direct/{token}` routes. `GET /health` is unauthenticated. JSON errors have
+`{"error":"code","message":"description"}`. Bodies use camelCase; configuration
+uses snake_case. Unknown JSON fields are rejected.
 
-Bootstrap-owned values are available before the runtime store opens. Secrets
-and runtime resources such as S3 keys stay outside the manifest. A static
-manifest change becomes effective after restart; a runtime change is published
-after apply.
+Root operations have prefix `/v1/roots/{root}`. A `path` query parameter is a
+relative path; `.` addresses the root where supported. IDs are optional metadata,
+not the universal operation address.
 
-Use the dedicated S3 key API or Admin S3 page to create, rotate, scope, disable,
-and delete runtime access keys.
+| Method and suffix | Input | Result |
+| --- | --- | --- |
+| `GET /v1/system` | — | Build, uptime, maintenance health. |
+| `GET /v1/roots` | — | Root information array. |
+| `GET /v1/roots/{root}` | — | Root information. |
+| `GET /stat` | `path` | Node. |
+| `GET /resolve` | `id` | Node, indexed roots only. |
+| `GET /entries` | `path`, `after`, `limit` | `{items,next?}`. |
+| `GET /search` | `q`, `path`, `after`, `limit`, `maxEntries` | Filename substring matches. |
+| `GET /content` | `path` | File bytes, Range/HEAD supported. |
+| `GET /archive` | `path` | TAR stream. |
+| `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
+| `POST /directories` | `{path,ownership?}` | Created Node. |
+| `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
+| `DELETE /files` | `path`, `recursive` | 204. |
+| `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
+| `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
+| `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
+| `POST /uploads/sessions` | `{path,size,onConflict?,ownership?,metadata?}` | Session plus scoped `url`. |
+| `GET /index` | — | Index status. |
+| `POST /index/rebuild` | — | Final index status. |
+| `GET /stats` | — | Cached recursive stats or null. |
+| `POST /stats/refresh` | `maxEntries` | Recursive stats. |
+| `GET /versions` | `path` | Versions, newest first. |
+| `POST /versions` | `path`; body `{pinned?,metadata?}` | Manual version. |
+| `PATCH /versions/{id}` | `path`; body `{pinned,metadata?}` | Updated version attributes. |
+| `DELETE /versions/{id}` | `path` | 204. |
+| `GET /versions/{id}/content` | `path` | Version bytes. |
+| `POST /versions/{id}/restore` | `path` | Current Node. |
+| `POST /versions/prune` | — | `{deleted}`. |
 
-**Gate:** declarative settings, bootstrap inputs, and runtime resources keep
-their separate ownership and lifecycle.
+A Node contains `root`, `path`, optional `id`, `directory`, `size`, `modified`,
+`mode`, `uid` and `gid`. Timestamps are RFC 3339, sizes are integer bytes. Directory
+size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
+bounded by 1000. Search/stats traversal defaults to 100,000 entries and accepts
+an explicit maximum of 10,000,000.
 
-## 6. Operate the storage safely
+### Scoped session URL
 
-Run one Filegate daemon per writable mount set, runtime store, and Pebble index.
-Do not share those embedded stores between active processes.
+Use the exact URL returned at session creation:
 
-Back up:
+| Method | Meaning |
+| --- | --- |
+| `GET URL` | Status and received segment hashes. |
+| `PUT URL?segment=N` | Exact segment bytes. |
+| `POST URL` | Commit; repeated commits return the recorded result. |
+| `DELETE URL` | Abort/retire the session. |
 
-1. every configured data root, including xattrs and internal Filegate
-   directories;
-2. the runtime config store containing applied desired state and generated
-   credentials;
-3. bootstrap files and external secrets;
-4. the metadata index only when captured consistently with the file tree.
+Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
+invalid input, 401 for authentication/capability failure, 403 for permissions,
+404 for missing files, 409 for conflicts/disabled features, 413 for limits and
+503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+ambiguous transport failure: session commits are idempotent, while ordinary
+mutations require reading back the resulting state.
 
-The filesystem holds file bytes and stable-ID xattrs. The runtime store is not
-rebuildable from those files. The metadata index can be rebuilt offline, but an
-index rebuild loses in-progress upload-session metadata.
+## Operations
 
-Use authenticated readiness and system-information routes after deployment,
-storage changes, restore, and upgrade. Read the operations documentation for
-the current probes and recovery commands.
+Run one Linux daemon per writable root set and state directory. Use the packaged
+systemd unit, or `filegate serve --config /etc/filegate/conf.yaml`.
 
-**Gate:** one daemon owns the storage and every authoritative state class is
-covered by backup and restore.
+```yaml
+server:
+  listen: "127.0.0.1:8080"
+  public_url: "https://files.example.org"
+  allowed_origins: ["https://cloud.example.org"]
+auth:
+  token_file: /etc/filegate/token
+state_dir: /var/lib/filegate
+uploads:
+  max_file_size: 10GiB
+roots:
+  - name: cloud
+    path: /data/cloud
+    index: true
+    versioning:
+      enabled: true
+      cooldown: 1m
+      keep: { last: 10, daily: 30, monthly: 12 }
+  - name: shared
+    path: /data/nfs
+    index: false
+```
 
-## 7. Verify changes through a public seam
+Root paths must exist and cannot overlap each other or state. Configuration is
+strict YAML, applied on restart. The token file contains one random secret of
+32–4096 bytes; no token is generated automatically. The root name binds its path
+in durable state. Repointing a name to another directory is rejected.
 
-For integration code:
+### Commands
 
-1. construct the client for the trusted runtime;
-2. perform the operation through a public API;
-3. handle status, stable error information, and conflict diagnostics;
-4. read the result back or run a focused health check.
+- `filegate validate`: check configuration, roots and token readability.
+- `filegate status`: daemon build, uptime, readiness and maintenance errors.
+- `filegate roots`: root/index/version/upload/filesystem dashboard metadata.
+- `filegate rebuild ROOT`: rebuild derived index rows, pausing root mutations.
+- `filegate stats ROOT`: explicitly scan recursive totals, bounded by 100,000 entries.
+- `filegate prune ROOT`: apply configured retention immediately.
 
-For Filegate source changes, update the Go contract and both SDKs when the
-public HTTP surface changes. Update the canonical Fibel page for observable
-changes to APIs, defaults, errors, permissions, configuration, deployment, or
-operations. Review the focused diff and run the smallest test that proves the
-affected public seam.
+Administrative commands use `server.public_url` and bearer authentication. They
+never open the live state database. The daemon prunes versions and expires upload
+sessions every five minutes. There is no automatic scan for external file changes.
 
-**Gate:** implementation, SDKs, documentation, and verification agree.
+`keep` accepts last/hourly/daily/weekly/monthly counts. Retention keeps their union,
+uses UTC calendar buckets including the current one, and excludes pins from tier
+budgets. It selects existing snapshots; it does not schedule new ones. Omitting a
+tier or using zero retains nothing for that tier.
+
+### Permissions and systemd
+
+The packaged service uses `filegate:filegate`. Create root storage for that user,
+protect the token file, and allow root paths through systemd `ReadWritePaths`.
+TLS belongs at the reverse proxy. Add exact browser origins for direct transfers.
+Avoid logging signed URL paths.
+
+Numeric UID/GID changes require privileges beyond an ordinary service account.
+`CAP_CHOWN` alone does not allow reading arbitrary user-owned mode-0600 files.
+Assess required privileges and NFS root-squash on the actual deployment. Do not
+change service identity, capabilities, mounts or production permissions without
+the user's operational authorization.
+
+### State and recovery
+
+Keep the root namespace under daemon/operator control: external writers must not
+be allowed to rename or replace `.filegate` or its lock file. Give them access to
+their assigned subdirectories instead.
+
+The private `.filegate` directory in each root stores version bytes and staging;
+it must be daemon-owned with mode 0700. The separate `state_dir` stores both
+rebuildable index rows and authoritative identities, revision metadata, versions,
+sessions and recovery records. Never remove it as an index repair technique.
+
+For a consistent full rollback, stop the daemon, coordinate external writers,
+and snapshot all roots and state together, preserving xattrs and inode identity.
+Ordinary file-copy restore changes inode identity and is not a full history
+restore: copied xattrs deliberately do not reconnect old histories. Current
+contents can be imported as a new root/state; retain the original backup.
+
+On restart, Filegate completes recorded publications/moves/deletes and cleans
+unreferenced staging artifacts. An inconsistent recovery fails startup rather
+than guessing which externally changed file is authoritative. Preserve the
+original state and logs before attempting repair.
+
+Dashboard totals may be null until measured; do not display unknown as zero.
+Version byte totals are logical, not allocated disk usage. Roots on the same
+filesystem share capacity and must not be double-counted.
+
+If the entire `keep` section is absent, defaults are `last: 10`, `daily: 30`,
+and `monthly: 12`. An explicit `keep: {}` retains only pinned versions.

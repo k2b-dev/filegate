@@ -1,160 +1,63 @@
 ---
-title: Configuration
-navTitle: Configuration
-section: Use Filegate
-order: 40
-description: Manage Filegate as versioned desired state with manifest plan and apply.
-tags: [configuration, yaml, cli, gitops]
+title: Configure roots
+section: Operate
+order: 10
+description: Static YAML settings and independent index and version policies.
 ---
 
-# Configuration
+# Configure roots
 
-Use a manifest for service behavior that belongs in source control. Filegate validates and stores the complete last-applied desired state in its runtime config store. The Settings page shows that state but does not edit it.
-
-Bootstrap settings and credentials stay outside the manifest. This keeps recovery possible when the runtime store is unavailable and keeps secrets out of the desired-state document.
-
-## Write a manifest
-
-A manifest has one versioned envelope and a nested `config` mapping:
+Filegate reads one strict YAML document at startup. Unknown fields fail
+validation. There are no configuration overlays, generated credentials, hot
+reload or configuration API. `--config` selects the file; the default is
+`/etc/filegate/conf.yaml`.
 
 ```yaml
-version: 1
-config:
-  server:
-    public_url: https://files.example.com
-    access_log_enabled: true
-    cors:
-      allowed_origins:
-        - https://app.example.com
-  upload:
-    max_upload_bytes: 1073741824
-  versioning:
-    enabled: "on"
-    pruner_interval: 10m
+server:
+  listen: "127.0.0.1:8080"
+  public_url: "https://files.example.org"
+  allowed_origins: ["https://cloud.example.org"]
+auth:
+  token_file: /etc/filegate/token
+state_dir: /var/lib/filegate
+uploads:
+  max_file_size: 10GiB
+roots:
+  - name: cloud
+    path: /data/cloud
+    index: true
+    versioning:
+      enabled: true
+      cooldown: 1m
+      keep:
+        last: 10
+        daily: 30
+        monthly: 12
+  - name: shared
+    path: /data/nfs
+    index: false
 ```
 
-Commit this file to the repository that owns the deployment. The document is a complete replacement, not a patch:
+| Setting | Behavior |
+| --- | --- |
+| `server.listen` | Defaults to `127.0.0.1:8080`. |
+| `server.public_url` | Required HTTP(S) origin for direct URLs and administrative CLI calls. |
+| `server.allowed_origins` | Explicit browser origins; empty disables cross-origin access. |
+| `auth.token_file` | Absolute path to a token of 32–4096 bytes, with optional surrounding whitespace. |
+| `state_dir` | Required absolute directory outside every root; one active daemon owns it. |
+| `uploads.max_file_size` | Defaults to `10GiB`; integer bytes or `B`, `KiB`, `MiB`, `GiB`. Applies to every upload method. |
+| `roots[].name` | Unique name: letters, digits, `_` and `-`; first character alphanumeric; at most 64 characters. |
+| `roots[].path` | Existing absolute directory. Canonical root paths cannot overlap each other or state. |
+| `roots[].index` | Defaults to false. Enable metadata search and stable xattr IDs. |
+| `roots[].versioning.enabled` | Defaults to false. Requires index enabled. |
+| `roots[].versioning.cooldown` | Defaults to `1m`; zero captures each successful overwrite. |
+| `roots[].versioning.keep` | Defaults to `{last: 10, daily: 30, monthly: 12}` when the entire `keep` section is absent; see [versioning](versioning.md). |
 
-- A key present in the new manifest is manifest-managed.
-- A key removed from the new manifest is removed from managed state and falls back to environment, bootstrap file, or its built-in default.
-- `null` is rejected. Omit a key to stop managing it.
-- Unknown, secret, bootstrap-owned, and resource-owned keys are rejected.
+Each root has independent maintenance and history. A rebuild pauses publication
+and other root mutations while it walks that root. Upload bodies can still be
+staged, and other roots remain available. External writers are not locked: pause
+them separately if you need a consistent scan.
 
-## Plan the change
-
-Plan against the same authenticated API locally or remotely:
-
-```sh
-fg config plan -f filegate.manifest.yaml \
-  --host https://files.example.com \
-  --token-file /run/secrets/filegate-token
-```
-
-The plan reports additions, changes, removals, their activation class, the current revision, and the proposed revision. It does not write the runtime store or change the running process.
-
-For a local daemon, `--host` can be omitted because the bootstrap config
-contains `server.listen`. Token flags can be omitted only when the bootstrap
-config contains an explicit `auth.bearer_token`. A generated token remains in
-the runtime store and is never exposed to the CLI; pass it via `--token-file`
-or `FILEGATE_TOKEN`.
-
-## Apply the manifest
-
-```sh
-fg config apply -f filegate.manifest.yaml \
-  --host https://files.example.com \
-  --token-file /run/secrets/filegate-token
-```
-
-`apply` obtains a fresh plan and sends its current revision as a precondition. Filegate returns `409 Conflict` if another actor applied a manifest in between. Run the command again to inspect the new state instead of overwriting it blindly.
-
-An identical revision is a no-op.
-
-## Local and remote authentication
-
-`plan` and `apply` always use the bearer-authenticated HTTP API. They never open Pebble directly.
-
-Host resolution, highest precedence first:
-
-1. `--host`
-2. `FILEGATE_HOST`
-3. `server.listen` in the bootstrap config
-
-Token resolution, highest precedence first:
-
-1. `--token`
-2. `--token-file`
-3. `FILEGATE_TOKEN`
-4. `auth.bearer_token` in the bootstrap config
-
-The bootstrap config is selected by `--config`, then `FILEGATE_CONFIG`, then the normal default candidates. `--token` and `--token-file` are mutually exclusive.
-
-The same bearer token grants file and configuration authority. Keep it in a secret store and use a protected deployment runner for remote apply.
-
-## Runtime and static activation
-
-Every manifest-owned key has one activation class:
-
-| Class | Apply behavior |
-|---|---|
-| Runtime | The validated value is published to the live configuration snapshot immediately. |
-| Static | The desired value is stored, while the process keeps its effective startup value until restart. |
-
-`GET /v1/config` and the Settings page report effective and desired values separately. A static difference appears in `restartRequired`; after a successful restart, effective and desired match.
-
-See [Config reference](/docs/en/reference/config) for each key's activation and owner.
-
-## Bootstrap and resource boundaries
-
-The following values do not belong in a manifest:
-
-- `storage.runtime_config_path`, because Filegate must know it before it can open Pebble and read the manifest.
-- Secret settings such as `auth.bearer_token` and `metrics.token`.
-- S3 credentials and access-key lists, which are managed as runtime resources.
-
-Bootstrap values come from defaults, the bootstrap YAML file, environment, or `fg serve` flags. `fg config show`, `validate`, and `set` operate on this offline bootstrap configuration; they do not update a running daemon.
-
-S3 keys may be seeded once from bootstrap configuration. After seeding, use the S3 key API or the admin S3 page to create, rotate, disable, and delete them. Deleting a resource does not alter the manifest.
-
-## Stored state
-
-The runtime store at `storage.runtime_config_path` contains:
-
-- The normalized complete manifest.
-- Its SHA-256 revision, apply timestamp, and actor.
-- Runtime resources such as S3 access keys and a generated REST token.
-
-The store is separate from the rebuildable search index. Back it up with the data; losing it loses the applied desired state and runtime credentials.
-
-## Inspect the running state
-
-The Settings page is read-only for configuration. It shows:
-
-- Manifest revision, apply time, and actor.
-- Effective and desired values.
-- Provenance from manifest, environment, bootstrap file, or default.
-- Static values waiting on a restart.
-
-Runtime resources remain operational on their dedicated admin pages because they have their own lifecycle and are not declarative config keys.
-
-The authenticated API exposes the same state:
-
-| Route | Meaning |
-|---|---|
-| `GET /v1/config/schema` | Key type, activation, ownership, unit, default, and restart reason. |
-| `GET /v1/config` | Manifest metadata plus desired, effective, and provenance for every key. |
-| `POST /v1/config/plan` | Validate and diff a complete replacement manifest without changing state. |
-| `POST /v1/config/apply` | Apply the complete manifest with an expected-revision precondition. |
-
-## Bootstrap example
-
-Keep only recovery and early-start values here:
-
-```yaml
-storage:
-  runtime_config_path: /var/lib/filegate/config
-  base_paths:
-    - /srv/filegate/data
-```
-
-Set the bearer token separately through `FILEGATE_AUTH_BEARER_TOKEN` or a secret-backed bootstrap file. Environment variables use `FILEGATE_` plus the uppercase dotted path with underscores.
+Root names and paths bind durable state. Do not repoint an existing root name at
+unrelated storage. Filegate rejects a changed binding. Do not run another daemon
+against the same writable roots, even if it uses a different state directory.

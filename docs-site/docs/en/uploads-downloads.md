@@ -1,123 +1,74 @@
 ---
-title: Uploads and downloads
-navTitle: Uploads and downloads
-section: Use Filegate
-order: 60
-description: Choose between one-shot uploads, upload sessions, direct browser URLs, and direct downloads.
-tags: [uploads, downloads, browser]
+title: Direct transfers
+section: Use
+order: 20
+description: Small direct uploads, resumable sessions, download URLs and ownership.
 ---
 
-# Uploads and downloads
+# Direct transfers
 
-This page is for developers implementing file transfer flows with Filegate.
+Your backend authorizes a user and mints a scoped URL. The browser sends bytes
+directly to Filegate. The daemon bearer token stays on the backend.
 
-## Upload options
+## Small files: one PUT
 
-| Pattern | Scope | Use for | Auth seen by browser |
-|---|---:|---|---|
-| One-shot REST upload | One file | Small server-side uploads. | None, when run server-side. |
-| Direct one-shot URL | One file | Browser upload of a small file through a scoped PUT URL. | Scoped URL token only. |
-| Upload session | One file | Large, resumable, parallel uploads. | None, when relayed server-side. |
-| Direct upload session | One file | Browser upload of large files with scoped segment URLs. | Scoped session token only. |
-| Batch session creation | Many files | Folder uploads where the app server creates many sessions in one request. | Scoped session tokens only. |
-
-## Recommended browser shape
-
-Keep the Filegate bearer token on the application server:
-
-```txt
-browser -> app server: ask to upload files
-app server -> Filegate: create direct upload sessions
-browser -> Filegate: upload segments with scoped session tokens
-browser or app server -> Filegate: commit sessions
+```ts
+const upload = await files.root("cloud").directUpload("homes/alex/note.txt", 5, {
+  onConflict: "overwrite",
+  ownership: { uid: 10042, gid: 10042, mode: "0640", dirMode: "0750" },
+  metadata: { message: "Updated note" },
+});
+// Browser:
+await fetch(upload.url, { method: "PUT", body: "hello" });
 ```
 
-The admin app uses this shape and can be used as a reference implementation.
+The URL binds the root, path, exact byte count, conflict policy, ownership,
+metadata and expiry. The uploader cannot override those fields. It expires after
+15 minutes by default; the backend can request up to 24 hours. Reusing a URL
+before expiry repeats the authorized operation: single PUT URLs are not one-shot
+or resumable. Default conflict behavior is `error` (409); `overwrite` and
+`rename` must be explicit. Rename appends `-01`, `-02`, … before the extension.
 
-## One-shot direct upload
+An overwrite preserves existing ownership when no ownership is supplied. New
+files use the daemon account with mode 0644; newly created parents request 0755, reduced by the daemon umask (0750 with the
+packaged systemd unit).
+Explicit UID and GID must be supplied together. Modes are octal strings limited
+to permission bits. `dirMode` applies to newly created directories. Existing
+parent directory permissions are not changed.
 
-Mint a short-lived upload URL from a trusted server:
+## Large files: resumable sessions
 
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"data/inbox/photo.jpg","contentType":"image/jpeg","expiresInSeconds":900,"onConflict":"rename"}' \
-  http://127.0.0.1:8080/v1/uploads/direct
+```ts
+// Backend:
+const session = await files.root("cloud").createSession("videos/demo.mp4", size, {
+  onConflict: "overwrite",
+});
+// Browser, given only session.url:
+import { DirectSession } from "@k2b/filegate/utils";
+const transfer = new DirectSession(session.url);
+await transfer.upload(file, { onProgress: (done, total) => console.log(done, total) });
 ```
 
-The browser uploads bytes to the returned `uploadUrl` with `PUT`.
+Sessions expire after 24 hours. Segments are 8 MiB except the final one, with at
+most 10,000 segments. Repeating the same segment bytes is safe; different bytes
+at an already uploaded segment return 409. Session status reports received
+segments. Commit verifies their lengths and hashes, then publishes atomically.
+Commit retries return the original result until session expiry, including after
+a daemon restart or index rebuild. Abort removes staging data; aborting a
+completed session does not delete the published file.
 
-## Resumable upload session
+Uploads are bounded by `uploads.max_file_size`. Up to 16 direct PUT requests
+(including segment writes) run concurrently; excess requests return 503 and may
+be retried. Partial request bodies and failed commits do not publish partial files.
 
-Create a session:
+## Download, previews and archives
 
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"data/archive.tar","size":104857600,"checksum":"sha256:<hex>","segmentSize":33554432}' \
-  http://127.0.0.1:8080/v1/uploads/sessions
-```
+`directDownload(path)` mints a GET URL for the path, with HEAD and HTTP Range
+support. It authorizes the contents found at that path when used; it is not an
+immutable revision link. Keep URLs out of logs and analytics.
 
-Upload segments in any order:
-
-```sh
-curl -fsS -X PUT \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'X-Segment-Checksum: sha256:<hex>' \
-  --data-binary @segment-0.bin \
-  http://127.0.0.1:8080/v1/uploads/sessions/<session-id>/segments/0
-```
-
-Commit after all segments are uploaded:
-
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  http://127.0.0.1:8080/v1/uploads/sessions/<session-id>/commit
-```
-
-## Idempotency and integrity
-
-| Behavior | Scope | Meaning |
-|---|---:|---|
-| Segment index | Upload session | Segment offsets and sizes are fixed at session creation. |
-| Duplicate segment upload | One segment | Accepted when the bytes match the existing segment. |
-| Segment checksum | One segment | Optional `X-Segment-Checksum: sha256:<hex>` validates the segment body. |
-| Final checksum | Upload session | Required `sha256:<hex>` validates the assembled file before commit. |
-| Commit | Upload session | Atomic target creation or replacement according to `onConflict`. |
-| Abort | Upload session | Removes staged bytes for an in-progress session. |
-
-## Downloads
-
-Download by node ID through the REST API:
-
-```sh
-curl -fL -H 'Authorization: Bearer dev-token' \
-  http://127.0.0.1:8080/v1/nodes/<node-id>/content \
-  -o file.bin
-```
-
-Mint a direct download URL:
-
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"/data/file.bin","expiresInSeconds":300}' \
-  http://127.0.0.1:8080/v1/downloads/direct
-```
-
-Directories download as tar streams from `GET /v1/nodes/{id}/content`.
-
-## Limits
-
-Clients should read `GET /v1/capabilities` before choosing upload sizes.
-
-| Capability | Unit | Scope | Meaning |
-|---|---:|---:|---|
-| `uploads.maxChunkBytes` | bytes | One request body or session segment | Maximum accepted chunk size. |
-| `uploads.maxUploadBytes` | bytes | One-shot upload | Maximum accepted one-shot upload size. |
-| `uploads.maxSessionUploadBytes` | bytes | Upload session | Maximum final file size for a session. |
-| `uploads.maxConcurrentSegmentWrites` | count | Service process | Maximum concurrent segment writes accepted by the server. |
+Backend clients can stream `contentRaw`, `versionContentRaw`, `thumbnailRaw`
+and `archiveRaw`. Raw methods return HTTP responses unchanged, including error
+statuses; callers must check the status and close/drain response bodies in Go.
+Thumbnails accept JPEG, PNG and GIF, up to 64 MiB and 40 million decoded pixels;
+requested bounds are at most 2048 × 2048. Archives stream TAR files.

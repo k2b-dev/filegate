@@ -1,158 +1,66 @@
 ---
-title: Go SDK
-navTitle: Go SDK
-section: APIs
-order: 90
-description: Use the Go SDK for server-side Filegate integrations.
-tags: [go, sdk]
+title: Go client
+section: Integrate
+order: 20
+description: Use root operations and direct transfers from Go.
 ---
 
-# Go SDK
+# Go client
 
-The Go SDK is for Go services and tools that call Filegate over HTTP.
-
-## Client setup
-
-```go
-package main
-
-import (
-	"context"
-	"log"
-
-	"github.com/k2b-dev/filegate/v3/sdk/filegate"
-)
-
-func main() {
-	client, err := filegate.New(filegate.Config{
-		BaseURL: "http://127.0.0.1:8080",
-		Token:   "dev-token",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	roots, err := client.Paths.List(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(roots)
-}
-```
-
-## Main packages
-
-| Package | Scope | Use for |
-|---|---:|---|
-| `sdk/filegate` | Go process | Main HTTP client and typed API methods. |
-| `sdk/filegate/directuploads` | Browser or external direct upload helpers | Signed direct upload flows. |
-| `sdk/filegate/segments` | Upload segment planning | Segment math and checksum-related helpers. |
-| `sdk/filegate/relay` | Application server relay patterns | Server-side helpers for proxying or authorizing browser transfers. |
-| `sdk/filegate/uploadtree` | Whole folders | Batch uploads over many one-file sessions. |
-
-## Uploading a folder
-
-`sdk/filegate/uploadtree` is the Go counterpart to the browser `upload()` helper
-in the TypeScript SDK. It walks a local directory, hashes with bounded
-concurrency, creates sessions in batches, uploads segments under one global
-concurrency limit, retries transient failures, and reports one progress view for
-the whole run.
+Import `github.com/k2b-dev/filegate/v3/sdk/filegate`. The SDK works on platforms
+other than Linux; only the daemon requires Linux.
 
 ```go
-sources, err := uploadtree.FromDir("/srv/photos", "data/photos")
+client, err := filegate.New("https://files.example.org", token)
+if err != nil { return err }
+root := client.Root("cloud")
+node, err := root.Put(ctx, "notes/today.txt", strings.NewReader("hello"), 5,
+    filegate.WriteOptions{Metadata: filegate.Metadata{"message": "First note"}})
 if err != nil {
-	log.Fatal(err)
+    var apiErr *filegate.APIError
+    if errors.As(err, &apiErr) && apiErr.Status == 409 {
+        // Ask the application user to choose a conflict policy.
+    }
+    return err
 }
-
-res, err := uploadtree.Upload(ctx, client, sources, uploadtree.Options{
-	OnConflict:  filegate.ConflictOverwrite,
-	Resume:      true, // adopt sessions an interrupted run left behind
-	Concurrency: uploadtree.Concurrency{Hash: 4, Files: 8, Segments: 8},
-	OnEvent: func(e uploadtree.Event) {
-		if e.Type == uploadtree.EventFileDone {
-			log.Printf("%d/%d %s", e.Progress.FilesDone, e.Progress.Files, e.Path)
-		}
-	},
-})
-if err != nil {
-	log.Fatal(err)
-}
-log.Printf("done=%d failed=%d skipped=%d", res.Done, res.Failed, res.Skipped)
+fmt.Println(node.Path, node.ID)
 ```
 
-A single file failing does not stop the run; its error is in `res.Files`.
+`Put` uses a scoped direct upload. To hand the transfer to another client, call
+`DirectUpload(ctx, path, size, options)` and return its URL. The byte count must
+match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
 
-### Small files skip the session protocol
-
-Files at or below `DirectThresholdBytes` take one `PUT /v1/paths` instead of
-create, segment and commit. It defaults to `SegmentSize`, so a file that would
-have been a single segment goes direct without any configuration.
-
-The default avoids three session round trips and several fsyncs for files that
-fit in one segment. Measurements in
-[Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the one-shot path at 2.4x the
-throughput of sessions on a 5000-file corpus averaging 16 KiB.
-
-Set `DirectThresholdBytes` to a negative value to send everything through
-sessions; `0` means "use the default", because `Options`' zero value has to stay
-valid. The TypeScript `upload()` helper takes the same default and uses `0` as
-its opt-out.
-
-## API coverage
-
-| Namespace | Methods |
-|---|---|
-| `Paths` | `List`, `Get`, `Put`, `PutRaw` |
-| `Nodes` | `Get`, `ContentRaw`, `PipeContent`, `PutContent`, `Mkdir`, `Patch`, `Delete`, `ThumbnailRaw` |
-| `Uploads` | `CreateDirectUploadURL`; sessions: `Create`, `CreateBatch`, `Status`, `PutSegment`, `PutSegmentRaw`, `Commit`, `Abort` |
-| `Downloads` | `CreateDirectURL` |
-| `Transfers` | `Create` |
-| `Search` | `Glob` |
-| `Index` | `Rescan`, `ResolvePath`, `ResolvePaths`, `ResolveID`, `ResolveIDs` |
-| `Stats` | `Get` |
-| `System` | `Info`, `Runtime`, `Health`, `Prune`, `UploadSessions` |
-| `Config` | `Schema`, `Values`, `Plan`, `Apply` |
-| `S3Keys` | `List`, `Create`, `Update`, `Rotate`, `Delete` |
-| `Capabilities` | `Get` |
-| `Versions` | `List`, `ListAll`, `ContentRaw`, `PipeContent`, `Snapshot`, `Pin`, `Unpin`, `Restore`, `Delete` |
-| `Activity` | `List` |
-
-## Configuration and S3 administration
-
-Plan complete desired state before applying it with the observed revision:
+## Resumable upload
 
 ```go
-desired := map[string]any{"metrics.enabled": true}
-plan, err := client.Config.Plan(ctx, desired)
-if err != nil {
-	return err
-}
-if len(plan.Changes) > 0 {
-	_, err = client.Config.Apply(ctx, desired, plan.CurrentRevision)
-}
+created, err := root.CreateSession(ctx, "large.bin", size, filegate.WriteOptions{})
+if err != nil { return err }
+session := filegate.DirectSession{URL: created.URL}
+// Send each 8 MiB segment; the last contains the remaining bytes.
+_, err = session.Put(ctx, 0, firstSegment)
+if err != nil { return err }
+status, err := session.Status(ctx)
+if err != nil { return err }
+_ = status.Segments
+// After all segments:
+node, err := session.Commit(ctx)
 ```
 
-S3 key secrets are returned only by create and rotate:
+`DirectSession` needs only its scoped URL. `Status`, `Put`, `Commit` and `Abort`
+all accept a context. The `segments` subpackage provides pure segment arithmetic
+and checksums; `relay` provides streaming HTTP helpers.
 
-```go
-created, err := client.S3Keys.Create(ctx, filegate.S3KeyCreateRequest{
-	Buckets: []string{"data"},
-})
-if err != nil {
-	return err
-}
-fmt.Println(created.AccessKey, created.SecretKey)
+## API map
 
-rotated, err := client.S3Keys.Rotate(ctx, created.AccessKey)
-```
+The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
+`SetOwnership`, `Remove`, `Transfer`, `DirectUpload`, `DirectDownload`,
+`CreateSession`, `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
+`UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
+Each operation takes a `context.Context` first. Request structs shared with the
+wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
 
-Operational state and manual retention are under `System`:
-
-```go
-health, err := client.System.Health(ctx)
-runtime, err := client.System.Runtime(ctx)
-sessions, err := client.System.UploadSessions(ctx, "in_progress")
-pruned, err := client.System.Prune(ctx)
-```
-
-See [HTTP routes reference](/docs/en/reference/http-routes) for the underlying REST contract.
+`ContentRaw`, `ArchiveRaw`, `ThumbnailRaw` and `VersionContentRaw` return
+`*http.Response` unchanged on HTTP errors. Always check `StatusCode` and close
+the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
+`Message`. Set caller deadlines through contexts; administrative rebuilds and
+large transfers can take longer than a normal request.

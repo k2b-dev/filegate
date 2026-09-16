@@ -1,74 +1,72 @@
 ---
 title: HTTP API
-navTitle: HTTP API
-section: APIs
-order: 70
-description: Use the Filegate REST API for path, node, upload, download, transfer, search, stats, activity, and version operations.
-tags: [http, rest, api]
+section: Reference
+order: 10
+description: Root-scoped routes, request shapes and response conventions.
 ---
 
 # HTTP API
 
-The HTTP API is for application servers, tools, and SDKs that need the full Filegate feature set.
+All `/v1/*` routes require `Authorization: Bearer TOKEN`, except signed
+`/v1/direct/{token}` routes. `GET /health` is unauthenticated. JSON errors have
+`{"error":"code","message":"description"}`. Bodies use camelCase; configuration
+uses snake_case. Unknown JSON fields are rejected.
 
-## Base rules
+Root operations have prefix `/v1/roots/{root}`. A `path` query parameter is a
+relative path; `.` addresses the root where supported. IDs are optional metadata,
+not the universal operation address.
 
-| Rule | Scope | Meaning |
-|---|---:|---|
-| API prefix | Service listener | All REST routes except `/health` are under `/v1`. |
-| Authentication | `/v1/*` routes | Use `Authorization: Bearer <token>`. |
-| Public health | Service listener | `GET /health` returns `OK` without auth. |
-| Scoped direct URLs | One upload/download URL | Direct upload and download URLs carry their own scoped token. |
-| Error envelope | Failed JSON route | `{ "error": "..." }`; conflicts can include `existingId` and `existingPath`. |
+| Method and suffix | Input | Result |
+| --- | --- | --- |
+| `GET /v1/system` | — | Build, uptime, maintenance health. |
+| `GET /v1/roots` | — | Root information array. |
+| `GET /v1/roots/{root}` | — | Root information. |
+| `GET /stat` | `path` | Node. |
+| `GET /resolve` | `id` | Node, indexed roots only. |
+| `GET /entries` | `path`, `after`, `limit` | `{items,next?}`. |
+| `GET /search` | `q`, `path`, `after`, `limit`, `maxEntries` | Filename substring matches. |
+| `GET /content` | `path` | File bytes, Range/HEAD supported. |
+| `GET /archive` | `path` | TAR stream. |
+| `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
+| `POST /directories` | `{path,ownership?}` | Created Node. |
+| `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
+| `DELETE /files` | `path`, `recursive` | 204. |
+| `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
+| `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
+| `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
+| `POST /uploads/sessions` | `{path,size,onConflict?,ownership?,metadata?}` | Session plus scoped `url`. |
+| `GET /index` | — | Index status. |
+| `POST /index/rebuild` | — | Final index status. |
+| `GET /stats` | — | Cached recursive stats or null. |
+| `POST /stats/refresh` | `maxEntries` | Recursive stats. |
+| `GET /versions` | `path` | Versions, newest first. |
+| `POST /versions` | `path`; body `{pinned?,metadata?}` | Manual version. |
+| `PATCH /versions/{id}` | `path`; body `{pinned,metadata?}` | Updated version attributes. |
+| `DELETE /versions/{id}` | `path` | 204. |
+| `GET /versions/{id}/content` | `path` | Version bytes. |
+| `POST /versions/{id}/restore` | `path` | Current Node. |
+| `POST /versions/prune` | — | `{deleted}`. |
 
-## Basic requests
+A Node contains `root`, `path`, optional `id`, `directory`, `size`, `modified`,
+`mode`, `uid` and `gid`. Timestamps are RFC 3339, sizes are integer bytes. Directory
+size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
+bounded by 1000. Search/stats traversal defaults to 100,000 entries and accepts
+an explicit maximum of 10,000,000.
 
-List roots:
+## Scoped session URL
 
-```sh
-curl -fsS -H 'Authorization: Bearer dev-token' \
-  http://127.0.0.1:8080/v1/paths/
-```
+Use the exact URL returned at session creation:
 
-Upload a file:
+| Method | Meaning |
+| --- | --- |
+| `GET URL` | Status and received segment hashes. |
+| `PUT URL?segment=N` | Exact segment bytes. |
+| `POST URL` | Commit; repeated commits return the recorded result. |
+| `DELETE URL` | Abort/retire the session. |
 
-```sh
-curl -fsS -X PUT \
-  -H 'Authorization: Bearer dev-token' \
-  --data-binary @photo.jpg \
-  'http://127.0.0.1:8080/v1/paths/data/photo.jpg?onConflict=rename'
-```
-
-Read service stats:
-
-```sh
-curl -fsS -H 'Authorization: Bearer dev-token' \
-  http://127.0.0.1:8080/v1/stats
-```
-
-## Conflict handling
-
-| Mode | Scope | Meaning |
-|---|---:|---|
-| `error` | Upload, mkdir, transfer | Return `409 Conflict` when the target exists. Default. |
-| `overwrite` | File upload and transfer targets | Replace an existing file or transfer target according to endpoint rules. |
-| `rename` | One-shot uploads, mkdir, transfers | Create a unique sibling name and return the created node. |
-| `skip` | `mkdir` only | Return the existing directory if it already exists. |
-
-REST file-write and transfer routes default to `error`; clients must choose a non-default conflict mode before Filegate replaces existing data.
-
-## Route groups
-
-| Group | Routes | Use for |
-|---|---|---|
-| Health and stats | `/health`, `/v1/stats`, `/v1/capabilities`, `/v1/activity` | Service state and operator introspection. |
-| Paths | `/v1/paths/...` | Virtual path lookup, directory listing, and one-shot uploads. |
-| Nodes | `/v1/nodes/{id}...` | ID-based metadata, content, thumbnails, metadata updates, and deletion. |
-| Transfers | `/v1/transfers` | Move and copy operations. |
-| Search | `/v1/search/glob` | Indexed glob search. |
-| Upload sessions | `/v1/uploads/sessions...` | Resumable and direct browser uploads. |
-| Direct uploads | `/v1/uploads/direct` | Short-lived one-shot browser PUT URLs. |
-| Direct downloads | `/v1/downloads/direct` | Short-lived browser GET URLs. |
-| Versions | `/v1/nodes/{id}/versions...` | Per-file version listing, snapshots, pinning, restore, and purge. |
-
-See [HTTP routes reference](/docs/en/reference/http-routes) for every route and [HTTP JSON types reference](/docs/en/reference/http-types) for request and response fields.
+Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
+invalid input, 401 for authentication/capability failure, 403 for permissions,
+404 for missing files, 409 for conflicts/disabled features, 413 for limits and
+503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+ambiguous transport failure: session commits are idempotent, while ordinary
+mutations require reading back the resulting state.

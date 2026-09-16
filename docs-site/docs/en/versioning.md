@@ -1,94 +1,90 @@
 ---
-title: Versioning
-navTitle: Versioning
-section: Operate
-order: 120
-description: Use per-file version history on supported mounts.
-tags: [versioning, btrfs]
+title: Version history
+section: Use
+order: 30
+description: Snapshot triggers, cooldown, metadata, pins and calendar retention.
 ---
 
-# Versioning
+# Version history
 
-Versioning is for operators and applications that need per-file history for
-writes mediated by Filegate on supported filesystems.
+Enable versioning on an indexed root to preserve earlier file contents. Before
+an overwrite, Filegate durably snapshots the existing bytes. If that required
+snapshot fails, the overwrite fails and the old file remains current. Uploading
+a new file does not create an automatic version. Rename and ownership changes
+do not create versions either.
 
-## Scope
+## Choose capture frequency
 
-| Item | Scope | Meaning |
-|---|---:|---|
-| Automatic capture | Per file | Captures versions for REST and S3 overwrite paths, subject to cooldown and size rules. |
-| Manual snapshot | Per file | Captures current bytes immediately and pins the version. |
-| Restore | Per file | Restores in place or creates a new sibling file. |
-| Retention | Per service config | Prunes unpinned versions according to retention buckets. |
-| Filesystem support | Service selection and per mount copy | Filegate probes real `FICLONE` support. Reflinks are efficient; forced mode falls back to byte copies where unavailable. |
+The default cooldown is one minute, measured from the last successful snapshot.
+Skipped writes do not reset it. With a one-minute cooldown:
 
-External writes through `cp`, `rsync`, or shell tools are not automatic
-Filegate version captures. REST and S3 overwrite paths do participate in the
-same capture hook, but S3 does not expose an object-versioning API.
+| Time | Write | Captured version |
+| --- | --- | --- |
+| 00:00 | A → B | A |
+| 00:20 | B → C | none |
+| 00:40 | C → D | none |
+| 01:10 | D → E | D |
 
-## Config modes
+Manual snapshots always bypass cooldown. Restore first snapshots the current
+bytes, also bypassing cooldown, then publishes the selected version's contents
+and revision metadata. Restore preserves the current file's ownership and mode.
+These rules apply equally to direct PUT and session commits; chunks never create
+versions.
 
-| Mode | Scope | Meaning |
-|---|---:|---|
-| `auto` | Service | Enable only when every configured mount passes the reflink probe; otherwise disable globally. Default. |
-| `on` | Service | Enable on every mount; use reflinks where supported and byte-copy fallback elsewhere. |
-| `off` | Service | Disable versioning globally. |
+## Attach metadata and keep manual versions
 
-Read `GET /v1/system/info` or the Admin System page after startup. It reports
-the effective copy mode as `reflink`, `mixed`, `byte-copy`, or `disabled`, plus
-the selection reason. Reflink support is a probed capability, not an assumption
-based on the filesystem name.
+`metadata` is an arbitrary JSON **object**, limited to 8192 bytes in its serialized
+UTF-8 representation. Oversized values are rejected, never truncated. System
+fields such as ID, creation time and size are separate.
 
-## Basic operations
-
-List versions:
-
-```sh
-curl -fsS -H 'Authorization: Bearer dev-token' \
-  http://127.0.0.1:8080/v1/nodes/<node-id>/versions
+```ts
+await files.root("cloud").snapshot("reports/annual.pdf", {
+  pinned: true,
+  metadata: { message: "Approved draft", actor: "user-42" },
+});
 ```
 
-Create a manual snapshot:
+Upload metadata describes the incoming current revision. When that revision is
+later snapshotted, its metadata follows its bytes. A manual snapshot can supply
+its own metadata; omitting it uses the current revision's metadata.
 
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"label":"before migration"}' \
-  http://127.0.0.1:8080/v1/nodes/<node-id>/versions/snapshot
-```
+Pinned versions survive automatic retention and do not consume `keep.last`.
+Explicit deletion and permanent file deletion still remove them. Updating a
+version replaces its pin and metadata fields; send both values you want to keep.
+This history is not an immutable audit log: intermediate writes may be skipped,
+metadata is supplied by the application, and histories can be deleted.
 
-Restore as a new file:
-
-```sh
-curl -fsS -X POST \
-  -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"asNewFile":true,"name":"restored.txt"}' \
-  http://127.0.0.1:8080/v1/nodes/<node-id>/versions/<version-id>/restore
-```
-
-## Retention buckets
-
-Retention buckets define age windows and maximum retained counts inside each window.
+## Prune calendar buckets
 
 ```yaml
-versioning:
-  retention_buckets:
-    - keep_for: "1h"
-      max_count: -1
-    - keep_for: "24h"
-      max_count: 24
-    - keep_for: "720h"
-      max_count: 30
+keep:
+  last: 10
+  hourly: 24
+  daily: 30
+  weekly: 8
+  monthly: 12
 ```
 
-| Field | Type | Scope | Meaning |
-|---|---|---:|---|
-| `keep_for` | duration | Retention bucket | Age window from now. |
-| `max_count` | integer | Retention bucket | Versions retained in the window. `-1` means unlimited. |
+Retention keeps the union of the last unpinned versions and the newest unpinned
+version in each requested UTC calendar bucket. Daily means calendar days, weekly
+means Monday-based weeks, and monthly means calendar months. The current bucket
+counts. Pins are retained independently. A version selected by multiple rules is
+stored once. A missing or zero tier retains nothing for that tier.
 
-Pinned versions are protected until the configured pin cap or post-delete grace rules apply.
 
-For storage layout, capture ordering, pruning, and restore internals, see the
-[versioning internals reference](/docs/en/reference/versioning-internals).
+If the entire `keep` section is absent, defaults are `last: 10`, `daily: 30`,
+and `monthly: 12`. An explicit `keep: {}` retains only pinned versions.
+
+Retention selects existing snapshots; it does not create scheduled backups.
+The daemon prunes every five minutes, and `filegate prune ROOT` runs a round
+explicitly. Snapshot bytes are reflinked when supported on the underlying
+filesystem, otherwise copied. Reported version bytes are logical sizes, not
+additional allocated disk usage.
+
+## Moves, copies and deletion
+
+An API rename within the same root preserves the ID and history. Copies receive
+new IDs and begin without history. A cross-root move copies the content and then
+permanently removes the source and its history. It does not transfer history.
+An application trash folder can use a same-root move to preserve history.
+Permanent recursive deletion also deletes histories below that directory.

@@ -1,102 +1,61 @@
 ---
-title: Getting started
-navTitle: Getting started
+title: Start a daemon
 section: Start
 order: 20
-description: Start a disposable Filegate instance, upload a file, and list it through the REST API.
-tags: [quickstart, rest]
+description: Configure a root, a bearer token and the Filegate service.
 ---
 
-# Getting started
+# Start a daemon
 
-This guide is for technical users who want a short first run before installing Filegate on a Linux host.
+Filegate requires Linux and an existing writable data directory. Indexed roots
+also require writable `user.*` extended attributes. The ext4, XFS, and Btrfs filesystems support
+these; the mounted filesystem and service permissions determine availability.
+An index-free root does not require xattrs. NFS deployments should start with
+`index: false`.
 
-## Prerequisites
+## Create storage and credentials
 
-| Requirement | Scope | Example |
-|---|---:|---|
-| Linux host or Linux container | Filegate service | `fg serve` runs on Linux. |
-| Writable data directory | Storage mount | `/tmp/filegate/data` |
-| Writable index directory | Service metadata | `/tmp/filegate/index` |
-| Bearer token | REST API | `dev-token` |
-
-The example configures each value explicitly. Without configuration, `fg serve`
-uses `/var/lib/filegate/data` and prints a generated API token once.
-
-## Start a disposable instance
-
-Docker keeps the first run self-contained. For production Linux hosts, install the `.deb` or `.rpm` package and run Filegate through systemd; see [Installation](/docs/en/installation).
+For a package installation, use the `filegate` service account:
 
 ```sh
-mkdir -p ./filegate-data
-
-docker run --rm -d \
-  --name filegate \
-  -p 8080:8080 \
-  -e FILEGATE_AUTH_BEARER_TOKEN=dev-token \
-  -e FILEGATE_STORAGE_BASE_PATHS=/data \
-  -e FILEGATE_STORAGE_INDEX_PATH=/var/lib/filegate/index \
-  -v "$PWD/filegate-data:/data" \
-  ghcr.io/k2b-dev/filegate:latest \
-  serve
+sudo install -d -o filegate -g filegate -m 0750 /srv/filegate/cloud /var/lib/filegate
+sudo install -d -o root -g filegate -m 0750 /etc/filegate
+sudo sh -c 'umask 027; openssl rand -hex 32 > /etc/filegate/token'
+sudo chown root:filegate /etc/filegate/token
 ```
 
-Check the service:
+Copy the [configuration example](configuration.md) into `/etc/filegate/conf.yaml`.
+Set `server.public_url` to the externally reachable origin. Direct URLs use that
+origin; Filegate does not derive it from untrusted request headers.
 
 ```sh
-curl -fsS http://127.0.0.1:8080/health
+sudo -u filegate filegate validate
+sudo -u filegate filegate serve
 ```
 
-## Upload a file
+A successful `validate` checks the static configuration, existing root paths and
+token. Starting the daemon additionally checks exclusive state ownership,
+private storage and indexed filesystem access. `GET /health` returns
+`{"ready":true}` once startup completes.
+
+## Use systemd
+
+The package includes `filegate.service`. Its default writable paths are
+`/var/lib/filegate` and `/srv/filegate`. Add other roots to a service override
+before starting it:
+
+```ini
+[Service]
+ReadWritePaths=/data/cloud /data/nfs
+```
 
 ```sh
-printf 'hello\n' > hello.txt
-
-curl -fsS -X PUT \
-  -H 'Authorization: Bearer dev-token' \
-  --data-binary @hello.txt \
-  'http://127.0.0.1:8080/v1/paths/data/hello.txt'
+sudo systemctl daemon-reload
+sudo systemctl enable --now filegate
+sudo -u filegate filegate roots
 ```
 
-The root path is the basename of the configured mount. A mount at `/data` is exposed as `/data/...`.
-
-## List the mount
-
-```sh
-curl -fsS -H 'Authorization: Bearer dev-token' \
-  'http://127.0.0.1:8080/v1/paths/data'
-```
-
-Expected result shape:
-
-```json
-{
-  "id": "...",
-  "type": "directory",
-  "name": "data",
-  "path": "/data",
-  "children": [
-    {
-      "type": "file",
-      "name": "hello.txt",
-      "path": "/data/hello.txt"
-    }
-  ]
-}
-```
-
-## Stop the container
-
-```sh
-docker stop filegate
-```
-
-## Next steps
-
-| Task | Page |
-|---|---|
-| Install Filegate on a Linux host | [Installation](/docs/en/installation) |
-| Understand the application architecture | [Use Filegate in an app](/docs/en/application-architecture) |
-| Configure mounts, uploads, metrics, and S3 | [Configuration](/docs/en/configuration) |
-| Build browser uploads with signed URLs | [Uploads and downloads](/docs/en/uploads-downloads) |
-| Use S3 clients | [S3 compatibility](/docs/en/s3) |
+The package does not start the service or generate application credentials.
+Review [ownership and service privileges](security.md) before enabling numeric
+UID/GID changes. Terminate TLS at a reverse proxy; bind the daemon to a private
+interface. Restart the service after changing configuration.

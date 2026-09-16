@@ -1,105 +1,71 @@
 ---
-title: TypeScript SDK
-navTitle: TypeScript SDK
-section: APIs
-order: 80
-description: Use the TypeScript SDK from Node, Bun, and browser-assisted applications.
-tags: [typescript, sdk]
+title: TypeScript client
+section: Integrate
+order: 10
+description: Use the backend client and scoped browser transfer helpers.
 ---
 
-# TypeScript SDK
+# TypeScript client
 
-The TypeScript SDK is for Node, Bun, and browser-assisted applications that call Filegate through typed client helpers.
-
-## Install
-
-```sh
-npm i @k2b/filegate
-```
-
-## Server-side client
+Install `@k2b/filegate` in your backend. Construct the client explicitly; it does
+not read environment variables or create credentials automatically.
 
 ```ts
-import { Filegate } from "@k2b/filegate";
-
-const client = new Filegate({
-  baseUrl: "http://127.0.0.1:8080",
-  token: "dev-token",
+import { Filegate, FilegateError } from "@k2b/filegate";
+const files = new Filegate({
+  baseUrl: process.env.FILEGATE_URL!,
+  token: process.env.FILEGATE_TOKEN!,
 });
-
-const roots = await client.paths.get("");
+const root = files.root("cloud");
+try {
+  const file = await root.put("notes/today.txt", new Blob(["hello"]), {
+    metadata: { message: "First note" },
+  });
+  console.log(file.path, file.id);
+} catch (error) {
+  if (error instanceof FilegateError && error.status === 409) {
+    console.log("Choose another name or explicitly overwrite");
+  } else throw error;
+}
 ```
 
-## Main namespaces
+`put` mints a direct URL and uploads through it. `directUpload` returns the URL
+instead, suitable for an authorized browser. `createSession` returns a scoped
+session URL for larger uploads. Import token-free browser helpers from
+`@k2b/filegate/utils`: `DirectSession`, `putDirect`, `segments` and `sha256`.
 
-| Namespace | Scope | Use for |
-|---|---:|---|
-| `paths` | Virtual filesystem paths | Resolve paths, list directories, upload by path. |
-| `nodes` | Stable node IDs | Read metadata, content, thumbnails, updates, deletes. |
-| `uploads` | Upload sessions and direct upload URLs | Large uploads, browser direct uploads, session status, commit, abort. |
-| `downloads` | Direct download URLs | Browser-safe direct downloads. |
-| `transfers` | Node move/copy operations | Move or copy a node to a target parent. |
-| `search` | Indexed search | Glob search across indexed paths. |
-| `index` | Service index | Trigger rescans and resolve paths or IDs in bulk. |
-| `versions` | Per-file versions | List, snapshot, pin, unpin, restore, delete versions. |
-| `stats` | Runtime stats | Service, index, cache, mount, disk, and process state. |
-| `system` | Operational state | Health, effective storage modes, live workers, upload sessions, and retention pruning. |
-| `config` | Declarative configuration | Inspect schema and values, plan manifests, and apply desired state. |
-| `s3Keys` | S3 credentials | Create, update, rotate, disable, and delete access keys. |
-| `activity` | Activity ring buffer | Recent operation events. |
-| `capabilities` | Runtime limits | Upload and transfer limits for adaptive clients. |
+## Root operations
 
-## Browser upload helper
+| Method | Result or action |
+| --- | --- |
+| `info()` | Root configuration, capabilities and dashboard metadata. |
+| `stat(path)` | Current filesystem metadata; optional indexed identity. |
+| `resolve(id)` | Current path for an indexed file ID. |
+| `list(path, { after, limit })` | Alphabetical page of immediate children. |
+| `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
+| `mkdir(path, ownership?)` | Create a directory and missing parents. |
+| `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
+| `remove(path, recursive?)` | Permanent deletion including histories. |
+| `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `rebuild(signal?)` | Rebuild this root's metadata index. |
+| `refreshStats(maxEntries?, signal?)` | Explicit bounded filesystem accounting. |
+| `versions(path)` | History, newest first. |
+| `snapshot(path, { pinned, metadata })` | Immediate manual version. |
+| `updateVersion(path, id, { pinned, metadata })` | Replace editable version attributes. |
+| `restore(path, id)` | Restore content, preserving an undo snapshot. |
+| `deleteVersion(path, id)` | Explicit version deletion, including pins. |
+| `prune()` | Run retention now. |
 
-Use `upload()` when the browser should upload files directly to Filegate while the app server mints scoped sessions.
+Use `files.roots()` and `files.system()` for dashboards. Unknown recursive totals
+are `null`; do not display them as zero. Indexed IDs persist through same-root
+API moves. Paths remain the universal address and are the only identity for
+index-free roots.
 
-```ts
-import { upload } from "@k2b/filegate";
+List and search pages expose `next`. Pass it unchanged as `after` until absent.
+Page limits are 1–1000. Search without an index fails when its traversal budget
+is exhausted, rather than pretending a partial result is complete.
 
-await upload({
-  files,
-  path: "/data/inbox",
-  allow: (request) =>
-    fetch("/api/uploads/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    }).then((res) => res.json()),
-  config: {
-    onConflict: "skip-existing",
-  },
-  onEvent(event) {
-    console.log(event.type);
-  },
-});
-```
-
-The browser helper does not need the Filegate bearer token. The `allow` callback is implemented by your application server.
-
-### Small files skip the session protocol
-
-Files at or below `config.directThresholdBytes` are announced to `allow` with
-`kind: "direct"` and uploaded with a single scoped PUT instead of create, segment
-and commit. It defaults to `segmentSize`, so a file that would have been one
-segment goes direct with no configuration.
-
-Your `allow` endpoint has to handle both kinds. A direct item carries no
-`checksum` and no `segments`, and it expects a `{ kind: "direct", direct }`
-directive minted from `POST /v1/uploads/direct`; a session item expects a
-`session`. [Upload commit measurements](/docs/en/development/benchmarks/results/commit-cost) put the
-one-shot path at 2.4x the throughput of sessions for small files.
-
-Pass `directThresholdBytes: 0` to send everything through sessions. The shortcut
-is also skipped when `onConflict` is `skip-identical`, which needs the checksum
-only the session path computes.
-
-## Conflict defaults
-
-| API | Default conflict behavior | Meaning |
-|---|---|---|
-| Server REST calls | `error` | Return a conflict unless the caller opts into another mode. |
-| Browser `upload()` helper | Caller config | The helper sends the configured mode to the app server allow endpoint. |
-| Upload sessions | `error` | Resumable sessions accept `error` or `overwrite`. |
-
-For the complete method inventory, framework integration patterns, and raw
-response helpers, see the [TypeScript client reference](/docs/en/reference/typescript-client).
+Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
+`versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
+throw `FilegateError` with `status`, `code` and `message`. Supply an optional
+`fetch` in the constructor for testing or transport customization.

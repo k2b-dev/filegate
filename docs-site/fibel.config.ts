@@ -13,7 +13,7 @@ const assistantPlugins = process.env.FIBEL_AI_MODEL?.trim()
         launcherLabel: "Ask Filegate",
         systemPrompt: `
           Filegate is a Linux file gateway with REST, TypeScript, Go, and
-          S3-compatible access. Answer only questions about integrating,
+          optional indexing and version history. Answer only questions about integrating,
           configuring, operating, or developing Filegate. Use the
           documentation tools for procedural, configuration, API, code, or
           exact-behavior claims. Prefer concise, practical answers and clearly
@@ -26,7 +26,7 @@ const assistantPlugins = process.env.FIBEL_AI_MODEL?.trim()
 
 export default defineFibel({
   title: "Filegate Docs",
-  description: "Documentation for Filegate, a Linux file gateway with REST, SDK, and S3-compatible access.",
+  description: "Documentation for Filegate, a Linux file gateway with REST and SDK APIs, optional indexing, and version history.",
   siteUrl: "https://filegate.dev",
   locales: [{ code: "en", label: "English" }],
   defaultLocale: "en",
