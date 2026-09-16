@@ -33,7 +33,7 @@ jobs:
         run: make test-race
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          GOTOOLCHAIN=auto go install honnef.co/go/tools/cmd/staticcheck@latest
           out=$("$(go env GOPATH)/bin/staticcheck" ./... 2>&1)
           if echo "$out" | grep -q "matched no packages"; then
             echo "staticcheck saw no packages"
@@ -46,7 +46,7 @@ jobs:
           echo "staticcheck: clean"
       - name: Go vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@latest
           "$(go env GOPATH)/bin/govulncheck" ./...
       - name: SDK install, audit, build, and test
         working-directory: sdk/ts
