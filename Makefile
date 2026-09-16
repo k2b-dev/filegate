@@ -1,55 +1,17 @@
-.PHONY: docs-config test test-race test-short test-docker-runtime-state test-detector-linux test-detector-soak test-detector-chaos test-detector-btrfs-real test-detector-btrfs-real-docker test-versioning-btrfs-real-docker test-versioning-soak fuzz-smoke bench-go bench-http bench-compose bench-tree check
-
-docs-config:
-	go run ./cmd/filegate config schema --format markdown > docs-site/docs/en/reference/config.md
+.PHONY: build test test-linux test-race docs
+build:
+	CGO_ENABLED=0 go build -o bin/filegate ./cmd/filegate
 
 test:
-	go test ./...
+	CGO_ENABLED=0 go test ./...
+	cd sdk/ts && bun run build && bun test test
 
-test-short:
-	go test -short ./...
+test-linux:
+	docker run --rm -v "$(CURDIR):/src" -v filegate-hardcut-gomod:/go/pkg/mod -v filegate-hardcut-gocache:/root/.cache/go-build -w /src -e CGO_ENABLED=0 golang:1.25 go test -count=1 ./...
 
 test-race:
-	go test -count=2 -race ./...
+	go test -race -count=1 ./...
 
-test-docker-runtime-state:
-	./bench/scripts/run-docker-runtime-state-smoke.sh
-
-test-detector-linux:
-	./bench/scripts/run-detector-sync-tests.sh
-
-test-detector-soak:
-	./bench/scripts/run-detector-soak.sh
-
-test-detector-chaos:
-	./bench/scripts/run-detector-chaos.sh
-
-test-detector-btrfs-real:
-	./bench/scripts/run-detector-btrfs-real.sh
-
-test-detector-btrfs-real-docker:
-	./bench/scripts/run-detector-btrfs-real-docker.sh
-
-test-versioning-btrfs-real-docker:
-	./bench/scripts/run-versioning-btrfs-real-docker.sh
-
-test-versioning-soak:
-	./bench/scripts/run-versioning-soak.sh
-
-fuzz-smoke:
-	go test ./infra/fgbin -run '^$$' -fuzz '^FuzzDecodeEntity$$' -fuzztime=10s
-	go test ./infra/fgbin -run '^$$' -fuzz '^FuzzDecodeChild$$' -fuzztime=10s
-
-bench-go:
-	./bench/scripts/run-go-benches.sh
-
-bench-http:
-	./bench/scripts/run-http-bench.sh
-
-bench-compose:
-	./bench/scripts/run-http-bench-compose.sh
-
-bench-tree:
-	./bench/scripts/run-tree-bench.sh
-
-check: test test-race test-detector-linux bench-go
+docs:
+	cd docs-site && bun run typecheck && bun run build
+	diff -r skills/filegate docs-site/agent-skills/filegate

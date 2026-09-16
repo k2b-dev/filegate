@@ -3,7 +3,7 @@ set -eu
 
 ETC_DIR="${FILEGATE_ETC_DIR:-/etc/filegate}"
 STATE_DIR="${FILEGATE_STATE_DIR:-/var/lib/filegate}"
-DATA_DIR="${FILEGATE_DATA_DIR:-${STATE_DIR}/data}"
+DATA_DIR="${FILEGATE_DATA_DIR:-/srv/filegate/cloud}"
 LOG_DIR="${FILEGATE_LOG_DIR:-/var/log/filegate}"
 BINDIR="${FILEGATE_BINDIR:-/usr/bin}"
 
@@ -80,7 +80,7 @@ chmod 0750 "${STATE_DIR}" "${DATA_DIR}" "${LOG_DIR}"
 install_fg_command
 
 if id -u filegate >/dev/null 2>&1; then
-  chown -R filegate:filegate "${STATE_DIR}" "${LOG_DIR}"
+  chown filegate:filegate "${STATE_DIR}" "${DATA_DIR}" "${LOG_DIR}"
 fi
 
 if command -v systemctl >/dev/null 2>&1; then

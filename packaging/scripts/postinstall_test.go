@@ -112,6 +112,7 @@ func runPostinstallWithPaths(t *testing.T, home, shell string, installAlias bool
 		"SHELL="+shell,
 		"FILEGATE_ETC_DIR="+filepath.Join(root, "etc", "filegate"),
 		"FILEGATE_STATE_DIR="+filepath.Join(root, "var", "lib", "filegate"),
+		"FILEGATE_DATA_DIR="+filepath.Join(root, "data"),
 		"FILEGATE_LOG_DIR="+filepath.Join(root, "var", "log", "filegate"),
 		"FILEGATE_BINDIR="+installBinDir,
 	)

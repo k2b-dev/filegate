@@ -16,7 +16,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/k2b-dev/filegate/v3/cli.Version={{.Version}}
 
 archives:
   - id: binaries
@@ -46,10 +46,6 @@ nfpms:
     homepage: https://github.com/k2b-dev/filegate
     section: utils
     priority: optional
-    # Optional: only the btrfs detector invokes this CLI. ext4/XFS installs
-    # remain valid and use poll detection, so this is not a hard dependency.
-    recommends:
-      - btrfs-progs
     formats:
       - deb
       - rpm
@@ -64,9 +60,7 @@ nfpms:
       - src: packaging/config/conf.yaml
         dst: /etc/filegate/conf.yaml
         type: config|noreplace
-        # The config carries the REST bearer token and S3 secrets —
-        # keep it out of world-readable reach while letting the
-        # service user (group filegate, created in preinstall) read it.
+        # Static settings; the separately provisioned token is never packaged.
         file_info:
           mode: 0640
           owner: root

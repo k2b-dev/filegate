@@ -1,374 +1,174 @@
+// Package domain implements root-scoped file operations and version history.
 package domain
 
 import (
-	"encoding/hex"
+	"bytes"
+	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
+	"io"
+	"os"
+	"time"
 )
 
-const (
-	xattrIDKey = "user.filegate.id"
+var (
+	ErrInvalid  = errors.New("invalid argument")
+	ErrConflict = errors.New("conflict")
+	ErrDisabled = errors.New("feature disabled")
+	ErrLimit    = errors.New("limit exceeded")
 )
 
-// ErrInvalidID is returned when a string cannot be parsed as a FileID.
-var ErrInvalidID = errors.New("invalid file id")
+const MetadataLimit = 8192
 
-// FileID is a 16-byte stable identity for files and directories, derived from UUID v7.
-type FileID [16]byte
+type Metadata map[string]any
 
-// ParseFileID parses a UUID string (with or without dashes) into a FileID.
-func ParseFileID(v string) (FileID, error) {
-	var id FileID
-	clean := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(v)), "-", "")
-	if len(clean) != 32 {
-		return id, ErrInvalidID
+func (m *Metadata) UnmarshalJSON(b []byte) error {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var v map[string]any
+	if e := d.Decode(&v); e != nil {
+		return e
 	}
-	decoded, err := hex.DecodeString(clean)
-	if err != nil || len(decoded) != 16 {
-		return id, ErrInvalidID
-	}
-	copy(id[:], decoded)
-	return id, nil
+	*m = v
+	return nil
 }
 
-// String returns the FileID formatted as a standard UUID string with dashes.
-func (id FileID) String() string {
-	hexStr := hex.EncodeToString(id[:])
-	return fmt.Sprintf("%s-%s-%s-%s-%s", hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:32])
-}
-
-// IsZero reports whether the FileID is the zero value (all bytes zero).
-func (id FileID) IsZero() bool {
-	var zero FileID
-	return id == zero
-}
-
-// Bytes returns a copy of the FileID as a byte slice.
-func (id FileID) Bytes() []byte {
-	out := make([]byte, 16)
-	copy(out, id[:])
-	return out
-}
-
-// XAttrIDKey returns the extended attribute key used to persist FileIDs on disk.
-func XAttrIDKey() string {
-	return xattrIDKey
-}
-
-// Entity is the full indexed metadata for a file or directory.
-type Entity struct {
-	ID       FileID
-	ParentID FileID
-	Name     string
-	IsDir    bool
-	Size     int64
-	Mtime    int64
-	UID      uint32
-	GID      uint32
-	Mode     uint32
-	// Device and Inode together identify a file on disk independent of
-	// its path. Persisted so resolveOrReissueID can detect xattr-clone
-	// duplicates (snapshot, cp -a) by comparing the entity's recorded
-	// inode against the path being synced — when they differ, a fresh
-	// UUID is minted for the new path. Zero means "unknown" (e.g. mount
-	// roots created without stat info).
-	Device uint64
-	Inode  uint64
-	// Nlink is the hard-link count. PutEntity skips its same-id stale-
-	// child cleanup when nlink > 1 — hard-link siblings legitimately
-	// share an entity record across multiple (parent, name) pairs.
-	Nlink    uint32
-	MimeType string
-	Exif     map[string]string
-	// ETagMD5 is the lowercase hex RFC1864 MD5 of the file body, computed
-	// during writes and surfaced to S3 clients as the object ETag. Empty
-	// for directories, for files written before the schema introduced the
-	// field, and for files only seen by the FS detector path. Index
-	// rescan populates it for any file it walks. The S3 read path may
-	// also lazily compute and persist it on first access.
-	ETagMD5 string
-	// SHA256 is Filegate's canonical content fingerprint, formatted as
-	// "sha256:<lowercase-hex>". It is populated by writes and can be
-	// lazily backfilled for older rows via metadata reads with
-	// fingerprint=ensure.
-	SHA256 string
-	// MultipartETag is set on files uploaded via S3 multipart Complete:
-	// "<hex(MD5(concat-of-part-MD5-bytes))>-<N>". When non-empty, S3
-	// GET/HEAD return it (quoted) instead of the single-MD5 ETag. Cleared
-	// by REST overwrites (any non-S3 write resets the file to single-MD5
-	// identity).
-	MultipartETag string
-	// ContentType, when non-empty, overrides the filename-derived MIME
-	// type for S3 GET/HEAD responses. Set explicitly by S3 PutObject;
-	// REST writes leave it empty (read paths fall back to MimeType).
-	ContentType string
-	// ContentEncoding and ContentDisposition are HTTP headers round-tripped
-	// through S3 PutObject → GetObject. Empty for non-S3-originated files.
-	ContentEncoding    string
-	ContentDisposition string
-	// S3UserMetadata is the opaque serialized x-amz-meta-* blob from a
-	// PutObject. Empty for non-S3-originated files. Format is internal —
-	// the S3 adapter is the only producer/consumer.
-	S3UserMetadata []byte
-}
-
-// DirEntry is a compact listing entry for a child of a directory.
-type DirEntry struct {
-	ID    FileID `json:"id"`
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
-	Size  int64  `json:"size"`
-	Mtime int64  `json:"mtime"`
-}
-
-// FileMeta is the JSON-serializable metadata representation with a virtual path.
-type FileMeta struct {
-	ID       FileID            `json:"id"`
-	Type     string            `json:"type"`
-	Name     string            `json:"name"`
-	Path     string            `json:"path"`
-	Size     int64             `json:"size"`
-	Mtime    int64             `json:"mtime"`
-	UID      uint32            `json:"uid"`
-	GID      uint32            `json:"gid"`
-	Mode     uint32            `json:"mode"`
-	MimeType string            `json:"mimeType,omitempty"`
-	Exif     map[string]string `json:"exif"`
-	// ETag is the lowercase hex MD5 of the file body, populated by writes
-	// (REST + S3) and by index rescan. Empty for directories and for files
-	// that haven't been hashed yet (pre-schema legacy rows that never had
-	// a rescan or write since the upgrade).
-	ETag string `json:"etag,omitempty"`
-	// SHA256 is the canonical content fingerprint for exact file identity.
-	SHA256 string `json:"sha256,omitempty"`
-	IsRoot bool   `json:"-"`
-}
-
-// MultipartUploadRecord is the durable per-upload commit witness
-// stored under familyMultipartUpload (0x07). The record's existence
-// is the authoritative "this Complete already succeeded" signal —
-// retries that find a record return its stored result idempotently.
-type MultipartUploadRecord struct {
-	FileID        FileID // the entity that received the multipart write
-	CompositeETag string // <hex(MD5(concat-of-part-MD5-bytes))>-<N>
-	Bucket        string // mount the destination lives in
-	Key           string // relative path within the bucket
-	CompletedAt   int64  // unix milliseconds when the commit landed
-}
-
-// MultipartUploadPhase is the adapter-visible state of an active S3
-// multipart upload. Active uploads are best-effort until Complete returns
-// success; completed commit witnesses live in MultipartUploadRecord.
-type MultipartUploadPhase string
-
-const (
-	MultipartUploadInProgress MultipartUploadPhase = "in_progress"
-	MultipartUploadCommitting MultipartUploadPhase = "committing"
-	MultipartUploadDone       MultipartUploadPhase = "done"
-	MultipartUploadAborted    MultipartUploadPhase = "aborted"
-)
-
-// ActiveMultipartUpload is the mutable, best-effort state for a multipart
-// upload before its final Complete commit is acknowledged.
-type ActiveMultipartUpload struct {
-	UploadID           string
-	Bucket             string
-	Key                string
-	StageDir           string
-	Initiated          int64
-	ContentType        string
-	ContentEncoding    string
-	ContentDisposition string
-	UserMetadata       map[string]string
-	Phase              MultipartUploadPhase
-	CompositeETag      string
-	WholeBodyMD5       string
-	CompletedFileID    string
-	CompletedAt        int64
-}
-
-// ActiveMultipartPart is one uploaded part's mutable state.
-type ActiveMultipartPart struct {
-	UploadID   string
-	PartNumber int
-	Size       int64
-	ETag       string
-	UpdatedAt  int64
-}
-
-// UploadSessionPhase is the REST resumable-upload state. Session metadata is
-// stored in Pebble; segment bytes live on disk under mount-local .fg-uploads.
-type UploadSessionPhase string
-
-const (
-	UploadSessionInProgress UploadSessionPhase = "in_progress"
-	UploadSessionCommitting UploadSessionPhase = "committing"
-	UploadSessionCommitted  UploadSessionPhase = "committed"
-	UploadSessionAborted    UploadSessionPhase = "aborted"
-)
-
-// UploadSession is one logical file upload. Folder uploads are SDK-level batch
-// orchestration over many sessions, not one backend transaction.
-type UploadSession struct {
-	ID            string
-	Path          string
-	ParentID      FileID
-	Filename      string
-	Size          int64
-	Checksum      string
-	SegmentSize   int64
-	TotalSegments int
-	ContentType   string
-	Ownership     *Ownership
-	OnConflict    ConflictMode
-	StageDir      string
-	Phase         UploadSessionPhase
-	CreatedAt     int64
-	UpdatedAt     int64
-	CompletedAt   int64
-	CompletedNode string
-}
-
-// UploadSegment records one durably-accepted segment.
-type UploadSegment struct {
-	SessionID string
-	Index     int
-	Offset    int64
-	Size      int64
-	Checksum  string
-	Path      string
-	UpdatedAt int64
-}
-
-// UploadCommitRecord is the durable idempotency witness for a committed upload
-// session. A present record means retrying commit must return the historical
-// result instead of re-installing bytes.
-type UploadCommitRecord struct {
-	SessionID   string
-	FileID      FileID
-	Path        string
-	Checksum    string
-	CompletedAt int64
-}
-
-// Ownership specifies optional permission overrides for file operations.
 type Ownership struct {
 	UID     *int   `json:"uid,omitempty"`
 	GID     *int   `json:"gid,omitempty"`
 	Mode    string `json:"mode,omitempty"`
 	DirMode string `json:"dirMode,omitempty"`
 }
-
-// TransferRequest describes a move or copy operation between nodes.
-//
-// OnConflict is a typed ConflictMode here. The HTTP layer parses the wire
-// string via ParseConflictMode(..., FileConflictModes) before constructing
-// this request — keeping vocabulary validation at the boundary instead of
-// re-parsing strings inside the domain.
-type TransferRequest struct {
-	Op                 string       `json:"op"`
-	SourceID           FileID       `json:"sourceId"`
-	TargetParentID     FileID       `json:"targetParentId"`
-	TargetName         string       `json:"targetName"`
-	OnConflict         ConflictMode `json:"onConflict"`
-	Ownership          *Ownership   `json:"ownership,omitempty"`
-	RecursiveOwnership *bool        `json:"-"`
+type WriteOptions struct {
+	OnConflict string     `json:"onConflict,omitempty"`
+	Ownership  *Ownership `json:"ownership,omitempty"`
+	Metadata   Metadata   `json:"metadata,omitempty"`
+}
+type Node struct {
+	Root      string    `json:"root"`
+	Path      string    `json:"path"`
+	ID        string    `json:"id,omitempty"`
+	Directory bool      `json:"directory"`
+	Size      int64     `json:"size"`
+	Modified  time.Time `json:"modified"`
+	Mode      string    `json:"mode"`
+	UID       uint32    `json:"uid"`
+	GID       uint32    `json:"gid"`
+}
+type Page struct {
+	Items []Node `json:"items"`
+	Next  string `json:"next,omitempty"`
+}
+type Keep struct {
+	Last    int `json:"last" yaml:"last"`
+	Hourly  int `json:"hourly" yaml:"hourly"`
+	Daily   int `json:"daily" yaml:"daily"`
+	Weekly  int `json:"weekly" yaml:"weekly"`
+	Monthly int `json:"monthly" yaml:"monthly"`
+}
+type Versioning struct {
+	Enabled  bool          `json:"enabled" yaml:"enabled"`
+	Cooldown time.Duration `json:"-" yaml:"-"`
+	Keep     Keep          `json:"keep" yaml:"keep"`
+}
+type RootConfig struct {
+	Name       string     `json:"name"`
+	Path       string     `json:"-"`
+	Index      bool       `json:"index"`
+	Versioning Versioning `json:"versioning"`
+}
+type Version struct {
+	ID       string    `json:"id"`
+	FileID   string    `json:"fileId"`
+	Created  time.Time `json:"created"`
+	Size     int64     `json:"size"`
+	Pinned   bool      `json:"pinned"`
+	Metadata Metadata  `json:"metadata,omitempty"`
+	CopyMode string    `json:"copyMode"`
+}
+type Stats struct {
+	Files       int64     `json:"files"`
+	Directories int64     `json:"directories"`
+	Bytes       int64     `json:"bytes"`
+	Updated     time.Time `json:"updated"`
+	Source      string    `json:"source"`
+}
+type IndexStatus struct {
+	Enabled    bool       `json:"enabled"`
+	Rebuilding bool       `json:"rebuilding"`
+	Scanned    int64      `json:"scanned"`
+	LastBuilt  *time.Time `json:"lastBuilt"`
+	DurationMS int64      `json:"durationMs"`
+	Error      string     `json:"error,omitempty"`
+}
+type RootInfo struct {
+	Name          string      `json:"name"`
+	Index         IndexStatus `json:"index"`
+	Stats         *Stats      `json:"stats"`
+	Versioning    Versioning  `json:"versioning"`
+	Cooldown      string      `json:"cooldown"`
+	Versions      int64       `json:"versions"`
+	VersionBytes  int64       `json:"versionBytes"`
+	Filesystem    string      `json:"filesystem"`
+	Capacity      uint64      `json:"capacity"`
+	Available     uint64      `json:"available"`
+	ActiveUploads int64       `json:"activeUploads"`
+	StagingBytes  int64       `json:"stagingBytes"`
+}
+type Change struct {
+	Key    string
+	Value  []byte
+	Delete bool
 }
 
-// ListedNodes is a paginated response for directory listing operations.
-// NextCursor is an opaque token (see ChildCursor); clients pass it back
-// verbatim to fetch the next page.
-type ListedNodes struct {
-	Items      []FileMeta `json:"items"`
-	NextCursor string     `json:"nextCursor,omitempty"`
+// State keeps separate key families for derived index rows and durable records.
+type State interface {
+	Get(string, any) error
+	Put(string, any) error
+	Delete(string) error
+	Batch([]Change) error
+	Scan(string, func(string, []byte) error) error
+	Close() error
 }
 
-// ChildCursor is the typed pagination cursor for Index.ListChildren.
-// The zero value (empty Name) means "start at the beginning". IsDir
-// disambiguates the cursor's sort zone — directories order before files
-// in listings, so a bare name cannot identify a resume position once
-// the entry it referred to is gone.
-type ChildCursor struct {
-	Name  string
-	IsDir bool
+// Files only opens beneath its root, rejecting symbolic links in every component.
+type Files interface {
+	SecurePrivate() error
+	Open(string, int, os.FileMode) (*os.File, error)
+	Stat(string) (os.FileInfo, error)
+	Mkdir(string, os.FileMode) error
+	Rename(string, string, bool) error
+	Remove(string, bool) error
+	Sync(string) error
+	ID(*os.File) (string, error)
+	SetID(*os.File, string) error
+	Identity(os.FileInfo) (uint64, uint64, uint32, uint32, uint64)
+	Clone(*os.File, *os.File) (bool, error)
+	Capacity() (string, uint64, uint64, error)
+	Close() error
 }
 
-// EncodeChildCursor renders a directory entry as the opaque wire token
-// for ListedNodes.NextCursor: "d/<name>" for directories, "f/<name>"
-// for files. The "/" separator makes the form unambiguous — entry
-// names can never contain a slash.
-func EncodeChildCursor(e DirEntry) string {
-	if e.IsDir {
-		return "d/" + e.Name
+func encoded(key string, v any) (Change, error) {
+	b, e := json.Marshal(v)
+	return Change{Key: key, Value: b}, e
+}
+func ValidateMetadata(m Metadata) error {
+	b, e := json.Marshal(m)
+	if e != nil {
+		return ErrInvalid
 	}
-	return "f/" + e.Name
-}
-
-// ParseChildCursor decodes a wire token produced by EncodeChildCursor.
-// Returns ok=false for any other shape (notably legacy bare-name
-// cursors, which callers resolve via a child lookup instead).
-func ParseChildCursor(token string) (ChildCursor, bool) {
-	if len(token) < 3 || token[1] != '/' || (token[0] != 'd' && token[0] != 'f') {
-		return ChildCursor{}, false
+	if len(b) > MetadataLimit {
+		return ErrLimit
 	}
-	return ChildCursor{Name: token[2:], IsDir: token[0] == 'd'}, true
+	return nil
 }
-
-// MountEntry describes a configured mount point with its name, ID, and filesystem path.
-type MountEntry struct {
-	Name string `json:"name"`
-	ID   FileID `json:"id"`
-	Path string `json:"path"`
-}
-
-// GlobSearchRequest specifies parameters for a glob-based file search.
-type GlobSearchRequest struct {
-	Pattern      string
-	Paths        []string
-	Limit        int
-	ShowHidden   bool
-	IncludeFiles bool
-	IncludeDirs  bool
-}
-
-// GlobSearchError describes an error encountered while searching a specific base path.
-type GlobSearchError struct {
-	Path  string `json:"path"`
-	Cause string `json:"cause"`
-}
-
-// GlobSearchPathResult describes the search result for a single base path.
-type GlobSearchPathResult struct {
-	Path     string `json:"path"`
-	Returned int    `json:"returned"`
-	HasMore  bool   `json:"hasMore"`
-}
-
-// GlobSearchResponse contains the aggregated results of a glob search.
-type GlobSearchResponse struct {
-	Results []FileMeta             `json:"results"`
-	Errors  []GlobSearchError      `json:"errors"`
-	Paths   []GlobSearchPathResult `json:"paths"`
-}
-
-// StatsMount contains per-mount file and directory counts.
-type StatsMount struct {
-	ID    FileID `json:"id"`
-	Name  string `json:"name"`
-	Path  string `json:"path"`
-	Files int    `json:"files"`
-	Dirs  int    `json:"dirs"`
-}
-
-// ServiceStats contains runtime statistics for the service.
-type ServiceStats struct {
-	GeneratedAt        int64        `json:"generatedAt"`
-	TotalEntities      int          `json:"totalEntities"`
-	TotalFiles         int          `json:"totalFiles"`
-	TotalDirs          int          `json:"totalDirs"`
-	PathCacheEntries   int          `json:"pathCacheEntries"`
-	PathCacheCapacity  int          `json:"pathCacheCapacity"`
-	PathCacheUtilRatio float64      `json:"pathCacheUtilRatio"`
-	Mounts             []StatsMount `json:"mounts"`
+func copyStream(dst io.Writer, src io.Reader, max int64) (int64, error) {
+	limit := max
+	if max < int64(^uint64(0)>>1) {
+		limit++
+	}
+	n, e := io.Copy(dst, io.LimitReader(src, limit))
+	if e == nil && n > max {
+		e = ErrLimit
+	}
+	return n, e
 }

@@ -1,36 +1,7 @@
-# Caddyfile for the filegate S3 listener (see compose.s3.example.yml).
-#
-# Caddy fetches a Let's Encrypt certificate for {$FILEGATE_S3_HOST}
-# automatically on first start. The reverse_proxy line forwards
-# every request to filegate's plain-HTTP S3 listener (port 9100
-# inside the compose network).
-#
-# SigV4 already authenticates and integrity-protects request
-# bodies, so plain-HTTP between Caddy and filegate is safe inside
-# the compose network. End-to-end TLS is not needed and would
-# duplicate work Caddy is already doing.
-#
-# To use: copy this file to ./Caddyfile alongside the compose
-# file, and set FILEGATE_S3_HOST in the compose environment.
-
-{$FILEGATE_S3_HOST} {
-	encode zstd gzip
-
-	# Forward everything to filegate's S3 listener. flush_interval
-	# helps long-running list / multipart-upload streams.
-	reverse_proxy filegate:9100 {
-		flush_interval -1
-
-		# Increase header buffer for SigV4 + chunked-streaming
-		# headers; some clients (rclone, awscli) send very long
-		# Authorization values.
-		header_up Host {host}
-		header_up X-Forwarded-Proto {scheme}
-	}
-
-	# Caddy's default access log is plenty for an S3 endpoint.
-	log {
-		output stdout
-		format console
-	}
+# Point Filegate server.public_url at this HTTPS origin.
+# Access logging is deliberately omitted: signed URLs are bearer capabilities.
+{$FILEGATE_HOST} {
+    reverse_proxy filegate:8080 {
+        flush_interval -1
+    }
 }

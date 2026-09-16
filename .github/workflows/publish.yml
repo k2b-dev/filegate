@@ -51,19 +51,16 @@ jobs:
       - name: SDK install, audit, build, and test
         working-directory: sdk/ts
         run: npm ci && npm audit --omit=dev && npm run build && bun test test
-      - name: Admin install, audit, build, and test
-        working-directory: admin
-        run: bun install --frozen-lockfile && bun audit --production && bun run typecheck && bun test --isolate && bun run build
-      - name: Admin container build
-        run: docker build --file admin/Dockerfile .
-      - name: Docker runtime-state recreation smoke
-        run: make test-docker-runtime-state
-      - name: Real btrfs detector test
-        run: make test-detector-btrfs-real-docker
-      - name: Real btrfs versioning test
-        run: make test-versioning-btrfs-real-docker
-      - name: fuzz smoke
-        run: make fuzz-smoke
+      - name: Documentation and portable skill
+        run: |
+          cd docs-site
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run build
+          cd ..
+          diff -r skills/filegate docs-site/agent-skills/filegate
+      - name: Container build
+        run: docker build .
 
   publish-npm:
     runs-on: ubuntu-latest

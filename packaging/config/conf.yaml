@@ -1,70 +1,25 @@
 server:
-  listen: ":8080"
-  # Public REST base URL used when minting direct browser upload URLs.
-  # Leave empty when requests already arrive with the public host/scheme.
-  public_url: ""
-  # Proxy IPs/CIDRs whose X-Forwarded-For / X-Real-Ip headers are
-  # honored for the logged client address. Empty ignores the headers —
-  # otherwise any direct client could spoof its logged IP. Behind
-  # Traefik/Caddy/nginx, list the proxy address, e.g. ["127.0.0.1"].
-  trusted_proxies: []
-  cors:
-    # Empty allowed_origins disables CORS. Prefer configuring CORS at
-    # Traefik/Caddy/nginx; use this only when Filegate must answer
-    # browser cross-origin requests directly.
-    allowed_origins: []
-    allowed_methods: []
-    allowed_headers: []
-    exposed_headers: []
-    max_age: "0s"
-    allow_credentials: false
-  write_timeout: "5m"
-  shutdown_timeout: "60s"
-  access_log_enabled: true
-
+  listen: "127.0.0.1:8080"
+  public_url: "http://127.0.0.1:8080"
+  # Explicit browser origins for scoped direct transfers. Empty disables CORS.
+  allowed_origins: []
 auth:
-  # Empty generates a strong token once on first boot and stores it in
-  # storage.runtime_config_path. Set an explicit strong value if preferred.
-  bearer_token: ""
-
-storage:
-  base_paths:
-    - /var/lib/filegate/data
-  index_path: /var/lib/filegate/index
-  # Authoritative applied manifest, generated API token, and S3 key store.
-  # Back this path up separately from the rebuildable index.
-  runtime_config_path: /var/lib/filegate/config
-
-detection:
-  backend: auto
-  poll_interval: "3s"
-  # Safety net for detector blind spots and missed external changes. Set to 0s to disable.
-  reconcile_interval: "24h"
-
-cache:
-  path_cache_size: 100000
-
-jobs:
-  workers: 0
-  queue_size: 8192
-  thumbnail_workers: 0
-  thumbnail_queue_size: 0
-
-upload:
-  expiry: "24h"
-  cleanup_interval: "6h"
-  max_chunk_bytes: 52428800
-  max_upload_bytes: 524288000
-  max_session_upload_bytes: 53687091200
-  max_concurrent_segment_writes: 0
-  min_free_bytes: 67108864
-
-activity:
-  # Recent operator activity kept in memory for /v1/activity and the
-  # admin UI. This is not durable compliance retention.
-  ring_buffer_size: 500
-
-thumbnail:
-  lru_cache_size: 1024
-  max_source_bytes: 67108864
-  max_pixels: 41943040
+  token_file: /etc/filegate/token
+state_dir: /var/lib/filegate
+uploads:
+  max_file_size: 10GiB
+roots:
+  - name: cloud
+    path: /srv/filegate/cloud
+    index: true
+    versioning:
+      enabled: true
+      cooldown: 1m
+      keep:
+        last: 10
+        daily: 30
+        monthly: 12
+  # Independent externally modified root; no index or history.
+  # - name: shared
+  #   path: /data/nfs
+  #   index: false

@@ -1,28 +1,13 @@
 services:
   filegate:
     build: .
-    ports:
-      - "8080:8080"
-    environment:
-      FILEGATE_AUTH_BEARER_TOKEN: "your-secret-token-here"
-      FILEGATE_STORAGE_BASE_PATHS: "/data/homes,/data/groups"
-      FILEGATE_STORAGE_INDEX_PATH: "/var/lib/filegate/index"
-      FILEGATE_STORAGE_RUNTIME_CONFIG_PATH: "/var/lib/filegate/config"
-      FILEGATE_SERVER_LISTEN: ":8080"
-      FILEGATE_SERVER_WRITE_TIMEOUT: "5m"
-      FILEGATE_SERVER_SHUTDOWN_TIMEOUT: "60s"
-      FILEGATE_DETECTION_POLL_INTERVAL: "3s"
-      FILEGATE_UPLOAD_EXPIRY: "24h"
-      FILEGATE_UPLOAD_CLEANUP_INTERVAL: "6h"
-      FILEGATE_UPLOAD_MAX_CHUNK_BYTES: "52428800"     # 50 MiB
-      FILEGATE_UPLOAD_MAX_UPLOAD_BYTES: "524288000"   # 500 MiB
-    volumes:
-      - /export/homes:/data/homes
-      - /export/groups:/data/groups
-      - filegate-index:/var/lib/filegate/index
-      - filegate-config:/var/lib/filegate/config
     restart: unless-stopped
-
-volumes:
-  filegate-index:
-  filegate-config:
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./conf.yaml:/etc/filegate/conf.yaml:ro
+      - ./token:/etc/filegate/token:ro
+      - ./data:/data
+      - ./state:/var/lib/filegate
+# Configure roots under /data, state_dir=/var/lib/filegate and listen=0.0.0.0:8080.
+# Prepare writable directories for container UID/GID 65532 before starting.
