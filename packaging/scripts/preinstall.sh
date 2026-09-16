@@ -16,7 +16,7 @@ EOF
 fi
 
 if ! getent group filegate >/dev/null 2>&1; then
-  groupadd --system filegate >/dev/null 2>&1 || true
+  groupadd --system filegate
 fi
 
 if ! id -u filegate >/dev/null 2>&1; then
@@ -31,7 +31,7 @@ if ! id -u filegate >/dev/null 2>&1; then
     --create-home \
     --shell "${NOLOGIN}" \
     --comment "Filegate service user" \
-    filegate >/dev/null 2>&1 || true
+    filegate
 fi
 
 exit 0

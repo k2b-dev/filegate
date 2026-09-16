@@ -16,7 +16,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/k2b-dev/filegate/v3/cli.Version={{.Version}}
+      - -s -w -X github.com/k2b-dev/filegate/v4/cli.Version={{.Version}}
 
 archives:
   - id: binaries
@@ -49,12 +49,18 @@ nfpms:
     formats:
       - deb
       - rpm
+    overrides:
+      deb:
+        dependencies: [passwd, libc-bin, systemd]
+      rpm:
+        dependencies: [shadow-utils, glibc-common, systemd]
     ids:
       - filegate
     bindir: /usr/bin
     scripts:
       preinstall: packaging/scripts/preinstall.sh
       postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
       postremove: packaging/scripts/postremove.sh
     contents:
       - src: packaging/config/conf.yaml

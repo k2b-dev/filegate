@@ -61,6 +61,11 @@ jobs:
           diff -r skills/filegate docs-site/agent-skills/filegate
       - name: Container build
         run: docker build .
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --snapshot --skip=publish --clean
+      - name: Debian and Rocky Linux packages
+        run: bash packaging/test-packages.sh
 
   publish-npm:
     runs-on: ubuntu-latest
@@ -81,7 +86,7 @@ jobs:
         run: |
           test "$GITHUB_REPOSITORY" = "k2b-dev/filegate"
           test "$GITHUB_REF_NAME" = "v${GITHUB_REF_NAME#v}"
-          test "${GITHUB_REF_NAME%%.*}" = "v3"
+          test "${GITHUB_REF_NAME%%.*}" = "v4"
           test "$(node -p "require('./package.json').name")" = "@k2b/filegate"
       - name: Read package metadata
         id: package
@@ -151,6 +156,7 @@ jobs:
         with:
           context: .
           push: true
+          build-args: VERSION=${{ steps.meta.outputs.VERSION }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.VERSION }}
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.IMAGE_NAME }}:latest

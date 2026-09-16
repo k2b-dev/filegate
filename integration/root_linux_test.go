@@ -5,9 +5,9 @@ package integration_test
 import (
 	"context"
 	"errors"
-	"github.com/k2b-dev/filegate/v3/domain"
-	"github.com/k2b-dev/filegate/v3/infra/filesystem"
-	"github.com/k2b-dev/filegate/v3/infra/pebble"
+	"github.com/k2b-dev/filegate/v4/domain"
+	"github.com/k2b-dev/filegate/v4/infra/filesystem"
+	"github.com/k2b-dev/filegate/v4/infra/pebble"
 	"io"
 	"os"
 	"path/filepath"

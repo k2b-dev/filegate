@@ -2,7 +2,7 @@
 package apiv1
 
 import (
-	"github.com/k2b-dev/filegate/v3/domain"
+	"github.com/k2b-dev/filegate/v4/domain"
 	"time"
 )
 

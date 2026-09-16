@@ -23,6 +23,19 @@ jobs:
         working-directory: docs-site
       - run: diff -r skills/filegate docs-site/agent-skills/filegate
       - run: docker build .
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --snapshot --skip=publish --clean
+      - run: bash packaging/test-packages.sh
   vulnerability-scan:
     runs-on: ubuntu-latest
     steps:

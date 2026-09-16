@@ -19,7 +19,7 @@ and install it with your system's package manager. Packages include the CLI,
 `filegate.service`, a service account and an example configuration at
 `/etc/filegate/conf.yaml`.
 
-The commands below target **v4.0.0**, whose release assets are not yet published.
+The commands below install **v4.0.0**.
 For ARM64 systems, replace `amd64` with `arm64` in both the URL and filename.
 
 ### Debian
