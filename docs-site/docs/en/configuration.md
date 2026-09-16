@@ -51,7 +51,7 @@ roots:
 | `roots[].index` | Defaults to false. Enable metadata search and stable xattr IDs. |
 | `roots[].versioning.enabled` | Defaults to false. Requires index enabled. |
 | `roots[].versioning.cooldown` | Defaults to `1m`; zero captures each successful overwrite. |
-| `roots[].versioning.keep` | Defaults to `{last: 10, daily: 30, monthly: 12}` when the entire `keep` section is absent; see [versioning](versioning.md). |
+| `roots[].versioning.keep` | Defaults to `{last: 10, daily: 30, monthly: 12}` when the entire `keep` section is absent; see [versioning](/docs/en/versioning). |
 
 Each root has independent maintenance and history. A rebuild pauses publication
 and other root mutations while it walks that root. Upload bodies can still be

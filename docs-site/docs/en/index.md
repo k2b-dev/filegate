@@ -24,9 +24,9 @@ Directory listings and file metadata always read the filesystem.
 Version history requires indexing. It preserves earlier file contents and
 supports manual snapshots, restore and configurable retention.
 
-- [Configure and start a daemon](getting-started.md)
-- [Choose roots and index settings](configuration.md)
-- [Integrate TypeScript](ts-sdk.md) or [Go](go-sdk.md)
-- [Use direct uploads](uploads-downloads.md)
-- [Set version retention](versioning.md)
-- [Operate and back up](operations.md)
+- [Configure and start a daemon](/docs/en/getting-started)
+- [Choose roots and index settings](/docs/en/configuration)
+- [Integrate TypeScript](/docs/en/ts-sdk) or [Go](/docs/en/go-sdk)
+- [Use direct uploads](/docs/en/uploads-downloads)
+- [Set version retention](/docs/en/versioning)
+- [Operate and back up](/docs/en/operations)

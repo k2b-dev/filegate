@@ -23,7 +23,7 @@ sudo sh -c 'umask 027; openssl rand -hex 32 > /etc/filegate/token'
 sudo chown root:filegate /etc/filegate/token
 ```
 
-Copy the [configuration example](configuration.md) into `/etc/filegate/conf.yaml`.
+Copy the [configuration example](/docs/en/configuration) into `/etc/filegate/conf.yaml`.
 If you include the `shared` root, mount its storage at `/mnt/shared` first;
 otherwise remove that entry. Set `server.public_url` to the externally reachable
 origin used for direct URLs.
@@ -58,6 +58,6 @@ sudo -u filegate filegate roots
 ```
 
 The package does not start the service or generate application credentials.
-Review [ownership and service privileges](security.md) before enabling numeric
+Review [ownership and service privileges](/docs/en/security) before enabling numeric
 UID/GID changes. Terminate TLS at a reverse proxy; bind the daemon to a private
 interface. Restart the service after changing configuration.

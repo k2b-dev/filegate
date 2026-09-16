@@ -26,7 +26,7 @@ The backend can provide numeric `uid`, `gid`, `mode` and `dirMode` for uploads a
 directory creation. Resolve user and group IDs in your application. The daemon
 performs filesystem operations under its service account. When ownership is
 omitted, new files belong to that account and overwrites preserve existing
-ownership. See [direct transfers](uploads-downloads.md) for mode defaults.
+ownership. See [direct transfers](/docs/en/uploads-downloads) for mode defaults.
 
 Assigning files to other users requires permission to change ownership and to
 read and write those files afterward. Configure the service account and Linux

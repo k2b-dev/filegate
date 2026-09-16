@@ -72,7 +72,7 @@ startup stops with an error. Preserve the state and logs for diagnosis.
 | Symptom | Check |
 | --- | --- |
 | Service will not start | Configuration validation, root existence, token permissions, private `.filegate` permissions, state lock and journal logs. |
-| Chown returns forbidden | Daemon privilege and NFS root-squash policy; see [security](security.md). |
+| Chown returns forbidden | Daemon privilege and NFS root-squash policy; see [security](/docs/en/security). |
 | External files missing from search | Indexed roots need `filegate rebuild ROOT`. Index-free listings read the filesystem directly. |
 | Search/stats returns 413 | Raise the explicit `maxEntries` budget or narrow the operation; the server did not complete the scan. |
 | Direct URL returns 401 | Expiry, token rotation or a modified signed URL. Mint a fresh URL. |
