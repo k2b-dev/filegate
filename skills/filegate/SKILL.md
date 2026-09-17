@@ -1,6 +1,6 @@
 ---
 name: filegate
-description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, transfer leases, resumable sessions, ZIP selection downloads, version history, Unix ownership, setgid, POSIX ACLs, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
+description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, transfer leases, resumable sessions, ZIP selection downloads, historical download and thumbnail leases, version history, Unix ownership, setgid, POSIX ACLs, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
 ---
 
 # Filegate
@@ -105,6 +105,9 @@ helpers from `@k2b/filegate/utils`: `DirectSession`, `putDirect`, `archiveRaw`,
 | `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `directDownload(path, expiresIn?)` | GET/HEAD lease for the current file. |
+| `directVersionDownload(path, id, expiresIn?)` | GET/HEAD lease for one historical version. |
+| `directThumbnail(path, options?)` | GET/HEAD lease for a JPEG preview. |
 | `createSession(path, size, options?)` | Create a session and its first lease. |
 | `session(id)` | Read backend status and any recorded commit result. |
 | `sessionLease(id, { expiresIn, allowAbort })` | Issue a new lease for an open session. |
@@ -133,6 +136,27 @@ Root streaming methods `contentRaw`, `thumbnailRaw` and
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
 
+### Direct versions and previews
+
+```ts
+// Backend, after authorizing the path and version:
+const version = await root.directVersionDownload("report.pdf", versionId, 60);
+const thumbnail = await root.directThumbnail("photo.png", {
+  width: 320, height: 180, expiresIn: 60,
+});
+```
+
+Both methods return `Promise<DirectURL>` with `url`, `method: "GET"` and `expires`.
+The exported `ThumbnailLeaseOptions` has optional `width`, `height` and
+`expiresIn`. Dimensions default to 256 and accept integers from 1 to 2048.
+Expiry defaults to 60 seconds, maximum 300.
+
+Pass the returned URL to the browser for `fetch(url)` or an image's `src` without
+the backend token. Version downloads support Range; previews return a complete
+JPEG. Leases bind their target and dimensions; a preview reads the current file
+at its path. See [downloads and previews](https://filegate.dev/docs/en/uploads-downloads#downloads-and-previews)
+for browser usage, expiry and missing-content behavior.
+
 ### Permissions and ACLs
 
 Use `getACL(path, "access" | "default")`, `setACL(path, scope, acl)` and
@@ -140,7 +164,6 @@ Use `getACL(path, "access" | "default")`, `setACL(path, scope, acl)` and
 identities and explicit permission strings. These methods work without an index.
 See [permissions and ACLs](https://filegate.dev/docs/en/permissions) for a shared-directory setup and
 [the HTTP ACL contract](https://filegate.dev/docs/en/http-api#posix-acls) for entry constraints.
-
 
 ## Go API
 
@@ -200,7 +223,7 @@ arithmetic and checksums; `relay` provides streaming HTTP helpers.
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
 `SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
-`DirectUpload`, `DirectDownload`,
+`DirectUpload`, `DirectDownload`, `DirectVersionDownload`, `DirectThumbnail`,
 `CreateSession`, `Session`, `SessionLease`, `CommitSession`, `AbortSession`,
 `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
@@ -213,6 +236,25 @@ the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
 
+### Direct versions and previews
+
+```go
+version, err := root.DirectVersionDownload(ctx, "report.pdf", versionID, 60)
+if err != nil { return err }
+thumbnail, err := root.DirectThumbnail(ctx, "photo.png", 320, 180, 60)
+if err != nil { return err }
+// Return these scoped URLs to the authorized browser.
+fmt.Println(version.URL, thumbnail.URL)
+```
+
+`DirectVersionDownload(ctx, path, versionID, expiresIn)` and
+`DirectThumbnail(ctx, path, width, height, expiresIn)` return `(DirectURL, error)`.
+Set `expiresIn` to 0 for 60 seconds, or choose 1–300 seconds. Thumbnail dimensions
+are required in Go and must each be 1–2048; use 256, 256 for the default bounds.
+The URLs support GET and HEAD without the backend bearer token. Versions support
+Range; thumbnails return the complete JPEG. See
+[downloads and previews](https://filegate.dev/docs/en/uploads-downloads#downloads-and-previews) for
+path binding, response headers and missing-content behavior.
 
 ## HTTP contract
 
@@ -245,6 +287,8 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
 | `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
+| `POST /versions/{id}/downloads/direct` | `{path,expiresIn?}` | Version lease: `{url,method:"GET",expires}`. |
+| `POST /thumbnail/direct` | `{path,width?,height?,expiresIn?}` | Thumbnail lease: `{url,method:"GET",expires}`. |
 | `POST /uploads/sessions` | `{path,size,expiresIn?,allowAbort?,onConflict?,ownership?,metadata?}` | `{session,lease}`. |
 | `GET /uploads/sessions/{id}` | — | Backend session status and optional commit result. |
 | `POST /uploads/sessions/{id}/lease` | `{expiresIn?,allowAbort?}` | `{url,expires,operations}`. |
@@ -258,7 +302,7 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /versions` | `path`; body `{pinned?,metadata?}` | Manual version. |
 | `PATCH /versions/{id}` | `path`; body `{pinned,metadata?}` | Updated version attributes. |
 | `DELETE /versions/{id}` | `path` | 204. |
-| `GET /versions/{id}/content` | `path` | Version bytes. |
+| `GET /versions/{id}/content` | `path` | Version bytes, Range/HEAD supported. |
 | `POST /versions/{id}/restore` | `path` | Current Node. |
 | `POST /versions/prune` | — | `{deleted}`. |
 
@@ -346,6 +390,47 @@ Aborting a committed session returns `409 session_committed`; repeated aborts
 return 204. Writes and commits on aborted sessions return `409 session_aborted`;
 expired sessions return `410 session_expired`. A missing record after retention
 returns 404, which does not reveal whether the upload committed.
+
+### Version and thumbnail download leases
+
+Issue these leases from an authenticated backend. Both return HTTP 201 with
+`{url,method:"GET",expires}`. The browser uses the returned URL with GET or HEAD,
+without an Authorization header. Other data methods return 403
+(`operation_not_allowed`). The same expiry and CORS rules apply to all direct URLs.
+
+A version lease binds the root, relative path and version ID. The version must
+belong to the file currently at that path. Moving or replacing that identity,
+deleting the version or pruning it makes the lease unavailable; it does not
+switch to another version or follow a renamed file.
+
+A thumbnail lease binds the root, relative path and normalized `width` and
+`height`. Each omitted dimension defaults to 256. Explicit dimensions must be
+integers from 1 to 2048; zero is invalid. The preview fits within those bounds,
+preserves aspect ratio and does not upscale. Output is always JPEG at quality 85,
+with image orientation applied. The source is the file found at the signed path
+when requested, so a replacement can change the preview. Query parameters added
+to either lease URL cannot override the signed target, version or dimensions.
+
+Direct and authenticated routes share the same response behavior:
+
+| Content | Content-Type | Content-Disposition | Range |
+| --- | --- | --- | --- |
+| Current file | `application/octet-stream` | `attachment` | Supported; 206 or 416. |
+| Historical version | `application/octet-stream` | Absent | Supported; 206 or 416. |
+| Thumbnail | `image/jpeg` | Absent | Ignored; full image, 200. |
+
+HEAD returns headers without a body. Allowed CORS origins can read
+`Content-Length` and `Content-Range`. Successful content responses use
+`Cache-Control: no-store`.
+The authenticated version-content and thumbnail endpoints remain available.
+
+Missing files or versions return 404 (`not_found`); disabled versioning returns
+409 (`feature_disabled`). Invalid dimensions or unsupported image data return
+400 (`invalid_argument`); sources over 64 MiB or 40 million pixels return
+413 (`limit_exceeded`). Thumbnail issuance checks the image header and limits;
+the download also decodes the full image, so corrupt or changed sources can
+still fail. Thumbnail capacity exhaustion returns 503 (`thumbnail_capacity`).
+Thumbnails require neither indexing nor versioning.
 
 ### ZIP selection leases
 

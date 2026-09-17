@@ -54,6 +54,11 @@ follow symlinks or silently omit failed file reads. Bound traversal, archive nam
 manifest size, entry count, bytes and concurrent streams; stream without buffering
 whole files. Lease expiry gates request admission, not accepted download duration.
 
+Historical and thumbnail downloads reuse signed read leases and shared backend
+renderers. Bind root, path and concrete version or normalized thumbnail dimensions;
+never read scope overrides from browser query parameters. Version lookup must
+verify the file identity; thumbnail paths retain current-file semantics.
+
 Update TS types/client, Go client, Fibel and skill references with every public
 contract change. Raw SDK methods preserve non-success HTTP responses.
 

@@ -63,7 +63,7 @@ arithmetic and checksums; `relay` provides streaming HTTP helpers.
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
 `SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
-`DirectUpload`, `DirectDownload`,
+`DirectUpload`, `DirectDownload`, `DirectVersionDownload`, `DirectThumbnail`,
 `CreateSession`, `Session`, `SessionLease`, `CommitSession`, `AbortSession`,
 `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
@@ -75,6 +75,26 @@ Root methods `ContentRaw`, `ThumbnailRaw` and `VersionContentRaw` return
 the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
+
+## Direct versions and previews
+
+```go
+version, err := root.DirectVersionDownload(ctx, "report.pdf", versionID, 60)
+if err != nil { return err }
+thumbnail, err := root.DirectThumbnail(ctx, "photo.png", 320, 180, 60)
+if err != nil { return err }
+// Return these scoped URLs to the authorized browser.
+fmt.Println(version.URL, thumbnail.URL)
+```
+
+`DirectVersionDownload(ctx, path, versionID, expiresIn)` and
+`DirectThumbnail(ctx, path, width, height, expiresIn)` return `(DirectURL, error)`.
+Set `expiresIn` to 0 for 60 seconds, or choose 1–300 seconds. Thumbnail dimensions
+are required in Go and must each be 1–2048; use 256, 256 for the default bounds.
+The URLs support GET and HEAD without the backend bearer token. Versions support
+Range; thumbnails return the complete JPEG. See
+[downloads and previews](/docs/en/uploads-downloads#downloads-and-previews) for
+path binding, response headers and missing-content behavior.
 
 ## Permissions and ACLs
 

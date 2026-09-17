@@ -129,6 +129,36 @@ and obsolete receipts every five minutes.
 authorizes the contents found at that path when used; it is not an immutable
 revision link.
 
+For historical contents, use `directVersionDownload(path, versionId, expiresIn?)`.
+It binds that version to its root and file path. A deleted version or a file that
+has moved is no longer available through the URL.
+
+For previews, use `directThumbnail(path, { width, height, expiresIn })`. Dimensions
+default to 256 × 256 and are fixed by the lease. The preview uses the contents at
+the path when requested. It fits within the requested bounds without upscaling.
+
+```ts
+// Backend, after authorizing each resource:
+const version = await root.directVersionDownload("report.pdf", versionId);
+const preview = await root.directThumbnail("photo.png", { width: 320, height: 180 });
+// Return the leases to the browser; keep the backend token private.
+
+// Browser:
+const response = await fetch(version.url);
+if (!response.ok) throw new Error(`Version download failed: ${response.status}`);
+const bytes = await response.blob();
+const image = document.createElement("img");
+image.src = preview.url;
+document.body.append(image);
+```
+
+Both URLs support HEAD. Versions support HTTP Range; thumbnails ignore Range and
+return the whole JPEG. Neither response sets Content-Disposition. Appending path,
+version or image parameters to the URL cannot change its scope. The usual
+60-second default and 300-second maximum apply; a lease does not retain a version
+against deletion or pruning. See the [HTTP contract](/docs/en/http-api#version-and-thumbnail-download-leases)
+for response headers and errors.
+
 Backend clients can stream `contentRaw`, `versionContentRaw` and `thumbnailRaw`.
 Raw methods return HTTP responses unchanged, including error statuses; check the
 status and close/drain response bodies in Go. Thumbnails accept JPEG, PNG and GIF,

@@ -51,6 +51,9 @@ helpers from `@k2b/filegate/utils`: `DirectSession`, `putDirect`, `archiveRaw`,
 | `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `directDownload(path, expiresIn?)` | GET/HEAD lease for the current file. |
+| `directVersionDownload(path, id, expiresIn?)` | GET/HEAD lease for one historical version. |
+| `directThumbnail(path, options?)` | GET/HEAD lease for a JPEG preview. |
 | `createSession(path, size, options?)` | Create a session and its first lease. |
 | `session(id)` | Read backend status and any recorded commit result. |
 | `sessionLease(id, { expiresIn, allowAbort })` | Issue a new lease for an open session. |
@@ -78,6 +81,27 @@ Root streaming methods `contentRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
+
+## Direct versions and previews
+
+```ts
+// Backend, after authorizing the path and version:
+const version = await root.directVersionDownload("report.pdf", versionId, 60);
+const thumbnail = await root.directThumbnail("photo.png", {
+  width: 320, height: 180, expiresIn: 60,
+});
+```
+
+Both methods return `Promise<DirectURL>` with `url`, `method: "GET"` and `expires`.
+The exported `ThumbnailLeaseOptions` has optional `width`, `height` and
+`expiresIn`. Dimensions default to 256 and accept integers from 1 to 2048.
+Expiry defaults to 60 seconds, maximum 300.
+
+Pass the returned URL to the browser for `fetch(url)` or an image's `src` without
+the backend token. Version downloads support Range; previews return a complete
+JPEG. Leases bind their target and dimensions; a preview reads the current file
+at its path. See [downloads and previews](/docs/en/uploads-downloads#downloads-and-previews)
+for browser usage, expiry and missing-content behavior.
 
 ## Permissions and ACLs
 

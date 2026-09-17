@@ -51,3 +51,42 @@ test("resuming with different same-size file stops before uploading", async () =
   await expect(new DirectSession("https://files.example/v1/direct/session", request).upload(new Blob(["BBBBBB"]))).rejects.toThrow("differ");
   expect(methods).toEqual(["GET"]);
 });
+
+test("version and thumbnail leases keep authorization on the backend", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const request: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), init });
+    return Response.json({ url: "https://files.example/v1/direct/scoped", method: "GET", expires: "2026-09-17T20:00:00Z" });
+  };
+  const root = new Filegate({ baseUrl: "https://files.example", token: "backend-secret", fetch: request }).root("cloud");
+  const version = await root.directVersionDownload("notes/a & b.txt", "version id", 30);
+  const thumbnail = await root.directThumbnail("photos/a.png", { width: 320, height: 180, expiresIn: 45 });
+  await root.directThumbnail("photos/a.png");
+  expect(calls.map(c => new URL(c.url).pathname)).toEqual([
+    "/v1/roots/cloud/versions/version%20id/downloads/direct",
+    "/v1/roots/cloud/thumbnail/direct",
+    "/v1/roots/cloud/thumbnail/direct",
+  ]);
+  expect(calls.map(c => JSON.parse(String(c.init?.body)))).toEqual([
+    { path: "notes/a & b.txt", expiresIn: 30 },
+    { path: "photos/a.png", width: 320, height: 180, expiresIn: 45 },
+    { path: "photos/a.png" },
+  ]);
+  for (const call of calls) {
+    expect(call.init?.method).toBe("POST");
+    expect(new Headers(call.init?.headers).get("Authorization")).toBe("Bearer backend-secret");
+  }
+  expect(version.method).toBe("GET");
+  expect(thumbnail.url).toBe(version.url);
+});
+
+test("derived download mint errors remain typed", async () => {
+  const request: typeof fetch = async () => Response.json({ error: "feature_disabled", message: "feature disabled" }, { status: 409 });
+  const root = new Filegate({ baseUrl: "https://files.example", token: "backend-secret", fetch: request }).root("cloud");
+  for (const mint of [() => root.directVersionDownload("file", "version"), () => root.directThumbnail("file")]) {
+    try { await mint(); throw Error("expected rejection"); } catch (e) {
+      expect(e).toBeInstanceOf(FilegateError);
+      if (e instanceof FilegateError) { expect(e.status).toBe(409); expect(e.code).toBe("feature_disabled"); }
+    }
+  }
+});

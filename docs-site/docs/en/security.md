@@ -34,7 +34,11 @@ inboxes, use sessions for every file size, unique backend-selected paths and
 ZIP leases bind the complete selection manifest. A directory selection grants
 access to its whole current subtree, including files created after issuance.
 Authorize that scope before creating the lease. Path-based file download leases
-also serve the contents found at the authorized path when used.
+also serve the contents found at the authorized path when used. Thumbnail leases
+have the same path semantics and bind their width and height. Historical download
+leases additionally bind a concrete version belonging to that file. They cannot
+select another version or follow the file after a move. Browser query parameters
+cannot change a lease's signed root, path, version or thumbnail dimensions.
 
 ## Unix ownership
 

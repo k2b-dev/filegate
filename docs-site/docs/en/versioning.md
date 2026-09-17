@@ -53,6 +53,19 @@ Pinned versions survive automatic retention and do not consume `keep.last`.
 Explicit deletion and permanent file deletion still remove them. Updating a
 version replaces its pin and metadata fields; send both values you want to keep.
 
+## Download a historical version
+
+After authorizing access, the backend can call
+`root.directVersionDownload(path, versionId)` and give the returned URL to the
+browser. GET and HEAD require no backend token; GET supports Range requests.
+The lease binds the root, current file path and exact version. It expires after
+60 seconds by default and does not prevent deletion or pruning. Moving the file
+requires issuing a new lease at its new path. Backend streaming remains available
+through `versionContentRaw(path, versionId)`.
+
+See [downloads and previews](/docs/en/uploads-downloads#downloads-and-previews)
+for direct URLs and error behavior.
+
 ## Prune calendar buckets
 
 ```yaml

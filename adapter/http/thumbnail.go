@@ -9,26 +9,59 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"os"
 )
 
 var thumbnailSlots = make(chan struct{}, 4)
 
+type thumbnailSize struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 func thumbnail(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	return thumbnailContent(w, r, root, r.URL.Query().Get("path"), thumbnailSize{Width: paramInt(r, "width", 256), Height: paramInt(r, "height", 256)})
+}
+
+func thumbnailContent(w http.ResponseWriter, r *http.Request, root *domain.Root, p string, size thumbnailSize) error {
 	select {
 	case thumbnailSlots <- struct{}{}:
 		defer func() { <-thumbnailSlots }()
 	default:
 		return errHTTP{503, "thumbnail_capacity"}
 	}
-	width, height := paramInt(r, "width", 256), paramInt(r, "height", 256)
-	if width < 1 || height < 1 || width > 2048 || height > 2048 {
-		return domain.ErrInvalid
-	}
-	f, e := root.Open(r.URL.Query().Get("path"))
+	f, e := openThumbnail(root, p, size)
 	if e != nil {
 		return e
 	}
 	defer f.Close()
+	img, e := imaging.Decode(io.LimitReader(f, 64<<20), imaging.AutoOrientation(true))
+	if e != nil {
+		return domain.ErrInvalid
+	}
+	out := imaging.Fit(img, size.Width, size.Height, imaging.Lanczos)
+	w.Header().Set("Content-Type", "image/jpeg")
+	return jpeg.Encode(w, out, &jpeg.Options{Quality: 85})
+}
+
+// Check the same source limits during issuance and rendering, without decoding
+// all pixels just to issue a lease. Rendering validates the complete image.
+func openThumbnail(root *domain.Root, p string, size thumbnailSize) (*os.File, error) {
+	if size.Width < 1 || size.Height < 1 || size.Width > 2048 || size.Height > 2048 {
+		return nil, domain.ErrInvalid
+	}
+	f, err := root.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	if err = validateThumbnailSource(f); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func validateThumbnailSource(f *os.File) error {
 	st, e := f.Stat()
 	if e != nil {
 		return e
@@ -43,14 +76,6 @@ func thumbnail(w http.ResponseWriter, r *http.Request, root *domain.Root) error 
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > 40000000 {
 		return domain.ErrLimit
 	}
-	if _, e = f.Seek(0, io.SeekStart); e != nil {
-		return e
-	}
-	img, e := imaging.Decode(io.LimitReader(f, 64<<20), imaging.AutoOrientation(true))
-	if e != nil {
-		return domain.ErrInvalid
-	}
-	out := imaging.Fit(img, width, height, imaging.Lanczos)
-	w.Header().Set("Content-Type", "image/jpeg")
-	return jpeg.Encode(w, out, &jpeg.Options{Quality: 85})
+	_, e = f.Seek(0, io.SeekStart)
+	return e
 }

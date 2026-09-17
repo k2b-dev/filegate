@@ -192,3 +192,42 @@ func TestDirectUploadCustomLeaseLifetime(t *testing.T) {
 		t.Fatalf("mint: %+v, %v", lease, err)
 	}
 }
+
+func TestDerivedDownloadLeaseRequests(t *testing.T) {
+	for _, thumbnail := range []bool{false, true} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			endpoint := "/v1/roots/cloud/versions/version id/downloads/direct"
+			if thumbnail {
+				endpoint = "/v1/roots/cloud/thumbnail/direct"
+			}
+			if r.Method != "POST" || r.URL.Path != endpoint || r.Header.Get("Authorization") != "Bearer backend" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			}
+			var body struct {
+				Path                     string
+				ExpiresIn, Width, Height int
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Path != "a & b.png" || body.ExpiresIn != 30 || (thumbnail && (body.Width != 320 || body.Height != 180)) {
+				t.Errorf("bad request: %+v", body)
+			}
+			_, _ = w.Write([]byte(`{"url":"https://files.example/v1/direct/scoped","method":"GET"}`))
+		}))
+		client, err := New(server.URL, "backend")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lease DirectURL
+		if thumbnail {
+			lease, err = client.Root("cloud").DirectThumbnail(context.Background(), "a & b.png", 320, 180, 30)
+		} else {
+			lease, err = client.Root("cloud").DirectVersionDownload(context.Background(), "a & b.png", "version id", 30)
+		}
+		server.Close()
+		if err != nil || lease.Method != "GET" || lease.URL != "https://files.example/v1/direct/scoped" {
+			t.Fatal(lease, err)
+		}
+	}
+}

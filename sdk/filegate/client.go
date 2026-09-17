@@ -209,7 +209,21 @@ func (r *Root) DirectUpload(ctx context.Context, p string, size int64, o WriteOp
 }
 func (r *Root) DirectDownload(ctx context.Context, p string, expiresIn int) (DirectURL, error) {
 	var v DirectURL
-	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, map[string]any{"path": p, "expiresIn": expiresIn}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, &v)
+	return v, e
+}
+
+// DirectVersionDownload issues a GET/HEAD lease for exactly one historical version.
+func (r *Root) DirectVersionDownload(ctx context.Context, p, id string, expiresIn int) (DirectURL, error) {
+	var v DirectURL
+	e := r.client.call(ctx, "POST", r.endpoint("/versions/"+url.PathEscape(id)+"/downloads/direct"), nil, api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, &v)
+	return v, e
+}
+
+// DirectThumbnail issues a GET/HEAD lease with fixed dimensions (1–2048 each).
+func (r *Root) DirectThumbnail(ctx context.Context, p string, width, height, expiresIn int) (DirectURL, error) {
+	var v DirectURL
+	e := r.client.call(ctx, "POST", r.endpoint("/thumbnail/direct"), nil, api.ThumbnailRequest{DownloadRequest: api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, Width: &width, Height: &height}, &v)
 	return v, e
 }
 func (r *Root) Put(ctx context.Context, p string, body io.Reader, size int64, o WriteOptions) (Node, error) {

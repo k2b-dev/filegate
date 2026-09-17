@@ -36,6 +36,8 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
 | `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
+| `POST /versions/{id}/downloads/direct` | `{path,expiresIn?}` | Version lease: `{url,method:"GET",expires}`. |
+| `POST /thumbnail/direct` | `{path,width?,height?,expiresIn?}` | Thumbnail lease: `{url,method:"GET",expires}`. |
 | `POST /uploads/sessions` | `{path,size,expiresIn?,allowAbort?,onConflict?,ownership?,metadata?}` | `{session,lease}`. |
 | `GET /uploads/sessions/{id}` | — | Backend session status and optional commit result. |
 | `POST /uploads/sessions/{id}/lease` | `{expiresIn?,allowAbort?}` | `{url,expires,operations}`. |
@@ -49,7 +51,7 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /versions` | `path`; body `{pinned?,metadata?}` | Manual version. |
 | `PATCH /versions/{id}` | `path`; body `{pinned,metadata?}` | Updated version attributes. |
 | `DELETE /versions/{id}` | `path` | 204. |
-| `GET /versions/{id}/content` | `path` | Version bytes. |
+| `GET /versions/{id}/content` | `path` | Version bytes, Range/HEAD supported. |
 | `POST /versions/{id}/restore` | `path` | Current Node. |
 | `POST /versions/prune` | — | `{deleted}`. |
 
@@ -137,6 +139,47 @@ Aborting a committed session returns `409 session_committed`; repeated aborts
 return 204. Writes and commits on aborted sessions return `409 session_aborted`;
 expired sessions return `410 session_expired`. A missing record after retention
 returns 404, which does not reveal whether the upload committed.
+
+## Version and thumbnail download leases
+
+Issue these leases from an authenticated backend. Both return HTTP 201 with
+`{url,method:"GET",expires}`. The browser uses the returned URL with GET or HEAD,
+without an Authorization header. Other data methods return 403
+(`operation_not_allowed`). The same expiry and CORS rules apply to all direct URLs.
+
+A version lease binds the root, relative path and version ID. The version must
+belong to the file currently at that path. Moving or replacing that identity,
+deleting the version or pruning it makes the lease unavailable; it does not
+switch to another version or follow a renamed file.
+
+A thumbnail lease binds the root, relative path and normalized `width` and
+`height`. Each omitted dimension defaults to 256. Explicit dimensions must be
+integers from 1 to 2048; zero is invalid. The preview fits within those bounds,
+preserves aspect ratio and does not upscale. Output is always JPEG at quality 85,
+with image orientation applied. The source is the file found at the signed path
+when requested, so a replacement can change the preview. Query parameters added
+to either lease URL cannot override the signed target, version or dimensions.
+
+Direct and authenticated routes share the same response behavior:
+
+| Content | Content-Type | Content-Disposition | Range |
+| --- | --- | --- | --- |
+| Current file | `application/octet-stream` | `attachment` | Supported; 206 or 416. |
+| Historical version | `application/octet-stream` | Absent | Supported; 206 or 416. |
+| Thumbnail | `image/jpeg` | Absent | Ignored; full image, 200. |
+
+HEAD returns headers without a body. Allowed CORS origins can read
+`Content-Length` and `Content-Range`. Successful content responses use
+`Cache-Control: no-store`.
+The authenticated version-content and thumbnail endpoints remain available.
+
+Missing files or versions return 404 (`not_found`); disabled versioning returns
+409 (`feature_disabled`). Invalid dimensions or unsupported image data return
+400 (`invalid_argument`); sources over 64 MiB or 40 million pixels return
+413 (`limit_exceeded`). Thumbnail issuance checks the image header and limits;
+the download also decodes the full image, so corrupt or changed sources can
+still fail. Thumbnail capacity exhaustion returns 503 (`thumbnail_capacity`).
+Thumbnails require neither indexing nor versioning.
 
 ## ZIP selection leases
 

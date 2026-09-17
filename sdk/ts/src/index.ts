@@ -1,4 +1,4 @@
-import type { ACL, ACLScope, ArchiveItem, ArchiveLease, DirectoryOptions, DirectURL, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, Session, SessionCreated, SessionLease, SessionLeaseRequest, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
+import type { ACL, ACLScope, ArchiveItem, ArchiveLease, DirectoryOptions, DirectURL, ThumbnailLeaseOptions, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, Session, SessionCreated, SessionLease, SessionLeaseRequest, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
 import { archiveRaw, checked, putDirect } from "./utils.js";
 export * from "./types.js";
 export { FilegateError } from "./utils.js";
@@ -47,6 +47,10 @@ export class RootClient {
   transfer(path: string, targetRoot: string, targetPath: string, options: WriteOptions & { move?: boolean } = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/transfers`, undefined, { path, targetRoot, targetPath, ...options }); }
   directUpload(path: string, size: number, options: WriteOptions & { expiresIn?: number } = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/uploads/direct`, undefined, { path, size, ...options }); }
   directDownload(path: string, expiresIn?: number): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { path, expiresIn }); }
+  /** Issue a GET/HEAD lease for exactly this historical version. */
+  directVersionDownload(path: string, id: string, expiresIn?: number): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/versions/${encodeURIComponent(id)}/downloads/direct`, undefined, { path, expiresIn }); }
+  /** Issue a GET/HEAD lease with a fixed thumbnail size. */
+  directThumbnail(path: string, options: ThumbnailLeaseOptions = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/thumbnail/direct`, undefined, { ...options, path }); }
   createSession(path: string, size: number, options: WriteOptions & SessionLeaseRequest = {}): Promise<SessionCreated> { return this.client.json("POST", `${this.prefix}/uploads/sessions`, undefined, { path, size, ...options }); }
   session(id: string): Promise<Session> { return this.client.json("GET", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}`); }
   sessionLease(id: string, options: SessionLeaseRequest = {}): Promise<SessionLease> { return this.client.json("POST", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}/lease`, undefined, options); }

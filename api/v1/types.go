@@ -62,6 +62,17 @@ type DirectRequest struct {
 	ExpiresIn int    `json:"expiresIn,omitempty"`
 	WriteOptions
 }
+type DownloadRequest struct {
+	Path      string `json:"path"`
+	ExpiresIn int    `json:"expiresIn,omitempty"`
+}
+
+// ThumbnailRequest uses 256 for omitted dimensions; explicit zero is invalid.
+type ThumbnailRequest struct {
+	DownloadRequest
+	Width  *int `json:"width,omitempty"`
+	Height *int `json:"height,omitempty"`
+}
 type DirectURL struct {
 	URL     string    `json:"url"`
 	Method  string    `json:"method"`

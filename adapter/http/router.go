@@ -52,6 +52,8 @@ type capability struct {
 	Options      domain.WriteOptions `json:"options"`
 	Operations   []string            `json:"operations"`
 	ManifestHash string              `json:"manifestHash,omitempty"`
+	Version      string              `json:"version,omitempty"`
+	Thumbnail    *thumbnailSize      `json:"thumbnail,omitempty"`
 }
 
 func New(roots []*domain.Root, o Options) *Handler {
@@ -416,21 +418,12 @@ func (h *Handler) routes() {
 		return e
 	})
 	h.route("GET /v1/roots/{root}/versions/{version}/content", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		f, e := root.OpenVersion(r.URL.Query().Get("path"), r.PathValue("version"))
-		if e != nil {
-			return e
-		}
-		defer f.Close()
-		st, e := f.Stat()
-		if e != nil {
-			return e
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeContent(w, r, path.Base(r.URL.Query().Get("path")), st.ModTime(), f)
-		return nil
+		return versionContent(w, r, root, r.URL.Query().Get("path"), r.PathValue("version"))
 	})
 	h.route("POST /v1/roots/{root}/uploads/direct", h.mintUpload)
 	h.route("POST /v1/roots/{root}/downloads/direct", h.mintDownload)
+	h.route("POST /v1/roots/{root}/versions/{version}/downloads/direct", h.mintVersionDownload)
+	h.route("POST /v1/roots/{root}/thumbnail/direct", h.mintThumbnail)
 	h.route("POST /v1/roots/{root}/uploads/sessions", h.createSession)
 	h.mux.HandleFunc("/v1/direct/{token}", h.direct)
 	h.route("GET /v1/roots/{root}/uploads/sessions/{session}", h.sessionStatus)
@@ -529,7 +522,7 @@ func validOperations(c capability) bool {
 			if operation != "write" {
 				return false
 			}
-		case "download", "archive":
+		case "download", "version", "thumbnail", "archive":
 			if operation != "read" {
 				return false
 			}
@@ -551,7 +544,7 @@ func allowedMethod(c capability, method string) bool {
 		if method == http.MethodPut {
 			operation = "write"
 		}
-	case "download":
+	case "download", "version", "thumbnail":
 		if method == http.MethodGet || method == http.MethodHead {
 			operation = "read"
 		}
@@ -604,11 +597,11 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 	return nil
 }
 func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-	var q struct {
-		Path      string `json:"path"`
-		ExpiresIn int    `json:"expiresIn"`
-	}
+	var q api.DownloadRequest
 	if e := decode(w, r, &q); e != nil {
+		return e
+	}
+	if _, e := leaseSeconds(q.ExpiresIn); e != nil {
 		return e
 	}
 	n, e := root.Stat(q.Path)
@@ -618,13 +611,7 @@ func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *dom
 	if n.Directory {
 		return domain.ErrInvalid
 	}
-	expires, e := leaseExpiry(q.ExpiresIn)
-	if e != nil {
-		return e
-	}
-	c := capability{Root: root.Config.Name, Path: n.Path, Purpose: "download", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: []string{"read"}}
-	send(w, 201, api.DirectURL{URL: h.url(c), Method: "GET", Expires: time.Unix(c.Expires, 0)})
-	return nil
+	return h.issueDownload(w, capability{Root: root.Config.Name, Path: n.Path, Purpose: "download"}, q.ExpiresIn)
 }
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	var q api.SessionRequest
@@ -779,6 +766,14 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		e = content(w, r, root, c.Path)
+	case "version":
+		e = versionContent(w, r, root, c.Path, c.Version)
+	case "thumbnail":
+		if c.Thumbnail == nil {
+			e = domain.ErrInvalid
+		} else {
+			e = thumbnailContent(w, r, root, c.Path, *c.Thumbnail)
+		}
 	case "session":
 		switch r.Method {
 		case "GET":

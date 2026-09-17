@@ -19,6 +19,8 @@ export interface RootInfo { name: string; index: IndexStatus; stats: Stats | nul
 export interface System { version: string; started: string; uptimeSeconds: number; ready: boolean; maintenanceError?: string }
 export interface Version { id: string; fileId: string; created: string; size: number; pinned: boolean; metadata?: Metadata; copyMode: "copy" | "reflink" }
 export interface VersionOptions { pinned?: boolean; metadata?: Metadata }
+/** Omitted dimensions default to 256; dimensions must be integers from 1 to 2048. */
+export interface ThumbnailLeaseOptions { width?: number; height?: number; expiresIn?: number }
 export interface DirectURL { url: string; method: "PUT" | "GET"; expires: string }
 export type SessionState = "open" | "committed" | "aborted" | "expired";
 /** Minimal transfer status exposed by a session lease. */

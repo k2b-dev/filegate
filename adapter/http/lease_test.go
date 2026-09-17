@@ -35,6 +35,10 @@ func TestTransferLeaseLimitsAndOperations(t *testing.T) {
 	}{
 		{"upload", []string{"write"}, true},
 		{"download", []string{"read"}, true},
+		{"version", []string{"read"}, true},
+		{"thumbnail", []string{"read"}, true},
+		{"version", []string{"write"}, false},
+		{"thumbnail", []string{"status"}, false},
 		{"archive", []string{"read"}, true},
 		{"session", []string{"status", "write", "abort"}, true},
 		{"session", []string{"status"}, true},
@@ -75,6 +79,8 @@ func TestDirectOperationsRejectedBeforeUploadCapacityOrFilesystem(t *testing.T) 
 		{"session", "PUT", []string{"status"}},
 		{"session", "DELETE", []string{"status", "write"}},
 		{"download", "PUT", []string{"read"}},
+		{"version", "PUT", []string{"read"}},
+		{"thumbnail", "POST", []string{"read"}},
 		{"upload", "GET", []string{"write"}},
 	} {
 		c := capability{Root: "missing", Purpose: tc.purpose, Operations: tc.operations, Expires: time.Now().Add(time.Minute).Unix()}
@@ -119,5 +125,19 @@ func TestSessionLeaseRejectsElapsedSessionDeadline(t *testing.T) {
 	s := domain.Session{ID: "session", Root: "root", State: domain.SessionOpen, Expires: time.Now().Add(-time.Second)}
 	if _, err := h.sessionLease(s, 60, false); err != domain.ErrSessionExpired {
 		t.Fatalf("expired session minted a lease: %v", err)
+	}
+}
+
+func TestDerivedDownloadLeaseExpiry(t *testing.T) {
+	h := New(nil, Options{Token: "test-secret"})
+	for _, purpose := range []string{"version", "thumbnail"} {
+		c := capability{Root: "missing", Path: "file", Purpose: purpose, Version: "version", Thumbnail: &thumbnailSize{Width: 128, Height: 64}, Operations: []string{"read"}, Expires: time.Now().Unix()}
+		for _, method := range []string{"GET", "HEAD"} {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(method, "/v1/direct/"+h.sign(c), nil))
+			if w.Code != 401 || !strings.Contains(w.Body.String(), "expired_capability") {
+				t.Fatalf("%s %s: %d %s", purpose, method, w.Code, w.Body.String())
+			}
+		}
 	}
 }
