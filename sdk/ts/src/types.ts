@@ -1,5 +1,12 @@
 export type Metadata = Record<string, unknown>;
 export interface Ownership { uid?: number; gid?: number; mode?: string; dirMode?: string }
+export type ACLScope = "access" | "default";
+export type ACLPermissions = "---" | "--x" | "-w-" | "-wx" | "r--" | "r-x" | "rw-" | "rwx";
+export type ACLEntry =
+  | { tag: "owner" | "owningGroup" | "mask" | "other"; id?: never; permissions: ACLPermissions }
+  | { tag: "user" | "group"; id: number; permissions: ACLPermissions };
+export type ACLTag = ACLEntry["tag"];
+export interface ACL { entries: ACLEntry[] }
 export interface WriteOptions { onConflict?: "error" | "overwrite" | "rename"; ownership?: Ownership; metadata?: Metadata }
 export interface Node { root: string; path: string; id?: string; directory: boolean; size: number; modified: string; mode: string; uid: number; gid: number }
 export interface Page { items: Node[]; next?: string }

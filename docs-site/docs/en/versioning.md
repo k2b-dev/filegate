@@ -10,7 +10,7 @@ description: Snapshot triggers, cooldown, metadata, pins and calendar retention.
 Enable versioning on an indexed root to preserve earlier file contents. Before
 an overwrite, Filegate durably snapshots the existing bytes. If that required
 snapshot fails, the overwrite fails and the old file remains current. Uploading
-a new file does not create an automatic version. Rename and ownership changes
+a new file does not create an automatic version. Rename, ownership and ACL changes
 do not create versions either.
 
 ## Choose capture frequency
@@ -27,7 +27,8 @@ Skipped writes do not reset it. With a one-minute cooldown:
 
 Manual snapshots always bypass cooldown. Restore first snapshots the current
 bytes, also bypassing cooldown, then publishes the selected version's contents
-and revision metadata. Restore preserves the current file's ownership and mode.
+and revision metadata. Restore preserves the current file's ownership, ordinary
+permission bits and access ACL. It clears file setuid and setgid bits.
 These rules apply equally to direct PUT and session commits; chunks never create
 versions.
 

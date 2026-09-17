@@ -53,7 +53,7 @@ change totals; refresh them when the dashboard needs a new measurement.
 
 Stop Filegate and coordinate external writers before a consistent backup. Save:
 
-1. Every root, including its private `.filegate` directory and xattrs.
+1. Every root, including its private `.filegate` directory, ownership, modes, ACLs and xattrs.
 2. The complete `state_dir`.
 3. Static configuration and the token through your secret backup process.
 
@@ -72,7 +72,9 @@ startup stops with an error. Preserve the state and logs for diagnosis.
 | Symptom | Check |
 | --- | --- |
 | Service will not start | Configuration validation, root existence, token permissions, private `.filegate` permissions, state lock and journal logs. |
-| Chown returns forbidden | Daemon privilege and NFS root-squash policy; see [security](/docs/en/security). |
+| Chown or ACL change returns 403 | Service privileges, file ownership and NFS root-squash policy; see [security](/docs/en/security). |
+| ACL request returns 501 | The actual filesystem or mount does not expose POSIX ACLs. NFSv4 ACLs are not translated. |
+| Group cannot write a new file | Check the parent default ACL, child access ACL and mask, and the writer's requested mode; see [permissions](/docs/en/permissions). |
 | External files missing from search | Indexed roots need `filegate rebuild ROOT`. Index-free listings read the filesystem directly. |
 | Search/stats returns 413 | Raise the explicit `maxEntries` budget or narrow the operation; the server did not complete the scan. |
 | Direct URL returns 401 | Expiry, token rotation or a modified signed URL. Mint a fresh URL. |

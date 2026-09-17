@@ -113,6 +113,10 @@ func fail(w http.ResponseWriter, e error) {
 	switch {
 	case errors.As(e, &he):
 		status, code = he.status, he.msg
+	case errors.Is(e, domain.ErrInvalidACL):
+		status, code = 400, "invalid_acl"
+	case errors.Is(e, domain.ErrACLUnsupported):
+		status, code = 501, "acl_not_supported"
 	case errors.Is(e, domain.ErrInvalid):
 		status, code = 400, "invalid_argument"
 	case errors.As(e, &sizeError), errors.Is(e, domain.ErrLimit):
@@ -129,8 +133,15 @@ func fail(w http.ResponseWriter, e error) {
 		status, code = 408, "canceled"
 	}
 	message := e.Error()
-	if status == 500 {
+	switch code {
+	case "internal_error":
 		message = "file operation failed"
+	case "invalid_acl":
+		message = "invalid ACL scope, entries, IDs, permissions, or mask"
+	case "acl_not_supported":
+		message = "POSIX ACLs are not supported by this filesystem or mount"
+	case "forbidden":
+		message = "permission denied; check filesystem permissions, process privileges, and NFS export policy"
 	}
 	send(w, status, api.Error{Error: code, Message: message})
 }
@@ -223,6 +234,43 @@ func (h *Handler) routes() {
 			send(w, 200, n)
 		}
 		return e
+	})
+	h.route("GET /v1/roots/{root}/acl", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		if r.URL.Query().Get("path") == "" {
+			return domain.ErrInvalid
+		}
+		v, e := root.GetACL(r.URL.Query().Get("path"), domain.ACLScope(r.URL.Query().Get("scope")))
+		if e == nil {
+			send(w, 200, v)
+		}
+		return e
+	})
+	h.route("PUT /v1/roots/{root}/acl", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		if r.URL.Query().Get("path") == "" {
+			return domain.ErrInvalid
+		}
+		var acl api.ACL
+		if e := decode(w, r, &acl); e != nil {
+			return domain.ErrInvalidACL
+		}
+		v, e := root.SetACL(r.URL.Query().Get("path"), domain.ACLScope(r.URL.Query().Get("scope")), acl)
+		if e == nil {
+			send(w, 200, v)
+		}
+		return e
+	})
+	h.route("DELETE /v1/roots/{root}/acl", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		if r.URL.Query().Get("path") == "" {
+			return domain.ErrInvalid
+		}
+		if domain.ACLScope(r.URL.Query().Get("scope")) != domain.DefaultACL {
+			return domain.ErrInvalidACL
+		}
+		if e := root.ClearDefaultACL(r.URL.Query().Get("path")); e != nil {
+			return e
+		}
+		w.WriteHeader(204)
+		return nil
 	})
 	h.route("GET /v1/roots/{root}/stat", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Stat(r.URL.Query().Get("path"))

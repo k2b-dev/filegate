@@ -29,12 +29,22 @@ before expiry repeats the authorized operation: single PUT URLs are not one-shot
 or resumable. Default conflict behavior is `error` (409); `overwrite` and
 `rename` must be explicit. Rename appends `-01`, `-02`, … before the extension.
 
-An overwrite preserves existing ownership when no ownership is supplied. New
-files use the daemon account with mode 0644; newly created parents request 0755,
-reduced by the daemon umask (0750 with the packaged systemd unit).
-Explicit UID and GID must be supplied together. Modes are octal strings limited
-to permission bits. `dirMode` applies to newly created directories. Existing
-parent directory permissions are not changed.
+Direct uploads and session commits use the same ownership and ACL rules. An
+overwrite preserves the existing owner, group, ordinary permission bits and
+access ACL unless the request explicitly changes them. Replacing file contents
+clears setuid and setgid bits. New files inherit the destination directory's
+default ACL and, when setgid is enabled, its group. Explicit UID/GID overrides
+group inheritance. Without a default ACL, files default to 0644 and new parents
+request 0755, reduced by the daemon umask (0750 with the packaged systemd unit).
+With a default ACL, the creation limits are 0666 for files and 0777 for directories;
+ordinary file uploads do not inherit execute permission. An explicit mode is
+applied afterward and can widen or restrict the ACL's effective permissions.
+
+Explicit UID and GID must be supplied together. Modes are octal strings:
+`mode` accepts file permissions up to `0777`; `dirMode` also accepts setgid, such
+as `"2770"`. Existing parent directories are not modified. Explicit mode changes
+also affect the access ACL's effective permissions. See
+[permissions and ACLs](/docs/en/permissions) for shared-directory setup.
 
 ## Large files: resumable sessions
 

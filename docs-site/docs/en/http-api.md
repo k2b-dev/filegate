@@ -30,6 +30,9 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?}` | Created Node. |
 | `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
+| `GET /acl` | `path`, `scope=access\|default` | `{entries}`. |
+| `PUT /acl` | `path`, `scope=access\|default`; body `{entries}` | Stored ACL. |
+| `DELETE /acl` | `path`, `scope=default` | 204. |
 | `DELETE /files` | `path`, `recursive` | 204. |
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
@@ -48,10 +51,45 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /versions/prune` | — | `{deleted}`. |
 
 A Node contains `root`, `path`, optional `id`, `directory`, `size`, `modified`,
-`mode`, `uid` and `gid`. Timestamps are RFC 3339, sizes are integer bytes. Directory
+`mode`, `uid` and `gid`. Mode is an octal string including special bits, such as
+`"2770"` for a setgid directory. Timestamps are RFC 3339, sizes are integer bytes. Directory
 size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
 bounded by 1000. Search/stats traversal defaults to 100,000 entries and accepts
 an explicit maximum of 10,000,000.
+
+## POSIX ACLs
+
+ACL routes require both `path` and `scope=access|default`. They also support `.`
+for the root itself. Default ACLs apply only to directories. PUT replaces one
+scope and returns its stored ACL; DELETE supports only `scope=default`.
+
+```json
+{
+  "entries": [
+    { "tag": "owner", "permissions": "rwx" },
+    { "tag": "owningGroup", "permissions": "rwx" },
+    { "tag": "group", "id": 20002, "permissions": "r-x" },
+    { "tag": "mask", "permissions": "rwx" },
+    { "tag": "other", "permissions": "---" }
+  ]
+}
+```
+
+Nonempty ACLs require exactly one `owner`, `owningGroup` and `other`. Named `user`
+and `group` entries require a nonnegative numeric `id`, unique within the tag,
+and an explicit `mask`. IDs range from 0 to 4294967294. PUT accepts 3–256 entries;
+an empty array is invalid even for the default scope. Use DELETE to remove it.
+Other tags do not accept `id`. Permission strings are
+`rwx`, `rw-`, `r-x`, `r--`, `-wx`, `-w-`, `--x` or `---`.
+
+Reading an access ACL returns at least its three base entries. Reading a default
+ACL returns an empty entries array when none is present. Unsupported POSIX ACLs
+return 501 (`acl_not_supported`). Invalid ACL input returns 400 (`invalid_acl`);
+insufficient permissions return 403 (`forbidden`). Existing ACLs larger than
+256 entries return 413 (`limit_exceeded`) when read, rather than being truncated.
+ACLs work independently of indexing. They do not create versions or change
+children recursively. See [permissions and ACLs](/docs/en/permissions) for mask
+semantics, inheritance and shared-directory setup.
 
 ## Scoped session URL
 
@@ -66,7 +104,7 @@ Use the exact URL returned at session creation:
 
 Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
 invalid input, 401 for authentication/capability failure, 403 for permissions,
-404 for missing files, 409 for conflicts/disabled features, 413 for limits and
-503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+404 for missing files, 409 for conflicts/disabled features, 413 for limits,
+501 for unsupported POSIX ACLs and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
 ambiguous transport failure: session commits are idempotent, while ordinary
 mutations require reading back the resulting state.

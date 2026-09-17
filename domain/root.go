@@ -11,7 +11,6 @@ import (
 	"os"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -152,45 +151,6 @@ func ValidateOptions(o WriteOptions) error {
 	}
 	return validateOwnership(o.Ownership)
 }
-func validateOwnership(o *Ownership) error {
-	if o == nil {
-		return nil
-	}
-	if (o.UID == nil) != (o.GID == nil) {
-		return ErrInvalid
-	}
-	if o.UID != nil && (*o.UID < 0 || *o.GID < 0) {
-		return ErrInvalid
-	}
-	for _, m := range []string{o.Mode, o.DirMode} {
-		if m != "" {
-			n, e := strconv.ParseUint(m, 8, 32)
-			if e != nil || n > 0777 {
-				return ErrInvalid
-			}
-		}
-	}
-	return nil
-}
-func applyOwner(f *os.File, o *Ownership, dir bool) error {
-	if o == nil {
-		return nil
-	}
-	if o.UID != nil {
-		if e := f.Chown(*o.UID, *o.GID); e != nil {
-			return e
-		}
-	}
-	m := o.Mode
-	if dir {
-		m = o.DirMode
-	}
-	if m != "" {
-		n, _ := strconv.ParseUint(m, 8, 32)
-		return f.Chmod(os.FileMode(n))
-	}
-	return nil
-}
 func (r *Root) node(p string, assign bool) (Node, error) {
 	if e := r.guard(); e != nil {
 		return Node{}, e
@@ -205,7 +165,7 @@ func (r *Root) node(p string, assign bool) (Node, error) {
 		return Node{}, e
 	}
 	dev, ino, uid, gid, links := r.Files.Identity(st)
-	n := Node{Root: r.Config.Name, Path: p, Directory: st.IsDir(), Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", st.Mode().Perm()), UID: uid, GID: gid}
+	n := Node{Root: r.Config.Name, Path: p, Directory: st.IsDir(), Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", UnixMode(st.Mode())), UID: uid, GID: gid}
 	if st.IsDir() {
 		n.Size = 0
 	}
@@ -328,26 +288,11 @@ func (r *Root) parents(p string, o *Ownership) error {
 	parts := strings.Split(dir, "/")
 	for i := range parts {
 		q := strings.Join(parts[:i+1], "/")
-		e := r.Files.Mkdir(q, 0755)
+		e := r.makeDirectory(q, o)
 		if errors.Is(e, os.ErrExist) {
 			continue
 		}
 		if e != nil {
-			return e
-		}
-		f, e := r.Files.Open(q, os.O_RDONLY, 0)
-		if e != nil {
-			return e
-		}
-		e = applyOwner(f, o, true)
-		if e == nil {
-			e = f.Sync()
-		}
-		f.Close()
-		if e != nil {
-			return e
-		}
-		if e = r.Files.Sync(path.Dir(q)); e != nil {
 			return e
 		}
 		if r.Config.Index {
@@ -381,22 +326,7 @@ func (r *Root) Mkdir(p string, o *Ownership) (Node, error) {
 	if e = r.parents(p, o); e != nil {
 		return Node{}, e
 	}
-	if e = r.Files.Mkdir(p, 0755); e != nil {
-		return Node{}, e
-	}
-	f, e := r.Files.Open(p, os.O_RDONLY, 0)
-	if e != nil {
-		return Node{}, e
-	}
-	e = applyOwner(f, o, true)
-	if e == nil {
-		e = f.Sync()
-	}
-	f.Close()
-	if e != nil {
-		return Node{}, e
-	}
-	if e = r.Files.Sync(path.Dir(p)); e != nil {
+	if e = r.makeDirectory(p, o); e != nil {
 		return Node{}, e
 	}
 	n, e := r.node(p, true)
@@ -477,20 +407,7 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 			}
 		}
 	}
-	mode := os.FileMode(0644)
-	if exists {
-		v, _ := strconv.ParseUint(old.Mode, 8, 32)
-		mode = os.FileMode(v)
-	}
-	if e = f.Chmod(mode); e != nil {
-		return Node{}, e
-	}
-	owner := o.Ownership
-	if owner == nil && exists {
-		uid, gid := int(old.UID), int(old.GID)
-		owner = &Ownership{UID: &uid, GID: &gid}
-	}
-	if e = applyOwner(f, owner, false); e != nil {
+	if e = r.preparePublication(p, f, exists, o.Ownership); e != nil {
 		return Node{}, e
 	}
 	id := ""
@@ -516,7 +433,7 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 		return Node{}, e
 	}
 	dev, ino, uid, gid, _ := r.Files.Identity(st)
-	n := Node{Root: r.Config.Name, Path: p, ID: id, Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", st.Mode().Perm()), UID: uid, GID: gid}
+	n := Node{Root: r.Config.Name, Path: p, ID: id, Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", UnixMode(st.Mode())), UID: uid, GID: gid}
 	rec := publication{p, temp, n, claim{dev, ino, p}, o.Metadata, resultKey}
 	key := "pending/" + newID()
 	if e = r.State.Put(key, rec); e != nil {

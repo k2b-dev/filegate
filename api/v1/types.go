@@ -13,6 +13,23 @@ type Version = domain.Version
 type Session = domain.Session
 type WriteOptions = domain.WriteOptions
 type Ownership = domain.Ownership
+type ACLScope = domain.ACLScope
+type ACLPermissions = domain.ACLPermissions
+type ACLTag = domain.ACLTag
+type ACLEntry = domain.ACLEntry
+type ACL = domain.ACL
+
+const (
+	AccessACL      = domain.AccessACL
+	DefaultACL     = domain.DefaultACL
+	ACLOwner       = domain.ACLOwner
+	ACLUser        = domain.ACLUser
+	ACLOwningGroup = domain.ACLOwningGroup
+	ACLGroup       = domain.ACLGroup
+	ACLMask        = domain.ACLMask
+	ACLOther       = domain.ACLOther
+)
+
 type Metadata = domain.Metadata
 type Stats = domain.Stats
 type Error struct {

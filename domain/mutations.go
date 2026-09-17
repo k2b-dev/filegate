@@ -268,22 +268,7 @@ func Transfer(ctx context.Context, src *Root, p string, dst *Root, to string, mo
 			if e = dst.parents(b, o.Ownership); e != nil {
 				return Node{}, e
 			}
-			if e = dst.Files.Mkdir(b, 0755); e != nil {
-				return Node{}, e
-			}
-			d, e := dst.Files.Open(b, os.O_RDONLY, 0)
-			if e != nil {
-				return Node{}, e
-			}
-			e = applyOwner(d, o.Ownership, true)
-			if e == nil {
-				e = d.Sync()
-			}
-			d.Close()
-			if e != nil {
-				return Node{}, e
-			}
-			if e = dst.Files.Sync(path.Dir(b)); e != nil {
+			if e = dst.makeDirectory(b, o.Ownership); e != nil {
 				return Node{}, e
 			}
 			out, e := dst.node(b, true)

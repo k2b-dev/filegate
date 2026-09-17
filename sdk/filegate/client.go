@@ -20,6 +20,23 @@ type Page = api.Page
 type RootInfo = api.RootInfo
 type WriteOptions = api.WriteOptions
 type Ownership = api.Ownership
+type ACLScope = api.ACLScope
+type ACLPermissions = api.ACLPermissions
+type ACLTag = api.ACLTag
+type ACLEntry = api.ACLEntry
+type ACL = api.ACL
+
+const (
+	AccessACL      = api.AccessACL
+	DefaultACL     = api.DefaultACL
+	ACLOwner       = api.ACLOwner
+	ACLUser        = api.ACLUser
+	ACLOwningGroup = api.ACLOwningGroup
+	ACLGroup       = api.ACLGroup
+	ACLMask        = api.ACLMask
+	ACLOther       = api.ACLOther
+)
+
 type Metadata = api.Metadata
 type Version = api.Version
 type Session = api.Session
@@ -301,6 +318,31 @@ func (r *Root) SetOwnership(ctx context.Context, p string, o Ownership) (Node, e
 	var n Node
 	e := r.client.call(ctx, "PATCH", r.endpoint("/ownership"), query(p), o, &n)
 	return n, e
+}
+
+// GetACL reads an access or default ACL. An absent default ACL has empty entries.
+func (r *Root) GetACL(ctx context.Context, p string, scope ACLScope) (ACL, error) {
+	q := query(p)
+	q.Set("scope", string(scope))
+	var acl ACL
+	e := r.client.call(ctx, "GET", r.endpoint("/acl"), q, nil, &acl)
+	return acl, e
+}
+
+// SetACL replaces one ACL scope. Named entries require an explicit mask.
+func (r *Root) SetACL(ctx context.Context, p string, scope ACLScope, acl ACL) (ACL, error) {
+	q := query(p)
+	q.Set("scope", string(scope))
+	var result ACL
+	e := r.client.call(ctx, "PUT", r.endpoint("/acl"), q, acl, &result)
+	return result, e
+}
+
+// ClearDefaultACL removes future-child inheritance without changing existing children.
+func (r *Root) ClearDefaultACL(ctx context.Context, p string) error {
+	q := query(p)
+	q.Set("scope", string(DefaultACL))
+	return r.client.call(ctx, "DELETE", r.endpoint("/acl"), q, nil, nil)
 }
 
 func (r *Root) ThumbnailRaw(ctx context.Context, p string, width, height int) (*http.Response, error) {

@@ -5,16 +5,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
 )
 
 var (
-	ErrInvalid  = errors.New("invalid argument")
-	ErrConflict = errors.New("conflict")
-	ErrDisabled = errors.New("feature disabled")
-	ErrLimit    = errors.New("limit exceeded")
+	ErrInvalid        = errors.New("invalid argument")
+	ErrConflict       = errors.New("conflict")
+	ErrDisabled       = errors.New("feature disabled")
+	ErrLimit          = errors.New("limit exceeded")
+	ErrACLUnsupported = errors.New("POSIX ACLs are not supported by this filesystem")
+	ErrInvalidACL     = fmt.Errorf("%w: invalid ACL", ErrInvalid)
 )
 
 const MetadataLimit = 8192
@@ -141,6 +144,9 @@ type Files interface {
 	Sync(string) error
 	ID(*os.File) (string, error)
 	SetID(*os.File, string) error
+	GetACL(*os.File, ACLScope) (ACL, error)
+	SetACL(*os.File, ACLScope, ACL) error
+	ClearDefaultACL(*os.File) error
 	Identity(os.FileInfo) (uint64, uint64, uint32, uint32, uint64)
 	Clone(*os.File, *os.File) (bool, error)
 	Capacity() (string, uint64, uint64, error)

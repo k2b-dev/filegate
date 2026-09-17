@@ -25,14 +25,18 @@ allowed origins for cross-origin direct transfers.
 The backend can provide numeric `uid`, `gid`, `mode` and `dirMode` for uploads and
 directory creation. Resolve user and group IDs in your application. The daemon
 performs filesystem operations under its service account. When ownership is
-omitted, new files belong to that account and overwrites preserve existing
-ownership. See [direct transfers](/docs/en/uploads-downloads) for mode defaults.
+omitted, new files use that account as owner and inherit the group of a setgid
+parent. Overwrites preserve existing ownership and access ACLs. Use `dirMode`
+for directory modes, including setgid (`"2770"`). See
+[permissions and ACLs](/docs/en/permissions) for inheritance and shared directories.
 
 Assigning files to other users requires permission to change ownership and to
 read and write those files afterward. Configure the service account and Linux
 capabilities for the required access. `CAP_CHOWN` alone does not grant access to
 user-owned mode-0600 files. NFS `root_squash` may reject ownership changes even
-for local root. Test the actual mount and service identity before relying on it.
+for local root. POSIX ACL changes also require filesystem support and sufficient
+privileges. Filegate does not translate NFSv4 ACLs. Test the actual mount and
+service identity before relying on ownership or ACL changes.
 
 The packaged service defaults to an unprivileged `filegate` account. Granting
 additional capabilities or changing it to root is an explicit operator decision.

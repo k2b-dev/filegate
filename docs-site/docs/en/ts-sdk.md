@@ -45,6 +45,9 @@ session URL for larger uploads. Import token-free browser helpers from
 | `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
 | `mkdir(path, ownership?)` | Create a directory and missing parents. |
 | `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
+| `getACL(path, scope)` | Read the access or default ACL. |
+| `setACL(path, scope, acl)` | Replace one ACL; returns its stored entries. |
+| `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
 | `rebuild(signal?)` | Rebuild this root's metadata index. |
@@ -69,3 +72,11 @@ Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
+
+## Permissions and ACLs
+
+Use `getACL(path, "access" | "default")`, `setACL(path, scope, acl)` and
+`clearDefaultACL(path)`. The exported `ACL` and `ACLEntry` types describe numeric
+identities and explicit permission strings. These methods work without an index.
+See [permissions and ACLs](/docs/en/permissions) for a shared-directory setup and
+[the HTTP ACL contract](/docs/en/http-api#posix-acls) for entry constraints.

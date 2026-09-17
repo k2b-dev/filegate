@@ -1,4 +1,4 @@
-import type { DirectURL, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, SessionCreated, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
+import type { ACL, ACLScope, DirectURL, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, SessionCreated, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
 import { checked, putDirect } from "./utils.js";
 export * from "./types.js";
 export { FilegateError } from "./utils.js";
@@ -35,6 +35,12 @@ export class RootClient {
   thumbnailRaw(path: string, width = 256, height = 256): Promise<Response> { return this.client.raw("GET", `${this.prefix}/thumbnail`, { path, width, height }); }
   archiveRaw(path = ".", signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/archive`, { path }, undefined, signal); }
   setOwnership(path: string, ownership: Ownership): Promise<Node> { return this.client.json("PATCH", `${this.prefix}/ownership`, { path }, ownership); }
+  /** Read an access or default ACL; absent default ACLs have empty entries. */
+  getACL(path: string, scope: ACLScope): Promise<ACL> { return this.client.json("GET", `${this.prefix}/acl`, { path, scope }); }
+  /** Replace one ACL scope. Named entries require an explicit mask. */
+  setACL(path: string, scope: ACLScope, acl: ACL): Promise<ACL> { return this.client.json("PUT", `${this.prefix}/acl`, { path, scope }, acl); }
+  /** Remove future-child inheritance without changing existing children. */
+  clearDefaultACL(path: string): Promise<void> { return this.client.json("DELETE", `${this.prefix}/acl`, { path, scope: "default" }); }
   mkdir(path: string, ownership?: Ownership): Promise<Node> { return this.client.json("POST", `${this.prefix}/directories`, undefined, { path, ownership }); }
   remove(path: string, recursive = false): Promise<void> { return this.client.json("DELETE", `${this.prefix}/files`, { path, recursive }); }
   transfer(path: string, targetRoot: string, targetPath: string, options: WriteOptions & { move?: boolean } = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/transfers`, undefined, { path, targetRoot, targetPath, ...options }); }

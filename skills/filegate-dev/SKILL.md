@@ -31,6 +31,15 @@ restore bypass cooldown. Root locks must not be held while reading network uploa
 bodies. Filesystem/state transitions require recovery records. API renames preserve
 identity; copied xattrs must not steal histories.
 
+New files inherit destination default ACLs and setgid groups; staged inodes do not
+inherit on rename. Replace staging ACLs before publication. Overwrites and restore
+retain ordinary permissions and access ACLs, but clear regular-file setuid/setgid.
+All directory creation uses the same policy, including implicit parents and copies.
+Ownership overrides apply equally to direct uploads and resumable commits. ACL
+scopes are independent and never recursive; unsupported ACLs must not disable
+ordinary operations on index-free roots. Check actual permissions after setting
+special bits, since Linux can silently clear setgid.
+
 Update TS types/client, Go client, Fibel and skill references with every public
 contract change. Raw SDK methods preserve non-success HTTP responses.
 

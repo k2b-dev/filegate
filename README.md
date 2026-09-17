@@ -10,6 +10,7 @@ its TypeScript or Go client from your application backend.
   pinned versions, bounded JSON metadata, calendar retention.
 - Small direct PUT uploads and resumable direct upload sessions, including
   numeric Unix ownership selected by the trusted backend.
+- Setgid directories and typed POSIX access/default ACLs for shared storage.
 - Directory browsing, bounded search, thumbnails, TAR downloads and transfers.
 - Dashboard metadata through the API.
 

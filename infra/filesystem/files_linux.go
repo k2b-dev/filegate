@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/k2b-dev/filegate/v4/domain"
 	"golang.org/x/sys/unix"
 	"io"
 	"os"
@@ -92,7 +93,7 @@ func (f *Files) Open(p string, flag int, mode os.FileMode) (*os.File, error) {
 		return nil, e
 	}
 	defer dir.Close()
-	fd, e := unix.Openat(int(dir.Fd()), name, flag|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, uint32(mode.Perm()))
+	fd, e := unix.Openat(int(dir.Fd()), name, flag|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, domain.UnixMode(mode))
 	if e != nil {
 		return nil, e
 	}
@@ -128,7 +129,7 @@ func (f *Files) Mkdir(p string, mode os.FileMode) error {
 		return e
 	}
 	defer d.Close()
-	return unix.Mkdirat(int(d.Fd()), n, uint32(mode.Perm()))
+	return unix.Mkdirat(int(d.Fd()), n, domain.UnixMode(mode))
 }
 func (f *Files) Rename(a, b string, replace bool) error {
 	ad, an, e := f.parent(a)

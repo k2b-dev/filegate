@@ -53,7 +53,8 @@ and checksums; `relay` provides streaming HTTP helpers.
 ## API map
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
-`SetOwnership`, `Remove`, `Transfer`, `DirectUpload`, `DirectDownload`,
+`SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
+`DirectUpload`, `DirectDownload`,
 `CreateSession`, `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
 Each operation takes a `context.Context` first. Request structs shared with the
@@ -64,3 +65,27 @@ wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
 the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
+
+## Permissions and ACLs
+
+ACL methods take a context, a relative path and, for reads and writes, the scope
+`"access"` or `"default"`:
+
+```go
+acl, err := root.SetACL(ctx, "teams/editors", "default", filegate.ACL{
+    Entries: []filegate.ACLEntry{
+        {Tag: "owner", Permissions: "rwx"},
+        {Tag: "owningGroup", Permissions: "rwx"},
+        {Tag: "other", Permissions: "---"},
+    },
+})
+if err != nil { return err }
+fmt.Println(acl.Entries)
+current, err := root.GetACL(ctx, "teams/editors", "default")
+if err != nil { return err }
+fmt.Println(current.Entries)
+```
+
+`ClearDefaultACL(ctx, path)` removes the directory's default ACL. These operations
+work without an index. See [permissions and ACLs](/docs/en/permissions) for setup,
+inheritance and privilege requirements.

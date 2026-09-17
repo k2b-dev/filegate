@@ -1,6 +1,6 @@
 ---
 name: filegate
-description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, direct uploads and resumable sessions, version history, Unix ownership, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
+description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, direct uploads and resumable sessions, version history, Unix ownership, setgid, POSIX ACLs, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
 ---
 
 # Filegate
@@ -26,8 +26,14 @@ operations below. It is also published by the Fibel agent-skills plugin.
 - Upload metadata belongs to the incoming revision. Versions expose arbitrary
   JSON-object metadata, limited to 8192 serialized UTF-8 bytes. Pins are exempt
   from automatic retention. History is not an immutable audit log.
-- Numeric ownership comes from the trusted backend. For new files, omitted
-  ownership uses the daemon account. Arbitrary chown requires OS privileges.
+- Numeric identities come from the trusted backend. New files use the daemon
+  owner and inherit the group from a setgid parent unless UID/GID is explicit.
+  Arbitrary chown requires OS privileges. Overwrites preserve existing ownership,
+  ordinary permission bits and access ACL unless explicitly changed. Content
+  replacement clears regular-file setuid/setgid bits, including on restore.
+- POSIX access/default ACLs work independently of indexing. There is no NFSv4 ACL
+  translation or recursive permission correction. Direct uploads and resumable
+  commits enforce the ownership bound into their capabilities.
 
 ## Integration rules
 
@@ -89,6 +95,9 @@ session URL for larger uploads. Import token-free browser helpers from
 | `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
 | `mkdir(path, ownership?)` | Create a directory and missing parents. |
 | `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
+| `getACL(path, scope)` | Read the access or default ACL. |
+| `setACL(path, scope, acl)` | Replace one ACL; returns its stored entries. |
+| `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
 | `rebuild(signal?)` | Rebuild this root's metadata index. |
@@ -162,7 +171,8 @@ and checksums; `relay` provides streaming HTTP helpers.
 ### API map
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
-`SetOwnership`, `Remove`, `Transfer`, `DirectUpload`, `DirectDownload`,
+`SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
+`DirectUpload`, `DirectDownload`,
 `CreateSession`, `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
 Each operation takes a `context.Context` first. Request structs shared with the
@@ -199,6 +209,9 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?}` | Created Node. |
 | `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
+| `GET /acl` | `path`, `scope=access\|default` | `{entries}`. |
+| `PUT /acl` | `path`, `scope=access\|default`; body `{entries}` | Stored ACL. |
+| `DELETE /acl` | `path`, `scope=default` | 204. |
 | `DELETE /files` | `path`, `recursive` | 204. |
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
@@ -217,7 +230,8 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /versions/prune` | — | `{deleted}`. |
 
 A Node contains `root`, `path`, optional `id`, `directory`, `size`, `modified`,
-`mode`, `uid` and `gid`. Timestamps are RFC 3339, sizes are integer bytes. Directory
+`mode`, `uid` and `gid`. Mode is an octal string including special bits, such as
+`"2770"` for a setgid directory. Timestamps are RFC 3339, sizes are integer bytes. Directory
 size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
 bounded by 1000. Search/stats traversal defaults to 100,000 entries and accepts
 an explicit maximum of 10,000,000.
@@ -235,10 +249,91 @@ Use the exact URL returned at session creation:
 
 Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
 invalid input, 401 for authentication/capability failure, 403 for permissions,
-404 for missing files, 409 for conflicts/disabled features, 413 for limits and
-503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+404 for missing files, 409 for conflicts/disabled features, 413 for limits,
+501 for unsupported POSIX ACLs and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
 ambiguous transport failure: session commits are idempotent, while ordinary
 mutations require reading back the resulting state.
+
+## Permissions and POSIX ACLs
+
+`mode` and `dirMode` are octal strings. File `mode` accepts up to `0777`;
+`dirMode` also accepts setgid, such as `"2770"`. For directory creation and
+`setOwnership` on a directory, use `dirMode`. Read modes include special bits.
+UID and GID must be supplied together. UID/GID-only changes preserve directory
+setgid, mode and existing access ACLs.
+
+The TypeScript methods are `getACL(path, scope)`, `setACL(path, scope, acl)` and
+`clearDefaultACL(path)`. Go uses `GetACL(ctx, path, scope)`,
+`SetACL(ctx, path, scope, acl)` and `ClearDefaultACL(ctx, path)`; `ACL` and
+`ACLEntry` are exported by both clients. Read/write return the stored ACL;
+clear-default returns no value. Scope is `"access"` or `"default"`.
+
+```ts
+import type { ACL } from "@k2b/filegate";
+const defaults: ACL = {
+  entries: [
+    { tag: "owner", permissions: "rwx" },
+    { tag: "owningGroup", permissions: "rwx" },
+    { tag: "other", permissions: "---" },
+  ],
+};
+// Use actual application IDs and an already configured parent directory.
+await root.mkdir("teams/editors", { uid: 10001, gid: 20001, dirMode: "0700" });
+await root.setACL("teams/editors", "default", defaults);
+await root.setOwnership("teams/editors", { dirMode: "2770" });
+console.log(await root.stat("teams/editors"));
+console.log(await root.getACL("teams/editors", "default"));
+```
+
+Keep a new directory private until setup and read-back succeed. Ownership and
+ACL calls are separate, not a transaction; after errors, inspect before retrying.
+The assigned owner can access it during setup, and the service must retain enough
+privilege to finish configuration. Do not apply this sequence to an existing
+shared directory without accounting for its existing access requirements.
+
+ACL bodies are `{entries: [...]}`. Every nonempty ACL needs exactly one `owner`,
+`owningGroup` and `other`. Entries use `permissions`: `rwx`, `rw-`, `r-x`, `r--`,
+`-wx`, `-w-`, `--x` or `---`. Named entries use `tag: "user" | "group"` and a
+numeric `id` from 0 to 4294967294, unique per tag. PUT accepts 3–256 entries; empty
+PUT is invalid, including for default ACLs. Other tags have no ID. Named entries
+require an explicit `mask`, which limits owning-group and named-user/group
+permissions. Filegate does not recalculate a broader mask automatically.
+
+PUT replaces exactly one ACL scope. GET access returns the three base entries
+when no extended ACL exists. GET default returns `entries: []` for a supported
+directory without a default ACL. DELETE supports default only; replace access
+with its three base entries to remove extended access entries. Default ACLs are
+only valid for directories. All ACL methods support `.` for the root directory.
+
+An access ACL controls the current object. Its mask is reflected in the mode's
+group bits; explicit chmod changes the ACL's effective permissions. A default
+ACL controls future children, not the parent's access or existing children.
+Changing default ACLs does not recursively update anything.
+
+| Operation | Rights |
+| --- | --- |
+| New file, including copied files | Destination default ACL and setgid group; explicit ownership overrides apply. |
+| New directory | Inherits default ACL and setgid; explicit `dirMode` overrides mode. |
+| Overwrite or restore | Preserves owner, group, ordinary permission bits and access ACL unless explicitly changed; clears file setuid/setgid bits. |
+| Same-root move | Preserves current ownership, mode and ACLs. |
+
+With a default ACL, files initially inherit permissions limited by 0666. An
+explicit file mode is applied afterward and can widen or restrict effective ACL
+permissions. Directories inherit using 0777 or their explicitly requested mode;
+an explicit mode also sets their final access permissions. Without a default
+ACL, files default to 0644 and new
+directories request 0755 subject to the service umask. Existing parents are not
+modified. External applications can restrict inherited access by requesting
+`0600`; a default ACL does not enforce minimum rights against the creator.
+
+Linux filesystem/mount support and service privileges are required. HTTP 400
+uses `invalid_acl` for invalid ACL input, 403 uses `forbidden` for insufficient
+permissions and 501 uses `acl_not_supported` for unsupported POSIX ACLs. Reading
+an existing ACL larger than 256 entries returns 413; entries are not truncated.
+NFS `root_squash` may deny ownership or ACL changes; NFSv4 ACLs are not translated.
+Verify the actual mount and service identity. `getfacl -n PATH` is useful for
+operator checks but is not a daemon dependency. Test new files and subdirectories
+through Filegate and an external writer, then verify access as a group member.
 
 ## Operations
 
@@ -300,7 +395,10 @@ Avoid logging signed URL paths.
 
 Numeric UID/GID changes require privileges beyond an ordinary service account.
 `CAP_CHOWN` alone does not allow reading arbitrary user-owned mode-0600 files.
-Assess required privileges and NFS root-squash on the actual deployment. Do not
+Assess required privileges and NFS root-squash on the actual deployment. Metadata
+operations require read access to targets and read/traverse access to directories;
+retain service access when setting ACLs. Ownership and ACL changes can partially
+succeed before a later step fails, so read back the state before retrying. Do not
 change service identity, capabilities, mounts or production permissions without
 the user's operational authorization.
 
@@ -316,7 +414,8 @@ rebuildable index rows and authoritative identities, revision metadata, versions
 sessions and recovery records. Never remove it as an index repair technique.
 
 For a consistent full rollback, stop the daemon, coordinate external writers,
-and snapshot all roots and state together, preserving xattrs and inode identity.
+and snapshot all roots and state together, preserving ownership, modes, ACLs,
+xattrs and inode identity.
 Ordinary file-copy restore changes inode identity and is not a full history
 restore: copied xattrs do not reconnect old histories. Current contents can be
 imported as a new root/state; retain the original backup.
