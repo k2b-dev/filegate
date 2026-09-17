@@ -9,7 +9,7 @@ COPY domain ./domain
 COPY infra ./infra
 COPY adapter ./adapter
 COPY api ./api
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/k2b-dev/filegate/v4/cli.Version=${VERSION}" -o /out/filegate ./cmd/filegate
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/k2b-dev/filegate/v5/cli.Version=${VERSION}" -o /out/filegate ./cmd/filegate
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/filegate /app/filegate

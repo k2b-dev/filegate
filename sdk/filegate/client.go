@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	api "github.com/k2b-dev/filegate/v4/api/v1"
+	api "github.com/k2b-dev/filegate/v5/api/v1"
 	"io"
 	"net/http"
 	"net/url"

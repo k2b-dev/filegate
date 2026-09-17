@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v4/domain"
-	sdk "github.com/k2b-dev/filegate/v4/sdk/filegate"
+	"github.com/k2b-dev/filegate/v5/domain"
+	sdk "github.com/k2b-dev/filegate/v5/sdk/filegate"
 	"golang.org/x/sys/unix"
 )
 

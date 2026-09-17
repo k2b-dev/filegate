@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v4/domain"
+	"github.com/k2b-dev/filegate/v5/domain"
 	"golang.org/x/sys/unix"
 )
 

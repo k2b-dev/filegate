@@ -14,9 +14,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	httpadapter "github.com/k2b-dev/filegate/v4/adapter/http"
-	api "github.com/k2b-dev/filegate/v4/api/v1"
-	"github.com/k2b-dev/filegate/v4/domain"
+	httpadapter "github.com/k2b-dev/filegate/v5/adapter/http"
+	api "github.com/k2b-dev/filegate/v5/api/v1"
+	"github.com/k2b-dev/filegate/v5/domain"
 )
 
 func leaseRequest(t *testing.T, method, url, body string, backend bool, want int, out any) {

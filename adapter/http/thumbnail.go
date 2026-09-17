@@ -2,7 +2,7 @@ package httpadapter
 
 import (
 	"github.com/disintegration/imaging"
-	"github.com/k2b-dev/filegate/v4/domain"
+	"github.com/k2b-dev/filegate/v5/domain"
 	"image"
 	_ "image/gif"
 	"image/jpeg"

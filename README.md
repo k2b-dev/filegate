@@ -28,20 +28,20 @@ and install it with your system's package manager. Packages include the CLI,
 `filegate.service`, a service account and an example configuration at
 `/etc/filegate/conf.yaml`.
 
-The commands below install **v4.0.0**.
+The commands below install **v5.0.0**.
 For ARM64 systems, replace `amd64` with `arm64` in both the URL and filename.
 
 ### Debian
 
 ```sh
-curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.deb
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v5.0.0/filegate_linux_amd64.deb
 sudo apt install ./filegate_linux_amd64.deb
 ```
 
 ### Rocky Linux
 
 ```sh
-curl -fLO https://github.com/k2b-dev/filegate/releases/download/v4.0.0/filegate_linux_amd64.rpm
+curl -fLO https://github.com/k2b-dev/filegate/releases/download/v5.0.0/filegate_linux_amd64.rpm
 sudo dnf install ./filegate_linux_amd64.rpm
 ```
 

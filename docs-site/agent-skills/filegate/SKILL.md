@@ -144,7 +144,7 @@ See [permissions and ACLs](https://filegate.dev/docs/en/permissions) for a share
 
 ## Go API
 
-Import `github.com/k2b-dev/filegate/v4/sdk/filegate`. The SDK works on platforms
+Import `github.com/k2b-dev/filegate/v5/sdk/filegate`. The SDK works on platforms
 other than Linux; only the daemon requires Linux.
 
 ```go
