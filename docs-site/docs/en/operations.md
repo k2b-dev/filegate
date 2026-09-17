@@ -49,6 +49,19 @@ allocation and reflink support. Free space covers the entire filesystem,
 including data outside configured roots. Stats are invalidated when mutations
 change totals; refresh them when the dashboard needs a new measurement.
 
+## Upload storage and receipt retention
+
+Sessions accept uploads for 24 hours. Assembly temporarily stores the received
+segments and a complete file, requiring roughly twice the upload size before
+existing files, versions and parallel transfers are counted. Reserve enough disk
+space and enforce aggregate quotas in the application.
+
+Committed, aborted and expired session records remain available for seven days
+after their terminal transition; expiry retention starts at the session deadline.
+Maintenance expires sessions and removes obsolete records every five minutes.
+An application should reconcile reserved upload budgets within the retention
+window. A missing receipt afterward does not identify the upload outcome.
+
 ## Back up and recover
 
 Stop Filegate and coordinate external writers before a consistent backup. Save:
@@ -79,5 +92,7 @@ startup stops with an error. Preserve the state and logs for diagnosis.
 | Search/stats returns 413 | Raise the explicit `maxEntries` budget or narrow the operation; the server did not complete the scan. |
 | Direct URL returns 401 | Expiry, token rotation or a modified signed URL. Mint a fresh URL. |
 | Upload returns 409 | File conflict, changed duplicate segment, incomplete session or disabled feature. |
-| Upload returns 503 | Concurrent upload capacity reached; retry with backoff. |
+| Transfer returns 503 | Upload or archive stream capacity reached; retry with backoff. |
+| Session is `expired` | Create a new session; renewing a lease cannot extend the 24-hour session lifetime. |
+| Commit response is lost | Query the authenticated session endpoint or retry commit within the receipt retention window. |
 | Version capture fails | Available storage, filesystem errors and private storage permissions. The previous file remains current. |

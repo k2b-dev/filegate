@@ -35,10 +35,24 @@ New files inherit destination default ACLs and setgid groups; staged inodes do n
 inherit on rename. Replace staging ACLs before publication. Overwrites and restore
 retain ordinary permissions and access ACLs, but clear regular-file setuid/setgid.
 All directory creation uses the same policy, including implicit parents and copies.
+Explicit Mkdir prepares one directory privately and requires an existing parent;
+its ownership and ACLs must be complete before publication.
 Ownership overrides apply equally to direct uploads and resumable commits. ACL
 scopes are independent and never recursive; unsupported ACLs must not disable
 ordinary operations on index-free roots. Check actual permissions after setting
 special bits, since Linux can silently clear setgid.
+
+Session commit and lease renewal require backend authentication. Browser leases
+permit only status/write and optionally abort, defaulting to 60 seconds and capped
+at 300. Keep terminal session receipts for seven days; commit returns the original
+Node independently of later path changes. Persist terminal state before cleanup.
+Upload helpers never commit automatically. Index rebuild must retain receipts.
+
+ZIP selections bind the exact manifest hash into a short-lived capability. Never
+expand directory authorization beyond its selected subtree, expose private paths,
+follow symlinks or silently omit failed file reads. Bound traversal, archive names,
+manifest size, entry count, bytes and concurrent streams; stream without buffering
+whole files. Lease expiry gates request admission, not accepted download duration.
 
 Update TS types/client, Go client, Fibel and skill references with every public
 contract change. Raw SDK methods preserve non-success HTTP responses.

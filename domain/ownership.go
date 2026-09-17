@@ -113,7 +113,7 @@ func (r *Root) parentPermissions(p string) (os.FileInfo, ACL, error) {
 	return st, a, e
 }
 
-// makeDirectory is shared by mkdir, implicit parents, and directory copies.
+// makeDirectory is shared by implicit parents and directory copies.
 // Kernel creation inherits the parent's default ACL and setgid group.
 func (r *Root) makeDirectory(p string, o *Ownership) error {
 	if e := r.guard(); e != nil {
@@ -146,6 +146,17 @@ func (r *Root) makeDirectory(p string, o *Ownership) error {
 		return e
 	}
 	defer f.Close()
+	if len(acl.Entries) == 0 && (o == nil || o.DirMode == "") {
+		st, e := f.Stat()
+		if e != nil {
+			return e
+		}
+		// Filegate's default directory mode is explicit, like its default file
+		// mode, independent of the daemon umask. Retain kernel-inherited setgid.
+		if e = chmod(f, 0755|st.Mode()&os.ModeSetgid); e != nil {
+			return e
+		}
+	}
 	if e = r.applyOwner(f, o); e != nil {
 		return e
 	}

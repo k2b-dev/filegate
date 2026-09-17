@@ -29,9 +29,10 @@ The example creates a directory owned by UID 10001 and GID 20001, writable by
 that group. Use your own application's numeric IDs. Create it under an existing
 parent whose permissions are already appropriate.
 
-Ownership and ACL requests are separate operations. Keep the directory private
-until all requests succeed. If setup fails, inspect its current state before
-retrying or exposing it to users.
+Create the directory and its permissions in one request. Its parent must already
+exist. Filegate prepares the directory privately and publishes it only after the
+requested ownership and ACLs are applied. An existing target returns 409 and is
+not changed.
 
 ```ts
 import type { ACL } from "@k2b/filegate";
@@ -46,16 +47,28 @@ const defaults: ACL = {
   ],
 };
 
-await root.mkdir(path, { uid: 10001, gid: 20001, dirMode: "0700" });
-await root.setACL(path, "default", defaults);
-const directory = await root.setOwnership(path, { dirMode: "2770" });
+const directory = await root.mkdir(path, {
+  ownership: { uid: 10001, gid: 20001, dirMode: "2770" },
+  acl: { default: defaults },
+});
 const inherited = await root.getACL(path, "default");
 console.log(directory.uid, directory.gid, directory.mode, inherited.entries);
 ```
 
 Verify UID 10001, GID 20001, mode `2770` and the default entries before enabling
-application access. The owner still has access during setup. The service needs
-permission to finish configuring the directory after assigning its owner.
+application access. The service needs permission to finish configuring the
+directory after assigning its owner. You can also supply `acl.access` to set the
+access ACL in the same request. An explicit `dirMode` sets the final effective
+access permissions, including the ACL mask; named entries remain present. The
+default ACL is independent of this mode.
+
+Creation requires the destination and private staging area to share a filesystem.
+An additional mount inside a root can prevent publication. After a lost response,
+read the target state before retrying; a successful publication may already exist.
+
+During setup, prevent external writers from renaming or replacing the parent or
+changing its ownership, mode or ACLs. Inheritance uses the parent permissions read
+when setup starts; Filegate does not coordinate these changes with NFS writers.
 
 Without explicit overrides, new files inherit GID 20001 and group read/write
 access. New subdirectories also inherit setgid and the default ACL. Ordinary
@@ -114,8 +127,7 @@ including its mask when present.
 | Default-ACL change | Affects future children only. |
 
 Direct uploads and resumable commits use these same rules. Without a default ACL,
-new files default to 0644 and directories request 0755 subject to the service
-umask. With a default ACL, inherited file access is initially limited by 0666.
+new files default to 0644 and directories to 0755. With a default ACL, inherited file access is initially limited by 0666.
 An explicit file mode is applied afterward and can widen or restrict effective
 ACL permissions. Directories inherit using 0777, or an explicitly requested
 `dirMode`; an explicit mode also sets their final access permissions. Existing

@@ -3,7 +3,7 @@
 package integration_test
 
 import (
-	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	httpadapter "github.com/k2b-dev/filegate/v4/adapter/http"
@@ -80,7 +80,7 @@ func TestHTTPAndGoClientDirectOwnershipVersions(t *testing.T) {
 func TestDirectCapabilitiesBindSizeOwnershipAndMetadata(t *testing.T) {
 	_, s, c := server(t)
 	root := c.Root("test")
-	u, e := root.DirectUpload(ctx, "a", 3, domain.WriteOptions{Ownership: &domain.Ownership{Mode: "0600"}})
+	u, e := root.DirectUpload(ctx, "a", 3, domain.WriteOptions{Ownership: &domain.Ownership{Mode: "0600"}}, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -97,14 +97,14 @@ func TestDirectCapabilitiesBindSizeOwnershipAndMetadata(t *testing.T) {
 	if e != nil || n.Mode != "0600" {
 		t.Fatal(n, e)
 	}
-	u, e = root.DirectUpload(ctx, "short", 5, domain.WriteOptions{})
+	u, e = root.DirectUpload(ctx, "short", 5, domain.WriteOptions{}, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if _, e = sdk.PutDirect(ctx, u.URL, strings.NewReader("abc"), 3); e == nil {
 		t.Fatal("wrong size accepted")
 	}
-	u, e = root.DirectUpload(ctx, "tamper", 3, domain.WriteOptions{})
+	u, e = root.DirectUpload(ctx, "tamper", 3, domain.WriteOptions{}, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -134,45 +134,57 @@ func TestDirectCapabilitiesBindSizeOwnershipAndMetadata(t *testing.T) {
 func TestGoClientSessionRecoveryAndArchive(t *testing.T) {
 	_, _, c := server(t)
 	r := c.Root("test")
-	created, e := r.CreateSession(ctx, "empty-dir/a", 5, domain.WriteOptions{})
+	created, e := r.CreateSession(ctx, "empty-dir/a", 5, domain.WriteOptions{}, sdk.SessionLeaseRequest{})
 	if e != nil {
 		t.Fatal(e)
 	}
-	session := sdk.DirectSession{URL: created.URL}
+	session := sdk.DirectSession{URL: created.Lease.URL}
 	if _, e = session.Put(ctx, 0, strings.NewReader("hello")); e != nil {
 		t.Fatal(e)
 	}
-	n, e := session.Commit(ctx)
+	n, e := r.CommitSession(ctx, created.Session.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
-	again, e := session.Commit(ctx)
+	again, e := r.CommitSession(ctx, created.Session.ID)
 	if e != nil || again.ID != n.ID {
 		t.Fatal(again, e)
 	}
-	if _, e = r.Mkdir(ctx, "empty-dir/empty", nil); e != nil {
+	if _, e = r.Mkdir(ctx, "empty-dir/empty", domain.DirectoryOptions{}); e != nil {
 		t.Fatal(e)
 	}
-	resp, e := r.ArchiveRaw(ctx, "empty-dir")
+	lease, e := c.ArchiveLease(ctx, []sdk.ArchiveItem{{Root: "test", Path: "empty-dir", ArchivePath: "chosen"}}, 60)
+	if e != nil {
+		t.Fatal(e)
+	}
+	resp, e := c.ArchiveRaw(ctx, lease)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer resp.Body.Close()
-	tr := tar.NewReader(resp.Body)
+	data, e := io.ReadAll(resp.Body)
+	if e != nil {
+		t.Fatal(e)
+	}
+	zr, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if e != nil {
+		t.Fatal(e)
+	}
 	foundFile, foundDir := false, false
-	for {
-		h, e := tr.Next()
-		if e == io.EOF {
-			break
-		}
-		if e != nil {
-			t.Fatal(e)
-		}
-		if h.Name == "a" {
-			b, _ := io.ReadAll(tr)
+	for _, entry := range zr.File {
+		if entry.Name == "chosen/a" {
+			f, e := entry.Open()
+			if e != nil {
+				t.Fatal(e)
+			}
+			b, e := io.ReadAll(f)
+			f.Close()
+			if e != nil {
+				t.Fatal(e)
+			}
 			foundFile = string(b) == "hello"
 		}
-		if h.Name == "empty/" {
+		if entry.Name == "chosen/empty/" {
 			foundDir = true
 		}
 	}

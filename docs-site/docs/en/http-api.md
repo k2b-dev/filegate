@@ -26,9 +26,8 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `GET /entries` | `path`, `after`, `limit` | `{items,next?}`. |
 | `GET /search` | `q`, `path`, `after`, `limit`, `maxEntries` | Filename substring matches. |
 | `GET /content` | `path` | File bytes, Range/HEAD supported. |
-| `GET /archive` | `path` | TAR stream. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
-| `POST /directories` | `{path,ownership?}` | Created Node. |
+| `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
 | `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
 | `GET /acl` | `path`, `scope=access\|default` | `{entries}`. |
 | `PUT /acl` | `path`, `scope=access\|default`; body `{entries}` | Stored ACL. |
@@ -37,7 +36,11 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
 | `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
-| `POST /uploads/sessions` | `{path,size,onConflict?,ownership?,metadata?}` | Session plus scoped `url`. |
+| `POST /uploads/sessions` | `{path,size,expiresIn?,allowAbort?,onConflict?,ownership?,metadata?}` | `{session,lease}`. |
+| `GET /uploads/sessions/{id}` | — | Backend session status and optional commit result. |
+| `POST /uploads/sessions/{id}/lease` | `{expiresIn?,allowAbort?}` | `{url,expires,operations}`. |
+| `POST /uploads/sessions/{id}/commit` | — | Original committed Node. |
+| `DELETE /uploads/sessions/{id}` | — | Abort; 204. |
 | `GET /index` | — | Index status. |
 | `POST /index/rebuild` | — | Final index status. |
 | `GET /stats` | — | Cached recursive stats or null. |
@@ -91,20 +94,87 @@ ACLs work independently of indexing. They do not create versions or change
 children recursively. See [permissions and ACLs](/docs/en/permissions) for mask
 semantics, inheritance and shared-directory setup.
 
-## Scoped session URL
+## Directory creation
 
-Use the exact URL returned at session creation:
+`POST /directories` creates one new directory with optional ownership and access
+and default ACLs. Each ACL is an `{entries}` object using the schema above. The
+parent must exist. An existing target returns 409 without changing its metadata.
+The target appears only after the requested permissions have been applied.
+Staging and destination must share a filesystem; otherwise the operation returns
+501 (`unsupported_storage_layout`). After a lost response, read the target state
+before retrying. See [permissions](/docs/en/permissions) for an example.
 
-| Method | Meaning |
-| --- | --- |
-| `GET URL` | Status and received segment hashes. |
-| `PUT URL?segment=N` | Exact segment bytes. |
-| `POST URL` | Commit; repeated commits return the recorded result. |
-| `DELETE URL` | Abort/retire the session. |
+## Transfer leases
+
+`expiresIn` is an integer number of seconds, default 60, maximum 300. Zero also
+selects the default. Expiry limits the start of new requests; accepted downloads
+can continue. Leases are reusable and have no per-lease revocation. Upload write
+options are bound at creation and cannot be changed through a lease.
+
+Session creation returns separate `session` and `lease` objects. The session has
+`id`, `root`, `path`, `size`, `chunkSize`, `expires`, `state`, `options`, `segments`
+and `received`. Terminal sessions also expose `terminalAt`, `retainUntil` and,
+when committed, the original Node in `result`. Sessions last 24 hours, independent
+of their lease lifetime. Renewing a lease requires backend authentication and an
+open session; it does not extend the session deadline.
+
+Use the exact session lease URL:
+
+| Method | Required lease operation | Meaning |
+| --- | --- | --- |
+| `GET URL` | `status` | Transfer state and received segment hashes. |
+| `PUT URL?segment=N` | `write` | Exact segment bytes; session must remain open. |
+| `DELETE URL` | `abort` | Abort the session. |
+
+`status` and `write` are always granted. `abort` is granted only when the backend
+sets `allowAbort: true` for that lease. A lease never permits commit or renewal.
+Browser status omits the target path, write options and commit result.
+
+Session states are `open`, `committed`, `aborted` and `expired`. Terminal records
+are retained for seven days after completion or the session expiry time.
+Repeated commits return the original Node, even if its path no longer exists.
+Aborting a committed session returns `409 session_committed`; repeated aborts
+return 204. Writes and commits on aborted sessions return `409 session_aborted`;
+expired sessions return `410 session_expired`. A missing record after retention
+returns 404, which does not reveal whether the upload committed.
+
+## ZIP selection leases
+
+`POST /v1/downloads/archives` requires backend authentication:
+
+```json
+{
+  "items": [
+    { "root": "documents", "path": "report.pdf", "archivePath": "report.pdf" },
+    { "root": "shared", "path": "photos", "archivePath": "photos" }
+  ],
+  "expiresIn": 60
+}
+```
+
+The response is `{url,method:"POST",expires,manifest}`. Submit the exact returned
+`manifest` string to `url` as a single `manifest` field in an
+`application/x-www-form-urlencoded` body. The manifest hash is signed; altered
+selections are rejected. The response streams an uncompressed ZIP with attachment
+headers. ZIP downloads do not support HEAD or Range.
+
+Selections may span roots. A selected directory includes its whole current
+subtree; the backend must authorize that scope. Private Filegate entries are
+excluded from traversal, and explicit private selections are rejected. Symlinks,
+unsafe archive paths and duplicate, nested or case-colliding selection names are
+rejected. Limits: 1,000 selections, 128 KiB manifest, 10,000 expanded entries,
+20,000 scanned objects (including excluded private entries), depth 64, 100 GiB of
+file contents and four concurrent archive streams. Archive names must be valid
+UTF-8 and portable Windows-compatible relative paths. Collision checks normalize
+Unicode and ignore case. Use `path: "."` to select a root; an empty path is invalid.
+Read failures after response headers abort the stream. Selections are not snapshots.
+
+## Errors and retries
 
 Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
-invalid input, 401 for authentication/capability failure, 403 for permissions,
-404 for missing files, 409 for conflicts/disabled features, 413 for limits,
-501 for unsupported POSIX ACLs and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
-ambiguous transport failure: session commits are idempotent, while ordinary
-mutations require reading back the resulting state.
+invalid input, 401 for authentication/lease failure, 403 for permissions,
+404 for missing files or receipts, 409 for conflicts/closed sessions/disabled
+features, 410 for expired sessions, 413 for limits, 501 for unsupported POSIX ACLs
+or storage layout, and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+ambiguous transport failure: session commits are idempotent while their receipts
+are retained; ordinary mutations require reading back the resulting state.

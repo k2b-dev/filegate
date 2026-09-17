@@ -8,10 +8,11 @@ its TypeScript or Go client from your application backend.
 - Optional metadata index, updated by API writes and an explicit rebuild.
 - Optional version history on indexed roots: cooldown, manual snapshots,
   pinned versions, bounded JSON metadata, calendar retention.
-- Small direct PUT uploads and resumable direct upload sessions, including
-  numeric Unix ownership selected by the trusted backend.
-- Setgid directories and typed POSIX access/default ACLs for shared storage.
-- Directory browsing, bounded search, thumbnails, TAR downloads and transfers.
+- Short-lived direct transfer leases and resumable upload sessions with
+  backend-controlled publication and durable completion receipts.
+- Directory creation with Unix ownership, setgid and POSIX access/default ACLs
+  in one request.
+- Directory browsing, bounded search, thumbnails, ZIP selection downloads and transfers.
 - Dashboard metadata through the API.
 
 The application authenticates users and authorizes their file access. Filegate

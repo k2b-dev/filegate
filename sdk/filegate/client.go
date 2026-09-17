@@ -27,6 +27,11 @@ type ACLEntry = api.ACLEntry
 type ACL = api.ACL
 
 const (
+	SessionOpen      = api.SessionOpen
+	SessionCommitted = api.SessionCommitted
+	SessionAborted   = api.SessionAborted
+	SessionExpired   = api.SessionExpired
+
 	AccessACL      = api.AccessACL
 	DefaultACL     = api.DefaultACL
 	ACLOwner       = api.ACLOwner
@@ -40,6 +45,14 @@ const (
 type Metadata = api.Metadata
 type Version = api.Version
 type Session = api.Session
+type SessionStatus = api.SessionStatus
+type SessionState = api.SessionState
+type SessionLease = api.SessionLease
+type SessionLeaseRequest = api.SessionLeaseRequest
+type DirectoryOptions = api.DirectoryOptions
+type DirectoryACLs = api.DirectoryACLs
+type ArchiveItem = api.ArchiveItem
+type ArchiveLease = api.ArchiveLease
 type DirectURL = api.DirectURL
 type SessionCreated = api.SessionCreated
 type APIError struct {
@@ -174,12 +187,9 @@ func (r *Root) Search(ctx context.Context, text, p, after string, limit, maxEntr
 func (r *Root) ContentRaw(ctx context.Context, p string) (*http.Response, error) {
 	return r.client.Raw(ctx, "GET", r.endpoint("/content"), query(p), nil)
 }
-func (r *Root) ArchiveRaw(ctx context.Context, p string) (*http.Response, error) {
-	return r.client.Raw(ctx, "GET", r.endpoint("/archive"), query(p), nil)
-}
-func (r *Root) Mkdir(ctx context.Context, p string, o *Ownership) (Node, error) {
+func (r *Root) Mkdir(ctx context.Context, p string, o DirectoryOptions) (Node, error) {
 	var v Node
-	e := r.client.call(ctx, "POST", r.endpoint("/directories"), nil, api.MkdirRequest{Path: p, Ownership: o}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/directories"), nil, api.MkdirRequest{Path: p, DirectoryOptions: o}, &v)
 	return v, e
 }
 func (r *Root) Remove(ctx context.Context, p string, recursive bool) error {
@@ -192,9 +202,9 @@ func (r *Root) Transfer(ctx context.Context, req api.TransferRequest) (Node, err
 	e := r.client.call(ctx, "POST", r.endpoint("/transfers"), nil, req, &v)
 	return v, e
 }
-func (r *Root) DirectUpload(ctx context.Context, p string, size int64, o WriteOptions) (DirectURL, error) {
+func (r *Root) DirectUpload(ctx context.Context, p string, size int64, o WriteOptions, expiresIn int) (DirectURL, error) {
 	var v DirectURL
-	e := r.client.call(ctx, "POST", r.endpoint("/uploads/direct"), nil, api.DirectRequest{Path: p, Size: size, WriteOptions: o}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/uploads/direct"), nil, api.DirectRequest{Path: p, Size: size, WriteOptions: o, ExpiresIn: expiresIn}, &v)
 	return v, e
 }
 func (r *Root) DirectDownload(ctx context.Context, p string, expiresIn int) (DirectURL, error) {
@@ -203,7 +213,7 @@ func (r *Root) DirectDownload(ctx context.Context, p string, expiresIn int) (Dir
 	return v, e
 }
 func (r *Root) Put(ctx context.Context, p string, body io.Reader, size int64, o WriteOptions) (Node, error) {
-	u, e := r.DirectUpload(ctx, p, size, o)
+	u, e := r.DirectUpload(ctx, p, size, o, 0)
 	if e != nil {
 		return Node{}, e
 	}
@@ -226,9 +236,9 @@ func PutDirect(ctx context.Context, u string, body io.Reader, size int64) (Node,
 
 var directHTTP = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-func (r *Root) CreateSession(ctx context.Context, p string, size int64, o WriteOptions) (SessionCreated, error) {
+func (r *Root) CreateSession(ctx context.Context, p string, size int64, o WriteOptions, lease SessionLeaseRequest) (SessionCreated, error) {
 	var v SessionCreated
-	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions"), nil, api.SessionRequest{Path: p, Size: size, WriteOptions: o}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions"), nil, api.SessionRequest{Path: p, Size: size, WriteOptions: o, SessionLeaseRequest: lease}, &v)
 	return v, e
 }
 
@@ -256,19 +266,14 @@ func (s DirectSession) call(ctx context.Context, method string, index int, body 
 	}
 	return decode(resp, out)
 }
-func (s DirectSession) Status(ctx context.Context) (Session, error) {
-	var v Session
+func (s DirectSession) Status(ctx context.Context) (SessionStatus, error) {
+	var v SessionStatus
 	e := s.call(ctx, "GET", -1, nil, &v)
 	return v, e
 }
-func (s DirectSession) Put(ctx context.Context, index int, body io.Reader) (Session, error) {
-	var v Session
+func (s DirectSession) Put(ctx context.Context, index int, body io.Reader) (SessionStatus, error) {
+	var v SessionStatus
 	e := s.call(ctx, "PUT", index, body, &v)
-	return v, e
-}
-func (s DirectSession) Commit(ctx context.Context) (Node, error) {
-	var v Node
-	e := s.call(ctx, "POST", -1, nil, &v)
 	return v, e
 }
 func (s DirectSession) Abort(ctx context.Context) error { return s.call(ctx, "DELETE", -1, nil, nil) }
@@ -350,4 +355,40 @@ func (r *Root) ThumbnailRaw(ctx context.Context, p string, width, height int) (*
 	q.Set("width", strconv.Itoa(width))
 	q.Set("height", strconv.Itoa(height))
 	return r.client.Raw(ctx, "GET", r.endpoint("/thumbnail"), q, nil)
+}
+
+// Session returns backend status, including the immutable completion result.
+func (r *Root) Session(ctx context.Context, id string) (Session, error) {
+	var v Session
+	e := r.client.call(ctx, "GET", r.endpoint("/uploads/sessions/"+url.PathEscape(id)), nil, nil, &v)
+	return v, e
+}
+func (r *Root) SessionLease(ctx context.Context, id string, o SessionLeaseRequest) (SessionLease, error) {
+	var v SessionLease
+	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions/"+url.PathEscape(id)+"/lease"), nil, o, &v)
+	return v, e
+}
+func (r *Root) CommitSession(ctx context.Context, id string) (Node, error) {
+	var v Node
+	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions/"+url.PathEscape(id)+"/commit"), nil, nil, &v)
+	return v, e
+}
+func (r *Root) AbortSession(ctx context.Context, id string) error {
+	return r.client.call(ctx, "DELETE", r.endpoint("/uploads/sessions/"+url.PathEscape(id)), nil, nil, nil)
+}
+func (c *Client) ArchiveLease(ctx context.Context, items []ArchiveItem, expiresIn int) (ArchiveLease, error) {
+	var v ArchiveLease
+	e := c.call(ctx, "POST", "/v1/downloads/archives", nil, api.ArchiveRequest{Items: items, ExpiresIn: expiresIn}, &v)
+	return v, e
+}
+
+// ArchiveRaw streams the signed archive response without attaching backend credentials.
+// Non-success responses are returned unchanged; the caller closes the response body.
+func (c *Client) ArchiveRaw(ctx context.Context, lease ArchiveLease) (*http.Response, error) {
+	req, e := http.NewRequestWithContext(ctx, "POST", lease.URL, strings.NewReader(url.Values{"manifest": {lease.Manifest}}.Encode()))
+	if e != nil {
+		return nil, e
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return directHTTP.Do(req)
 }

@@ -11,6 +11,21 @@ type Page = domain.Page
 type RootInfo = domain.RootInfo
 type Version = domain.Version
 type Session = domain.Session
+type SessionStatus struct {
+	ID          string         `json:"id"`
+	Root        string         `json:"root"`
+	Size        int64          `json:"size"`
+	ChunkSize   int64          `json:"chunkSize"`
+	Expires     time.Time      `json:"expires"`
+	State       SessionState   `json:"state"`
+	Segments    map[int]string `json:"segments"`
+	Received    int64          `json:"received"`
+	TerminalAt  *time.Time     `json:"terminalAt,omitempty"`
+	RetainUntil *time.Time     `json:"retainUntil,omitempty"`
+}
+type SessionState = domain.SessionState
+type DirectoryOptions = domain.DirectoryOptions
+type DirectoryACLs = domain.DirectoryACLs
 type WriteOptions = domain.WriteOptions
 type Ownership = domain.Ownership
 type ACLScope = domain.ACLScope
@@ -20,6 +35,11 @@ type ACLEntry = domain.ACLEntry
 type ACL = domain.ACL
 
 const (
+	SessionOpen      = domain.SessionOpen
+	SessionCommitted = domain.SessionCommitted
+	SessionAborted   = domain.SessionAborted
+	SessionExpired   = domain.SessionExpired
+
 	AccessACL      = domain.AccessACL
 	DefaultACL     = domain.DefaultACL
 	ACLOwner       = domain.ACLOwner
@@ -47,18 +67,28 @@ type DirectURL struct {
 	Method  string    `json:"method"`
 	Expires time.Time `json:"expires"`
 }
+type SessionLeaseRequest struct {
+	ExpiresIn  int  `json:"expiresIn,omitempty"`
+	AllowAbort bool `json:"allowAbort,omitempty"`
+}
+type SessionLease struct {
+	URL        string    `json:"url"`
+	Expires    time.Time `json:"expires"`
+	Operations []string  `json:"operations"`
+}
 type SessionRequest struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
 	WriteOptions
+	SessionLeaseRequest
 }
 type SessionCreated struct {
-	Session
-	URL string `json:"url"`
+	Session Session      `json:"session"`
+	Lease   SessionLease `json:"lease"`
 }
 type MkdirRequest struct {
-	Path      string     `json:"path"`
-	Ownership *Ownership `json:"ownership,omitempty"`
+	Path string `json:"path"`
+	DirectoryOptions
 }
 type TransferRequest struct {
 	Path       string `json:"path"`
@@ -77,4 +107,20 @@ type System struct {
 	UptimeSeconds    int64     `json:"uptimeSeconds"`
 	Ready            bool      `json:"ready"`
 	MaintenanceError string    `json:"maintenanceError,omitempty"`
+}
+
+type ArchiveItem struct {
+	Root        string `json:"root"`
+	Path        string `json:"path"`
+	ArchivePath string `json:"archivePath"`
+}
+type ArchiveRequest struct {
+	Items     []ArchiveItem `json:"items"`
+	ExpiresIn int           `json:"expiresIn,omitempty"`
+}
+type ArchiveLease struct {
+	URL      string    `json:"url"`
+	Method   string    `json:"method"`
+	Expires  time.Time `json:"expires"`
+	Manifest string    `json:"manifest"`
 }

@@ -1,5 +1,5 @@
-import type { ACL, ACLScope, DirectURL, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, SessionCreated, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
-import { checked, putDirect } from "./utils.js";
+import type { ACL, ACLScope, ArchiveItem, ArchiveLease, DirectoryOptions, DirectURL, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, Session, SessionCreated, SessionLease, SessionLeaseRequest, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
+import { archiveRaw, checked, putDirect } from "./utils.js";
 export * from "./types.js";
 export { FilegateError } from "./utils.js";
 export interface FilegateConfig { baseUrl: string; token: string; fetch?: typeof fetch }
@@ -15,6 +15,8 @@ export class Filegate {
   root(name: string): RootClient { if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) throw new TypeError("Invalid root"); return new RootClient(this, name); }
   system(signal?: AbortSignal): Promise<System> { return this.json("GET", "/v1/system", undefined, undefined, signal); }
   roots(signal?: AbortSignal): Promise<RootInfo[]> { return this.json("GET", "/v1/roots", undefined, undefined, signal); }
+  archiveLease(items: ArchiveItem[], expiresIn?: number): Promise<ArchiveLease> { return this.json("POST", "/v1/downloads/archives", undefined, { items, expiresIn }); }
+  archiveRaw(lease: ArchiveLease, signal?: AbortSignal): Promise<Response> { return archiveRaw(lease, { fetch: this.fetch, signal }); }
   async raw(method: string, path: string, query?: Record<string, string | number | boolean | undefined>, body?: unknown, signal?: AbortSignal): Promise<Response> {
     const url = new URL(path, this.config.baseUrl);
     if (url.origin !== new URL(this.config.baseUrl).origin) throw new TypeError("Request must stay on Filegate origin");
@@ -33,7 +35,6 @@ export class RootClient {
   search(q: string, options: { path?: string; after?: string; limit?: number; maxEntries?: number; signal?: AbortSignal } = {}): Promise<Page> { const { signal, ...query } = options; return this.client.json("GET", `${this.prefix}/search`, { q, ...query }, undefined, signal); }
   contentRaw(path: string, signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/content`, { path }, undefined, signal); }
   thumbnailRaw(path: string, width = 256, height = 256): Promise<Response> { return this.client.raw("GET", `${this.prefix}/thumbnail`, { path, width, height }); }
-  archiveRaw(path = ".", signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/archive`, { path }, undefined, signal); }
   setOwnership(path: string, ownership: Ownership): Promise<Node> { return this.client.json("PATCH", `${this.prefix}/ownership`, { path }, ownership); }
   /** Read an access or default ACL; absent default ACLs have empty entries. */
   getACL(path: string, scope: ACLScope): Promise<ACL> { return this.client.json("GET", `${this.prefix}/acl`, { path, scope }); }
@@ -41,12 +42,16 @@ export class RootClient {
   setACL(path: string, scope: ACLScope, acl: ACL): Promise<ACL> { return this.client.json("PUT", `${this.prefix}/acl`, { path, scope }, acl); }
   /** Remove future-child inheritance without changing existing children. */
   clearDefaultACL(path: string): Promise<void> { return this.client.json("DELETE", `${this.prefix}/acl`, { path, scope: "default" }); }
-  mkdir(path: string, ownership?: Ownership): Promise<Node> { return this.client.json("POST", `${this.prefix}/directories`, undefined, { path, ownership }); }
+  mkdir(path: string, options: DirectoryOptions = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/directories`, undefined, { path, ...options }); }
   remove(path: string, recursive = false): Promise<void> { return this.client.json("DELETE", `${this.prefix}/files`, { path, recursive }); }
   transfer(path: string, targetRoot: string, targetPath: string, options: WriteOptions & { move?: boolean } = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/transfers`, undefined, { path, targetRoot, targetPath, ...options }); }
   directUpload(path: string, size: number, options: WriteOptions & { expiresIn?: number } = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/uploads/direct`, undefined, { path, size, ...options }); }
-  directDownload(path: string, expiresIn = 900): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { path, expiresIn }); }
-  createSession(path: string, size: number, options: WriteOptions = {}): Promise<SessionCreated> { return this.client.json("POST", `${this.prefix}/uploads/sessions`, undefined, { path, size, ...options }); }
+  directDownload(path: string, expiresIn?: number): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { path, expiresIn }); }
+  createSession(path: string, size: number, options: WriteOptions & SessionLeaseRequest = {}): Promise<SessionCreated> { return this.client.json("POST", `${this.prefix}/uploads/sessions`, undefined, { path, size, ...options }); }
+  session(id: string): Promise<Session> { return this.client.json("GET", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}`); }
+  sessionLease(id: string, options: SessionLeaseRequest = {}): Promise<SessionLease> { return this.client.json("POST", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}/lease`, undefined, options); }
+  commitSession(id: string): Promise<Node> { return this.client.json("POST", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}/commit`); }
+  abortSession(id: string): Promise<void> { return this.client.json("DELETE", `${this.prefix}/uploads/sessions/${encodeURIComponent(id)}`); }
   async put(path: string, body: Blob, options: WriteOptions = {}, signal?: AbortSignal): Promise<Node> { const capability = await this.directUpload(path, body.size, options); return putDirect(capability.url, body, { fetch: this.client.fetch, signal }); }
   rebuild(signal?: AbortSignal): Promise<IndexStatus> { return this.client.json("POST", `${this.prefix}/index/rebuild`, undefined, undefined, signal); }
   refreshStats(maxEntries = 100000, signal?: AbortSignal): Promise<Stats> { return this.client.json("POST", `${this.prefix}/stats/refresh`, { maxEntries }, undefined, signal); }

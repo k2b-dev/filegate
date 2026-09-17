@@ -1,6 +1,6 @@
 ---
 name: filegate
-description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, direct uploads and resumable sessions, version history, Unix ownership, setgid, POSIX ACLs, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
+description: Integrate or operate Filegate, the Linux filesystem gateway. Use for the @k2b/filegate TypeScript client, Go SDK, root-scoped HTTP API, transfer leases, resumable sessions, ZIP selection downloads, version history, Unix ownership, setgid, POSIX ACLs, systemd deployment, static configuration, index rebuilds, dashboard metadata, backups or recovery. The application owns user authorization; Filegate serves independent named roots.
 ---
 
 # Filegate
@@ -39,8 +39,10 @@ operations below. It is also published by the Fibel agent-skills plugin.
 
 1. Keep the full bearer token on trusted backends. Authorize the application user
    before issuing a scoped direct upload/download/session URL.
-2. Prefer small direct PUTs and resumable sessions for large files. Both bind
-   ownership, metadata and conflict policy when the backend creates the transfer.
+2. Use sessions for every file size when the backend must approve publication.
+   Direct PUTs publish immediately. Both bind ownership, metadata and conflict
+   policy at creation. Browser helpers never commit; recheck access and budget on
+   the backend before committing.
 3. Default conflict policy is `error`; choose `overwrite` or `rename` explicitly.
 4. Use relative paths, never absolute server paths. Store `{root,id}` for indexed
    identity references, or `{root,path}` when indexing is off.
@@ -48,7 +50,9 @@ operations below. It is also published by the Fibel agent-skills plugin.
    response bodies. Never buffer a large relay into memory.
 6. Do not delete `state_dir` to rebuild. Only the daemon owns live writable state;
    CLI rebuild/prune/stats calls its API.
-7. Use the HTTP contract below and current API types to select routes and request
+7. A directory ZIP selection authorizes its entire current subtree. Do not use it
+   to aggregate files with mixed access permissions.
+8. Use the HTTP contract below and current API types to select routes and request
    fields when writing integration code.
 
 When writing integration code, include construction, the relevant operation,
@@ -80,9 +84,10 @@ try {
 ```
 
 `put` mints a direct URL and uploads through it. `directUpload` returns the URL
-instead, suitable for an authorized browser. `createSession` returns a scoped
-session URL for larger uploads. Import token-free browser helpers from
-`@k2b/filegate/utils`: `DirectSession`, `putDirect`, `segments` and `sha256`.
+instead, suitable for an authorized browser. `createSession` returns
+`{session,lease}` for any file size, including zero. Import token-free browser
+helpers from `@k2b/filegate/utils`: `DirectSession`, `putDirect`, `archiveRaw`,
+`downloadArchive`, `segments` and `sha256`.
 
 ### Root operations
 
@@ -93,13 +98,18 @@ session URL for larger uploads. Import token-free browser helpers from
 | `resolve(id)` | Current path for an indexed file ID. |
 | `list(path, { after, limit })` | Alphabetical page of immediate children. |
 | `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
-| `mkdir(path, ownership?)` | Create a directory and missing parents. |
+| `mkdir(path, { ownership, acl })` | Create one configured directory; parent must exist. |
 | `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
 | `getACL(path, scope)` | Read the access or default ACL. |
 | `setACL(path, scope, acl)` | Replace one ACL; returns its stored entries. |
 | `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `createSession(path, size, options?)` | Create a session and its first lease. |
+| `session(id)` | Read backend status and any recorded commit result. |
+| `sessionLease(id, { expiresIn, allowAbort })` | Issue a new lease for an open session. |
+| `commitSession(id)` | Publish or return the original commit result. |
+| `abortSession(id)` | Abort an open session; cannot remove a committed result. |
 | `rebuild(signal?)` | Rebuild this root's metadata index. |
 | `refreshStats(maxEntries?, signal?)` | Explicit bounded filesystem accounting. |
 | `versions(path)` | History, newest first. |
@@ -118,10 +128,19 @@ List and search pages expose `next`. Pass it unchanged as `after` until absent.
 Page limits are 1–1000. Search without an index returns 413 when its traversal
 budget is exhausted. Narrow the search path or increase `maxEntries` to retry.
 
-Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
+Root streaming methods `contentRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
+
+### Permissions and ACLs
+
+Use `getACL(path, "access" | "default")`, `setACL(path, scope, acl)` and
+`clearDefaultACL(path)`. The exported `ACL` and `ACLEntry` types describe numeric
+identities and explicit permission strings. These methods work without an index.
+See [permissions and ACLs](https://filegate.dev/docs/en/permissions) for a shared-directory setup and
+[the HTTP ACL contract](https://filegate.dev/docs/en/http-api#posix-acls) for entry constraints.
+
 
 ## Go API
 
@@ -145,44 +164,55 @@ fmt.Println(node.Path, node.ID)
 ```
 
 `Put` uses a scoped direct upload. To hand the transfer to another client, call
-`DirectUpload(ctx, path, size, options)` and return its URL. The byte count must
-match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
+`DirectUpload(ctx, path, size, options, expiresIn)` and return its URL. Set
+`expiresIn` to 0 for the 60-second default, or choose 1–300 seconds. The byte count
+must match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
 
 ### Resumable upload
 
 ```go
-created, err := root.CreateSession(ctx, "large.bin", size, filegate.WriteOptions{})
+created, err := root.CreateSession(ctx, "large.bin", size,
+    filegate.WriteOptions{}, filegate.SessionLeaseRequest{ExpiresIn: 60})
 if err != nil { return err }
-session := filegate.DirectSession{URL: created.URL}
+session := filegate.DirectSession{URL: created.Lease.URL}
 // Send each 8 MiB segment; the last contains the remaining bytes.
 _, err = session.Put(ctx, 0, firstSegment)
 if err != nil { return err }
 status, err := session.Status(ctx)
 if err != nil { return err }
 _ = status.Segments
-// After all segments:
-node, err := session.Commit(ctx)
+// Backend, after all segments and a fresh access/budget check:
+node, err := root.CommitSession(ctx, created.Session.ID)
+if err != nil { return err }
+fmt.Println(node.Path, node.Size)
 ```
 
-`DirectSession` needs only its scoped URL. `Status`, `Put`, `Commit` and `Abort`
-all accept a context. The `segments` subpackage provides pure segment arithmetic
-and checksums; `relay` provides streaming HTTP helpers.
+`DirectSession` needs only its scoped lease URL. `Status`, `Put` and `Abort`
+all accept a context; there is no direct commit operation. Abort requires a lease
+issued with `AllowAbort: true`. `Status` and `Put` return `SessionStatus`, which
+omits backend options and the commit result. Use `root.Session(ctx, id)` for
+backend status and `root.SessionLease(ctx, id, options)` to issue another lease.
+Leases default to 60 seconds, maximum 300; sessions last 24 hours and retain
+terminal results for seven days. The `segments` subpackage provides pure segment
+arithmetic and checksums; `relay` provides streaming HTTP helpers.
 
 ### API map
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
 `SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
 `DirectUpload`, `DirectDownload`,
-`CreateSession`, `Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
+`CreateSession`, `Session`, `SessionLease`, `CommitSession`, `AbortSession`,
+`Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
 Each operation takes a `context.Context` first. Request structs shared with the
 wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
 
-`ContentRaw`, `ArchiveRaw`, `ThumbnailRaw` and `VersionContentRaw` return
+Root methods `ContentRaw`, `ThumbnailRaw` and `VersionContentRaw` return
 `*http.Response` unchanged on HTTP errors. Always check `StatusCode` and close
 the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
+
 
 ## HTTP contract
 
@@ -205,9 +235,8 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `GET /entries` | `path`, `after`, `limit` | `{items,next?}`. |
 | `GET /search` | `q`, `path`, `after`, `limit`, `maxEntries` | Filename substring matches. |
 | `GET /content` | `path` | File bytes, Range/HEAD supported. |
-| `GET /archive` | `path` | TAR stream. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
-| `POST /directories` | `{path,ownership?}` | Created Node. |
+| `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
 | `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
 | `GET /acl` | `path`, `scope=access\|default` | `{entries}`. |
 | `PUT /acl` | `path`, `scope=access\|default`; body `{entries}` | Stored ACL. |
@@ -216,7 +245,11 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,onConflict?,ownership?,metadata?}` | Destination Node. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,onConflict?,ownership?,metadata?}` | `{url,method,expires}`. |
 | `POST /downloads/direct` | `{path,expiresIn?}` | `{url,method,expires}`. |
-| `POST /uploads/sessions` | `{path,size,onConflict?,ownership?,metadata?}` | Session plus scoped `url`. |
+| `POST /uploads/sessions` | `{path,size,expiresIn?,allowAbort?,onConflict?,ownership?,metadata?}` | `{session,lease}`. |
+| `GET /uploads/sessions/{id}` | — | Backend session status and optional commit result. |
+| `POST /uploads/sessions/{id}/lease` | `{expiresIn?,allowAbort?}` | `{url,expires,operations}`. |
+| `POST /uploads/sessions/{id}/commit` | — | Original committed Node. |
+| `DELETE /uploads/sessions/{id}` | — | Abort; 204. |
 | `GET /index` | — | Index status. |
 | `POST /index/rebuild` | — | Final index status. |
 | `GET /stats` | — | Cached recursive stats or null. |
@@ -236,40 +269,178 @@ size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
 bounded by 1000. Search/stats traversal defaults to 100,000 entries and accepts
 an explicit maximum of 10,000,000.
 
-### Scoped session URL
+### POSIX ACLs
 
-Use the exact URL returned at session creation:
+ACL routes require both `path` and `scope=access|default`. They also support `.`
+for the root itself. Default ACLs apply only to directories. PUT replaces one
+scope and returns its stored ACL; DELETE supports only `scope=default`.
 
-| Method | Meaning |
-| --- | --- |
-| `GET URL` | Status and received segment hashes. |
-| `PUT URL?segment=N` | Exact segment bytes. |
-| `POST URL` | Commit; repeated commits return the recorded result. |
-| `DELETE URL` | Abort/retire the session. |
+```json
+{
+  "entries": [
+    { "tag": "owner", "permissions": "rwx" },
+    { "tag": "owningGroup", "permissions": "rwx" },
+    { "tag": "group", "id": 20002, "permissions": "r-x" },
+    { "tag": "mask", "permissions": "rwx" },
+    { "tag": "other", "permissions": "---" }
+  ]
+}
+```
+
+Nonempty ACLs require exactly one `owner`, `owningGroup` and `other`. Named `user`
+and `group` entries require a nonnegative numeric `id`, unique within the tag,
+and an explicit `mask`. IDs range from 0 to 4294967294. PUT accepts 3–256 entries;
+an empty array is invalid even for the default scope. Use DELETE to remove it.
+Other tags do not accept `id`. Permission strings are
+`rwx`, `rw-`, `r-x`, `r--`, `-wx`, `-w-`, `--x` or `---`.
+
+Reading an access ACL returns at least its three base entries. Reading a default
+ACL returns an empty entries array when none is present. Unsupported POSIX ACLs
+return 501 (`acl_not_supported`). Invalid ACL input returns 400 (`invalid_acl`);
+insufficient permissions return 403 (`forbidden`). Existing ACLs larger than
+256 entries return 413 (`limit_exceeded`) when read, rather than being truncated.
+ACLs work independently of indexing. They do not create versions or change
+children recursively. See [permissions and ACLs](https://filegate.dev/docs/en/permissions) for mask
+semantics, inheritance and shared-directory setup.
+
+### Directory creation
+
+`POST /directories` creates one new directory with optional ownership and access
+and default ACLs. Each ACL is an `{entries}` object using the schema above. The
+parent must exist. An existing target returns 409 without changing its metadata.
+The target appears only after the requested permissions have been applied.
+Staging and destination must share a filesystem; otherwise the operation returns
+501 (`unsupported_storage_layout`). After a lost response, read the target state
+before retrying. See [permissions](https://filegate.dev/docs/en/permissions) for an example.
+
+### Transfer leases
+
+`expiresIn` is an integer number of seconds, default 60, maximum 300. Zero also
+selects the default. Expiry limits the start of new requests; accepted downloads
+can continue. Leases are reusable and have no per-lease revocation. Upload write
+options are bound at creation and cannot be changed through a lease.
+
+Session creation returns separate `session` and `lease` objects. The session has
+`id`, `root`, `path`, `size`, `chunkSize`, `expires`, `state`, `options`, `segments`
+and `received`. Terminal sessions also expose `terminalAt`, `retainUntil` and,
+when committed, the original Node in `result`. Sessions last 24 hours, independent
+of their lease lifetime. Renewing a lease requires backend authentication and an
+open session; it does not extend the session deadline.
+
+Use the exact session lease URL:
+
+| Method | Required lease operation | Meaning |
+| --- | --- | --- |
+| `GET URL` | `status` | Transfer state and received segment hashes. |
+| `PUT URL?segment=N` | `write` | Exact segment bytes; session must remain open. |
+| `DELETE URL` | `abort` | Abort the session. |
+
+`status` and `write` are always granted. `abort` is granted only when the backend
+sets `allowAbort: true` for that lease. A lease never permits commit or renewal.
+Browser status omits the target path, write options and commit result.
+
+Session states are `open`, `committed`, `aborted` and `expired`. Terminal records
+are retained for seven days after completion or the session expiry time.
+Repeated commits return the original Node, even if its path no longer exists.
+Aborting a committed session returns `409 session_committed`; repeated aborts
+return 204. Writes and commits on aborted sessions return `409 session_aborted`;
+expired sessions return `410 session_expired`. A missing record after retention
+returns 404, which does not reveal whether the upload committed.
+
+### ZIP selection leases
+
+`POST /v1/downloads/archives` requires backend authentication:
+
+```json
+{
+  "items": [
+    { "root": "documents", "path": "report.pdf", "archivePath": "report.pdf" },
+    { "root": "shared", "path": "photos", "archivePath": "photos" }
+  ],
+  "expiresIn": 60
+}
+```
+
+The response is `{url,method:"POST",expires,manifest}`. Submit the exact returned
+`manifest` string to `url` as a single `manifest` field in an
+`application/x-www-form-urlencoded` body. The manifest hash is signed; altered
+selections are rejected. The response streams an uncompressed ZIP with attachment
+headers. ZIP downloads do not support HEAD or Range.
+
+Selections may span roots. A selected directory includes its whole current
+subtree; the backend must authorize that scope. Private Filegate entries are
+excluded from traversal, and explicit private selections are rejected. Symlinks,
+unsafe archive paths and duplicate, nested or case-colliding selection names are
+rejected. Limits: 1,000 selections, 128 KiB manifest, 10,000 expanded entries,
+20,000 scanned objects (including excluded private entries), depth 64, 100 GiB of
+file contents and four concurrent archive streams. Archive names must be valid
+UTF-8 and portable Windows-compatible relative paths. Collision checks normalize
+Unicode and ignore case. Use `path: "."` to select a root; an empty path is invalid.
+Read failures after response headers abort the stream. Selections are not snapshots.
+
+### Errors and retries
 
 Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
-invalid input, 401 for authentication/capability failure, 403 for permissions,
-404 for missing files, 409 for conflicts/disabled features, 413 for limits,
-501 for unsupported POSIX ACLs and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
-ambiguous transport failure: session commits are idempotent, while ordinary
-mutations require reading back the resulting state.
+invalid input, 401 for authentication/lease failure, 403 for permissions,
+404 for missing files or receipts, 409 for conflicts/closed sessions/disabled
+features, 410 for expired sessions, 413 for limits, 501 for unsupported POSIX ACLs
+or storage layout, and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
+ambiguous transport failure: session commits are idempotent while their receipts
+are retained; ordinary mutations require reading back the resulting state.
 
-## Permissions and POSIX ACLs
+## Transfer examples
 
-`mode` and `dirMode` are octal strings. File `mode` accepts up to `0777`;
-`dirMode` also accepts setgid, such as `"2770"`. For directory creation and
-`setOwnership` on a directory, use `dirMode`. Read modes include special bits.
-UID and GID must be supplied together. UID/GID-only changes preserve directory
-setgid, mode and existing access ACLs.
+```ts
+// Backend: authorize a unique inbox path and reserve the declared byte count.
+const created = await root.createSession("inbox/unique.txt", 5, {
+  onConflict: "error", expiresIn: 60, allowAbort: true,
+});
+// Browser: receive only the lease and application-level session reference.
+import { DirectSession, downloadArchive } from "@k2b/filegate/utils";
+const status = await new DirectSession(created.lease.url).upload(new Blob(["hello"]));
+console.log(status.state, status.received);
+// Backend: reauthorize and recheck budget before publishing.
+const node = await root.commitSession(created.session.id);
+console.log(node.path, node.size);
+console.log(await root.session(created.session.id));
 
-The TypeScript methods are `getACL(path, scope)`, `setACL(path, scope, acl)` and
-`clearDefaultACL(path)`. Go uses `GetACL(ctx, path, scope)`,
-`SetACL(ctx, path, scope, acl)` and `ClearDefaultACL(ctx, path)`; `ACL` and
-`ACLEntry` are exported by both clients. Read/write return the stored ACL;
-clear-default returns no value. Scope is `"access"` or `"default"`.
+// Backend: authorize the whole selected subtree before requesting a ZIP lease.
+const archive = await files.archiveLease([
+  { root: "documents", path: "reports", archivePath: "reports" },
+]);
+// Browser: native form streams the response without a JavaScript Blob.
+downloadArchive(archive);
+```
+
+After lease expiry, reauthorize on the backend and call
+`root.sessionLease(id, { expiresIn: 60, allowAbort: true })`. Construct a new
+`DirectSession` with that URL and resume the same file. Sessions accept empty files
+and use 8 MiB segments, at most 10,000. Duplicate bytes are idempotent; changed
+bytes for an existing segment return 409. `upload` checks already uploaded segment
+hashes, sends missing segments and returns status without publishing.
+
+Use global `files.archiveRaw(lease, signal?)` or token-free
+`archiveRaw(lease, { fetch, signal })` for streaming HTTP relays. In Go use
+`client.ArchiveLease(ctx, []filegate.ArchiveItem{...}, expiresIn)` and
+`client.ArchiveRaw(ctx, lease)`. Check the response status and close its body.
+Do not use `response.blob()` for large archives.
+
+## Shared-directory setup
+
+The example creates a directory owned by UID 10001 and GID 20001, writable by
+that group. Use your own application's numeric IDs. Create it under an existing
+parent whose permissions are already appropriate.
+
+Create the directory and its permissions in one request. Its parent must already
+exist. Filegate prepares the directory privately and publishes it only after the
+requested ownership and ACLs are applied. An existing target returns 409 and is
+not changed.
 
 ```ts
 import type { ACL } from "@k2b/filegate";
+
+const root = files.root("shared");
+const path = "teams/editors";
 const defaults: ACL = {
   entries: [
     { tag: "owner", permissions: "rwx" },
@@ -277,63 +448,98 @@ const defaults: ACL = {
     { tag: "other", permissions: "---" },
   ],
 };
-// Use actual application IDs and an already configured parent directory.
-await root.mkdir("teams/editors", { uid: 10001, gid: 20001, dirMode: "0700" });
-await root.setACL("teams/editors", "default", defaults);
-await root.setOwnership("teams/editors", { dirMode: "2770" });
-console.log(await root.stat("teams/editors"));
-console.log(await root.getACL("teams/editors", "default"));
+
+const directory = await root.mkdir(path, {
+  ownership: { uid: 10001, gid: 20001, dirMode: "2770" },
+  acl: { default: defaults },
+});
+const inherited = await root.getACL(path, "default");
+console.log(directory.uid, directory.gid, directory.mode, inherited.entries);
 ```
 
-Keep a new directory private until setup and read-back succeed. Ownership and
-ACL calls are separate, not a transaction; after errors, inspect before retrying.
-The assigned owner can access it during setup, and the service must retain enough
-privilege to finish configuration. Do not apply this sequence to an existing
-shared directory without accounting for its existing access requirements.
+Verify UID 10001, GID 20001, mode `2770` and the default entries before enabling
+application access. The service needs permission to finish configuring the
+directory after assigning its owner. You can also supply `acl.access` to set the
+access ACL in the same request. An explicit `dirMode` sets the final effective
+access permissions, including the ACL mask; named entries remain present. The
+default ACL is independent of this mode.
 
-ACL bodies are `{entries: [...]}`. Every nonempty ACL needs exactly one `owner`,
-`owningGroup` and `other`. Entries use `permissions`: `rwx`, `rw-`, `r-x`, `r--`,
-`-wx`, `-w-`, `--x` or `---`. Named entries use `tag: "user" | "group"` and a
-numeric `id` from 0 to 4294967294, unique per tag. PUT accepts 3–256 entries; empty
-PUT is invalid, including for default ACLs. Other tags have no ID. Named entries
-require an explicit `mask`, which limits owning-group and named-user/group
-permissions. Filegate does not recalculate a broader mask automatically.
+Creation requires the destination and private staging area to share a filesystem.
+An additional mount inside a root can prevent publication. After a lost response,
+read the target state before retrying; a successful publication may already exist.
 
-PUT replaces exactly one ACL scope. GET access returns the three base entries
-when no extended ACL exists. GET default returns `entries: []` for a supported
-directory without a default ACL. DELETE supports default only; replace access
-with its three base entries to remove extended access entries. Default ACLs are
-only valid for directories. All ACL methods support `.` for the root directory.
+During setup, prevent external writers from renaming or replacing the parent or
+changing its ownership, mode or ACLs. Inheritance uses the parent permissions read
+when setup starts; Filegate does not coordinate these changes with NFS writers.
 
-An access ACL controls the current object. Its mask is reflected in the mode's
-group bits; explicit chmod changes the ACL's effective permissions. A default
-ACL controls future children, not the parent's access or existing children.
-Changing default ACLs does not recursively update anything.
+Without explicit overrides, new files inherit GID 20001 and group read/write
+access. New subdirectories also inherit setgid and the default ACL. Ordinary
+files do not inherit execute permission. An external program that explicitly
+creates a file with `0600` can restrict inherited access: a default ACL provides
+inheritance, not a mandatory minimum permission policy.
+
+## Read and replace ACLs
+
+An **access ACL** controls access to the current file or directory. A **default
+ACL** is a directory template for future children; it does not grant access to
+the directory itself. Changing or removing it does not update existing children.
+
+`getACL(path, "access")` returns the owner, owning-group and other entries even
+when no extended ACL is stored. `getACL(path, "default")` returns `{ entries: [] }`
+when a supported directory has no default ACL. Unsupported ACLs return an error,
+not an empty result.
+
+`setACL` replaces exactly the requested scope. To add a named group, read the
+current ACL, retain the entries you need and send the complete replacement:
+
+```ts
+await root.setACL("teams/editors", "access", {
+  entries: [
+    { tag: "owner", permissions: "rwx" },
+    { tag: "owningGroup", permissions: "rwx" },
+    { tag: "group", id: 20002, permissions: "r-x" },
+    { tag: "mask", permissions: "rwx" },
+    { tag: "other", permissions: "---" },
+  ],
+});
+```
+
+Every nonempty ACL needs one `owner`, `owningGroup` and `other` entry. Named `user`
+and `group` entries require a numeric `id` and an explicit `mask`. The mask limits
+all named entries and the owning group; Filegate does not widen it automatically.
+PUT accepts 3–256 entries; IDs range from 0 to 4294967294. An empty PUT is invalid;
+use `clearDefaultACL` to remove a default ACL. Permissions use exactly three characters: `rwx`, `rw-`, `r-x`, `r--`, `-wx`, `-w-`,
+`--x` or `---`. IDs must be unique within each named entry type.
+
+Use `clearDefaultACL(path)` to remove default inheritance. To remove extended
+access entries, replace the access ACL with only owner, owning-group and other.
+An explicit access-ACL replacement can change the mode reported by `stat`.
+Likewise, setting `mode` or `dirMode` changes the ACL's effective permissions,
+including its mask when present.
+
+## Rights across file operations
 
 | Operation | Rights |
 | --- | --- |
-| New file, including copied files | Destination default ACL and setgid group; explicit ownership overrides apply. |
-| New directory | Inherits default ACL and setgid; explicit `dirMode` overrides mode. |
-| Overwrite or restore | Preserves owner, group, ordinary permission bits and access ACL unless explicitly changed; clears file setuid/setgid bits. |
-| Same-root move | Preserves current ownership, mode and ACLs. |
+| New upload or copied file | Inherits destination default ACL and setgid group; explicit ownership overrides apply. |
+| New directory or parent | Inherits destination default ACL and setgid; explicit `dirMode` overrides the mode. |
+| Overwrite or restore | Preserves ownership, ordinary permission bits and access ACL unless explicitly changed; clears file setuid/setgid bits. |
+| Same-root move | Preserves the existing inode's ownership, mode and ACLs. |
+| UID/GID-only change | Preserves existing access ACL and directory mode, including setgid. |
+| Default-ACL change | Affects future children only. |
 
-With a default ACL, files initially inherit permissions limited by 0666. An
-explicit file mode is applied afterward and can widen or restrict effective ACL
-permissions. Directories inherit using 0777 or their explicitly requested mode;
-an explicit mode also sets their final access permissions. Without a default
-ACL, files default to 0644 and new
-directories request 0755 subject to the service umask. Existing parents are not
-modified. External applications can restrict inherited access by requesting
-`0600`; a default ACL does not enforce minimum rights against the creator.
+Direct uploads and resumable commits use these same rules. Without a default ACL,
+new files default to 0644 and directories to 0755. With a default ACL, inherited file access is initially limited by 0666.
+An explicit file mode is applied afterward and can widen or restrict effective
+ACL permissions. Directories inherit using 0777, or an explicitly requested
+`dirMode`; an explicit mode also sets their final access permissions. Existing
+parent directories are not modified. No permission operation recursively
+corrects existing files.
 
-Linux filesystem/mount support and service privileges are required. HTTP 400
-uses `invalid_acl` for invalid ACL input, 403 uses `forbidden` for insufficient
-permissions and 501 uses `acl_not_supported` for unsupported POSIX ACLs. Reading
-an existing ACL larger than 256 entries returns 413; entries are not truncated.
-NFS `root_squash` may deny ownership or ACL changes; NFSv4 ACLs are not translated.
-Verify the actual mount and service identity. `getfacl -n PATH` is useful for
-operator checks but is not a daemon dependency. Test new files and subdirectories
-through Filegate and an external writer, then verify access as a group member.
+Modes are octal strings. File `mode` accepts permissions up to `0777`; `dirMode`
+also supports setgid, for example `"2770"`. Read responses include special bits.
+Use `dirMode` when calling `setOwnership` on a directory.
+
 
 ## Operations
 
@@ -379,7 +585,11 @@ in durable state. Repointing a name to another directory is rejected.
 
 Administrative commands use `server.public_url` and bearer authentication. They
 never open the live state database. The daemon prunes versions and expires upload
-sessions every five minutes. There is no automatic scan for external file changes.
+sessions every five minutes. Terminal receipts last seven days from completion
+or the session deadline; a missing receipt afterward does not reveal whether an
+upload committed. Session assembly temporarily needs roughly twice the upload
+size, plus existing files, history and concurrent transfers. The application owns
+aggregate storage budgets. There is no automatic scan for external file changes.
 
 `keep` accepts last/hourly/daily/weekly/monthly counts. Retention keeps their union,
 uses UTC calendar buckets including the current one, and excludes pins from tier

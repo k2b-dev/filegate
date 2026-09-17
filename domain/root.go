@@ -43,6 +43,7 @@ type publication struct {
 	Claim     claim
 	Metadata  Metadata
 	ResultKey string
+	Receipt   *sessionReceipt
 }
 
 func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
@@ -313,29 +314,6 @@ func (r *Root) indexNode(n Node) error {
 	}
 	return r.State.Put("i/"+r.generation+"/"+n.Path, n)
 }
-func (r *Root) Mkdir(p string, o *Ownership) (Node, error) {
-	p, e := validWrite(p)
-	if e != nil {
-		return Node{}, e
-	}
-	if e = validateOwnership(o); e != nil {
-		return Node{}, e
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if e = r.parents(p, o); e != nil {
-		return Node{}, e
-	}
-	if e = r.makeDirectory(p, o); e != nil {
-		return Node{}, e
-	}
-	n, e := r.node(p, true)
-	if e == nil {
-		e = r.indexNode(n)
-	}
-	r.invalidateStats()
-	return n, e
-}
 
 // Put streams outside the root lock; only publication waits for a rebuild.
 func (r *Root) Put(ctx context.Context, p string, body io.Reader, o WriteOptions) (Node, error) {
@@ -434,7 +412,15 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 	}
 	dev, ino, uid, gid, _ := r.Files.Identity(st)
 	n := Node{Root: r.Config.Name, Path: p, ID: id, Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", UnixMode(st.Mode())), UID: uid, GID: gid}
-	rec := publication{p, temp, n, claim{dev, ino, p}, o.Metadata, resultKey}
+	rec := publication{Path: p, Temp: temp, Node: n, Claim: claim{dev, ino, p}, Metadata: o.Metadata, ResultKey: resultKey}
+	if resultKey != "" {
+		var session Session
+		if e := r.State.Get("session/"+strings.TrimPrefix(resultKey, "done/"), &session); e != nil {
+			return Node{}, e
+		}
+		receipt := sessionReceipt{Session: terminalSession(session, SessionCommitted, r.now(), &n), CleanupPending: true}
+		rec.Receipt = &receipt
+	}
 	key := "pending/" + newID()
 	if e = r.State.Put(key, rec); e != nil {
 		return Node{}, e
@@ -465,7 +451,11 @@ func (r *Root) finishPublication(key string, p publication) error {
 		}
 	}
 	if p.ResultKey != "" {
-		if e := add(p.ResultKey, p.Node); e != nil {
+		if p.Receipt == nil {
+			return errors.New("publication missing session receipt")
+		}
+		cs = append(cs, Change{Key: "session/" + p.Receipt.ID, Delete: true})
+		if e := add(p.ResultKey, p.Receipt); e != nil {
 			return e
 		}
 	}

@@ -29,12 +29,11 @@ describe("root contract", () => {
     const request: typeof fetch = async (_input, init) => {
       expect(new Headers(init?.headers).has("Authorization")).toBe(false);
       methods.push(init?.method ?? "GET");
-      if (init?.method === "GET") return Response.json({ size: 5, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("hel")) } });
-      if (init?.method === "POST") return Response.json({ path: "a", size: 5 });
-      return Response.json({ received: 5 });
+      if (init?.method === "GET") return Response.json({ state: "open", size: 5, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("hel")) } });
+      return Response.json({ state: "open", size: 5, chunkSize: 3, received: 5, segments: {} });
     };
     await new DirectSession("https://files.example/v1/direct/session", request).upload(new Blob(["hello"]));
-    expect(methods).toEqual(["GET", "PUT", "POST"]);
+    expect(methods).toEqual(["GET", "PUT"]);
     expect(segments(5, 3)).toEqual([{ index: 0, offset: 0, size: 3 }, { index: 1, offset: 3, size: 2 }]);
   });
   test("backend raw requests cannot send credentials to another origin", async () => {
@@ -47,7 +46,7 @@ test("resuming with different same-size file stops before uploading", async () =
   const methods: string[] = [];
   const request: typeof fetch = async (_input, init) => {
     methods.push(init?.method ?? "GET");
-    return Response.json({ size: 6, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("AAA")) } });
+    return Response.json({ state: "open", size: 6, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("AAA")) } });
   };
   await expect(new DirectSession("https://files.example/v1/direct/session", request).upload(new Blob(["BBBBBB"]))).rejects.toThrow("differ");
   expect(methods).toEqual(["GET"]);

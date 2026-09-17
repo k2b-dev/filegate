@@ -7,6 +7,8 @@ export type ACLEntry =
   | { tag: "user" | "group"; id: number; permissions: ACLPermissions };
 export type ACLTag = ACLEntry["tag"];
 export interface ACL { entries: ACLEntry[] }
+export interface DirectoryACLs { access?: ACL; default?: ACL }
+export interface DirectoryOptions { ownership?: Ownership; acl?: DirectoryACLs }
 export interface WriteOptions { onConflict?: "error" | "overwrite" | "rename"; ownership?: Ownership; metadata?: Metadata }
 export interface Node { root: string; path: string; id?: string; directory: boolean; size: number; modified: string; mode: string; uid: number; gid: number }
 export interface Page { items: Node[]; next?: string }
@@ -18,6 +20,13 @@ export interface System { version: string; started: string; uptimeSeconds: numbe
 export interface Version { id: string; fileId: string; created: string; size: number; pinned: boolean; metadata?: Metadata; copyMode: "copy" | "reflink" }
 export interface VersionOptions { pinned?: boolean; metadata?: Metadata }
 export interface DirectURL { url: string; method: "PUT" | "GET"; expires: string }
-export interface Session { id: string; root: string; path: string; size: number; chunkSize: number; expires: string; options: WriteOptions; segments: Record<string, string>; received: number; result?: Node }
-export interface SessionCreated extends Session { url: string }
+export type SessionState = "open" | "committed" | "aborted" | "expired";
+/** Minimal transfer status exposed by a session lease. */
+export interface SessionStatus { id: string; root: string; size: number; chunkSize: number; expires: string; state: SessionState; segments: Record<string, string>; received: number; terminalAt?: string; retainUntil?: string }
+export interface Session extends SessionStatus { path: string; options: WriteOptions; result?: Node }
+export interface SessionLeaseRequest { expiresIn?: number; allowAbort?: boolean }
+export interface SessionLease { url: string; expires: string; operations: ("status" | "write" | "abort")[] }
+export interface SessionCreated { session: Session; lease: SessionLease }
+export interface ArchiveItem { root: string; path: string; archivePath: string }
+export interface ArchiveLease { url: string; method: "POST"; expires: string; manifest: string }
 export interface ErrorResponse { error: string; message: string }

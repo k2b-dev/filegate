@@ -2,7 +2,6 @@
 package httpadapter
 
 import (
-	"archive/tar"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -43,14 +42,16 @@ type Handler struct {
 	requests         sync.WaitGroup
 }
 type capability struct {
-	Root    string              `json:"root"`
-	Path    string              `json:"path"`
-	Purpose string              `json:"purpose"`
-	Session string              `json:"session,omitempty"`
-	Size    int64               `json:"size"`
-	Expires int64               `json:"expires"`
-	Nonce   string              `json:"nonce"`
-	Options domain.WriteOptions `json:"options"`
+	Root         string              `json:"root"`
+	Path         string              `json:"path"`
+	Purpose      string              `json:"purpose"`
+	Session      string              `json:"session,omitempty"`
+	Size         int64               `json:"size"`
+	Expires      int64               `json:"expires"`
+	Nonce        string              `json:"nonce"`
+	Options      domain.WriteOptions `json:"options"`
+	Operations   []string            `json:"operations"`
+	ManifestHash string              `json:"manifestHash,omitempty"`
 }
 
 func New(roots []*domain.Root, o Options) *Handler {
@@ -113,6 +114,14 @@ func fail(w http.ResponseWriter, e error) {
 	switch {
 	case errors.As(e, &he):
 		status, code = he.status, he.msg
+	case errors.Is(e, domain.ErrSessionCommitted):
+		status, code = 409, "session_committed"
+	case errors.Is(e, domain.ErrSessionAborted):
+		status, code = 409, "session_aborted"
+	case errors.Is(e, domain.ErrSessionExpired):
+		status, code = 410, "session_expired"
+	case errors.Is(e, domain.ErrCrossDevice):
+		status, code = 501, "unsupported_storage_layout"
 	case errors.Is(e, domain.ErrInvalidACL):
 		status, code = 400, "invalid_acl"
 	case errors.Is(e, domain.ErrACLUnsupported):
@@ -136,6 +145,8 @@ func fail(w http.ResponseWriter, e error) {
 	switch code {
 	case "internal_error":
 		message = "file operation failed"
+	case "unsupported_storage_layout":
+		message = "the root staging directory and target must be on the same filesystem"
 	case "invalid_acl":
 		message = "invalid ACL scope, entries, IDs, permissions, or mask"
 	case "acl_not_supported":
@@ -308,7 +319,7 @@ func (h *Handler) routes() {
 		if e := decode(w, r, &q); e != nil {
 			return e
 		}
-		v, e := root.Mkdir(q.Path, q.Ownership)
+		v, e := root.Mkdir(q.Path, q.DirectoryOptions)
 		if e == nil {
 			send(w, 201, v)
 		}
@@ -422,7 +433,11 @@ func (h *Handler) routes() {
 	h.route("POST /v1/roots/{root}/downloads/direct", h.mintDownload)
 	h.route("POST /v1/roots/{root}/uploads/sessions", h.createSession)
 	h.mux.HandleFunc("/v1/direct/{token}", h.direct)
-	h.route("GET /v1/roots/{root}/archive", archive)
+	h.route("GET /v1/roots/{root}/uploads/sessions/{session}", h.sessionStatus)
+	h.route("POST /v1/roots/{root}/uploads/sessions/{session}/lease", h.renewSessionLease)
+	h.route("POST /v1/roots/{root}/uploads/sessions/{session}/commit", h.commitSession)
+	h.route("DELETE /v1/roots/{root}/uploads/sessions/{session}", h.abortSession)
+	h.archiveRoutes()
 	h.route("GET /v1/roots/{root}/thumbnail", thumbnail)
 }
 func content(w http.ResponseWriter, r *http.Request, root *domain.Root, p string) error {
@@ -472,8 +487,96 @@ func (h *Handler) verify(token string) (capability, error) {
 	if c.Expires <= time.Now().Unix() {
 		return c, errHTTP{401, "expired_capability"}
 	}
+	if !validOperations(c) {
+		return c, errHTTP{401, "invalid_capability"}
+	}
 	return c, nil
 }
+
+const defaultLeaseSeconds = 60
+const maxLeaseSeconds = 300
+
+func leaseSeconds(seconds int) (int, error) {
+	if seconds == 0 {
+		seconds = defaultLeaseSeconds
+	}
+	if seconds < 1 || seconds > maxLeaseSeconds {
+		return 0, domain.ErrInvalid
+	}
+	return seconds, nil
+}
+
+func leaseExpiry(seconds int) (time.Time, error) {
+	seconds, e := leaseSeconds(seconds)
+	if e != nil {
+		return time.Time{}, e
+	}
+	return time.Unix(time.Now().Unix()+int64(seconds), 0), nil
+}
+
+func validOperations(c capability) bool {
+	if len(c.Operations) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, operation := range c.Operations {
+		if seen[operation] {
+			return false
+		}
+		seen[operation] = true
+		switch c.Purpose {
+		case "upload":
+			if operation != "write" {
+				return false
+			}
+		case "download", "archive":
+			if operation != "read" {
+				return false
+			}
+		case "session":
+			if operation != "status" && operation != "write" && operation != "abort" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func allowedMethod(c capability, method string) bool {
+	operation := ""
+	switch c.Purpose {
+	case "upload":
+		if method == http.MethodPut {
+			operation = "write"
+		}
+	case "download":
+		if method == http.MethodGet || method == http.MethodHead {
+			operation = "read"
+		}
+	case "archive":
+		if method == http.MethodPost {
+			operation = "read"
+		}
+	case "session":
+		switch method {
+		case http.MethodGet:
+			operation = "status"
+		case http.MethodPut:
+			operation = "write"
+		case http.MethodDelete:
+			operation = "abort"
+		}
+	}
+	for _, allowed := range c.Operations {
+		if operation == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) url(c capability) string {
 	return strings.TrimRight(h.opts.PublicURL, "/") + "/v1/direct/" + h.sign(c)
 }
@@ -492,13 +595,11 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 	if q.Size < 0 || q.Size > root.MaxBytes {
 		return domain.ErrLimit
 	}
-	if q.ExpiresIn == 0 {
-		q.ExpiresIn = 900
+	expires, e := leaseExpiry(q.ExpiresIn)
+	if e != nil {
+		return e
 	}
-	if q.ExpiresIn < 1 || q.ExpiresIn > 86400 {
-		return domain.ErrInvalid
-	}
-	c := capability{Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: time.Now().Add(time.Duration(q.ExpiresIn) * time.Second).Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions}
+	c := capability{Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: expires.Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions, Operations: []string{"write"}}
 	send(w, 201, api.DirectURL{URL: h.url(c), Method: "PUT", Expires: time.Unix(c.Expires, 0)})
 	return nil
 }
@@ -517,13 +618,11 @@ func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *dom
 	if n.Directory {
 		return domain.ErrInvalid
 	}
-	if q.ExpiresIn == 0 {
-		q.ExpiresIn = 900
+	expires, e := leaseExpiry(q.ExpiresIn)
+	if e != nil {
+		return e
 	}
-	if q.ExpiresIn < 1 || q.ExpiresIn > 86400 {
-		return domain.ErrInvalid
-	}
-	c := capability{Root: root.Config.Name, Path: n.Path, Purpose: "download", Expires: time.Now().Add(time.Duration(q.ExpiresIn) * time.Second).Unix(), Nonce: uuid.NewString()}
+	c := capability{Root: root.Config.Name, Path: n.Path, Purpose: "download", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: []string{"read"}}
 	send(w, 201, api.DirectURL{URL: h.url(c), Method: "GET", Expires: time.Unix(c.Expires, 0)})
 	return nil
 }
@@ -532,18 +631,117 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *do
 	if e := decode(w, r, &q); e != nil {
 		return e
 	}
+	_, e := leaseSeconds(q.ExpiresIn)
+	if e != nil {
+		return e
+	}
 	s, e := root.CreateSession(q.Path, q.Size, q.WriteOptions)
 	if e != nil {
 		return e
 	}
-	c := capability{Root: root.Config.Name, Session: s.ID, Purpose: "session", Expires: s.Expires.Unix(), Nonce: uuid.NewString()}
-	send(w, 201, api.SessionCreated{Session: s, URL: h.url(c)})
+	lease, e := h.sessionLease(s, q.ExpiresIn, q.AllowAbort)
+	if e != nil {
+		return e
+	}
+	send(w, 201, api.SessionCreated{Session: s, Lease: lease})
 	return nil
 }
+
+func (h *Handler) sessionLease(s domain.Session, seconds int, allowAbort bool) (api.SessionLease, error) {
+	expires, e := leaseExpiry(seconds)
+	if e != nil {
+		return api.SessionLease{}, e
+	}
+	if expires.After(s.Expires) {
+		expires = s.Expires
+	}
+	if expires.Unix() <= time.Now().Unix() {
+		return api.SessionLease{}, domain.ErrSessionExpired
+	}
+	operations := []string{"status", "write"}
+	if allowAbort {
+		operations = append(operations, "abort")
+	}
+	c := capability{Root: s.Root, Session: s.ID, Purpose: "session", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: operations}
+	return api.SessionLease{URL: h.url(c), Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
+}
+
+func (h *Handler) sessionStatus(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	s, e := root.Session(r.PathValue("session"))
+	if e == nil {
+		send(w, 200, s)
+	}
+	return e
+}
+
+func (h *Handler) renewSessionLease(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	var q api.SessionLeaseRequest
+	if e := decode(w, r, &q); e != nil {
+		return e
+	}
+	_, e := leaseSeconds(q.ExpiresIn)
+	if e != nil {
+		return e
+	}
+	s, e := root.Session(r.PathValue("session"))
+	if e != nil {
+		return e
+	}
+	switch s.State {
+	case "committed":
+		return domain.ErrSessionCommitted
+	case "aborted":
+		return domain.ErrSessionAborted
+	case "expired":
+		return domain.ErrSessionExpired
+	case "open":
+	default:
+		return domain.ErrConflict
+	}
+	lease, e := h.sessionLease(s, q.ExpiresIn, q.AllowAbort)
+	if e != nil {
+		return e
+	}
+	send(w, 201, lease)
+	return nil
+}
+
+func (h *Handler) commitSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	n, e := root.CommitSession(r.Context(), r.PathValue("session"))
+	if e == nil {
+		send(w, 200, n)
+	}
+	return e
+}
+
+func (h *Handler) abortSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	e := root.AbortSession(r.PathValue("session"))
+	if e == nil {
+		w.WriteHeader(204)
+	}
+	return e
+}
+
+func publicSession(s domain.Session) api.SessionStatus {
+	return api.SessionStatus{ID: s.ID, Root: s.Root, Size: s.Size, ChunkSize: s.ChunkSize,
+		Expires: s.Expires, State: s.State, Segments: s.Segments, Received: s.Received,
+		TerminalAt: s.TerminalAt, RetainUntil: s.RetainUntil}
+}
+
 func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 	c, e := h.verify(r.PathValue("token"))
 	if e != nil {
 		fail(w, e)
+		return
+	}
+	if !allowedMethod(c, r.Method) {
+		fail(w, errHTTP{403, "operation_not_allowed"})
+		return
+	}
+	if c.Purpose == "archive" {
+		if e := h.directArchive(w, r, c); e != nil {
+			fail(w, e)
+		}
 		return
 	}
 	root := h.roots[c.Root]
@@ -587,19 +785,13 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 			var s domain.Session
 			s, e = root.Session(c.Session)
 			if e == nil {
-				send(w, 200, s)
+				send(w, 200, publicSession(s))
 			}
 		case "PUT":
 			var s domain.Session
 			s, e = root.PutSegment(r.Context(), c.Session, paramInt(r, "segment", -1), r.Body)
 			if e == nil {
-				send(w, 200, s)
-			}
-		case "POST":
-			var n domain.Node
-			n, e = root.CommitSession(r.Context(), c.Session)
-			if e == nil {
-				send(w, 200, n)
+				send(w, 200, publicSession(s))
 			}
 		case "DELETE":
 			e = root.AbortSession(c.Session)
@@ -632,77 +824,6 @@ func (r *exactReader) Read(b []byte) (int, error) {
 		return n, domain.ErrInvalid
 	}
 	return n, e
-}
-func archive(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-	base, e := domain.CleanPath(r.URL.Query().Get("path"))
-	if e != nil {
-		return e
-	}
-	if _, e = root.Stat(base); e != nil {
-		return e
-	}
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.Header().Set("Content-Disposition", "attachment")
-	tw := tar.NewWriter(w)
-	defer tw.Close()
-	var visit func(string) error
-	visit = func(p string) error {
-		n, e := root.Stat(p)
-		if e != nil {
-			return e
-		}
-		name := strings.TrimPrefix(strings.TrimPrefix(p, base), "/")
-		if name == "" {
-			name = path.Base(p)
-		}
-		if n.Directory {
-			if name != "." {
-				if e := tw.WriteHeader(&tar.Header{Name: name + "/", Typeflag: tar.TypeDir, Mode: 0755, ModTime: n.Modified}); e != nil {
-					return e
-				}
-			}
-			after := ""
-			for {
-				page, e := root.List(p, after, 1000)
-				if e != nil {
-					return e
-				}
-				for _, child := range page.Items {
-					if e = visit(child.Path); e != nil {
-						return e
-					}
-				}
-				if page.Next == "" {
-					break
-				}
-				after = page.Next
-			}
-			return nil
-		}
-		f, e := root.Open(p)
-		if e != nil {
-			return e
-		}
-		defer f.Close()
-		st, e := f.Stat()
-		if e != nil {
-			return e
-		}
-		hdr, e := tar.FileInfoHeader(st, "")
-		if e != nil {
-			return e
-		}
-		hdr.Name = name
-		if e = tw.WriteHeader(hdr); e != nil {
-			return e
-		}
-		_, e = io.CopyN(tw, f, st.Size())
-		return e
-	}
-	if e = visit(base); e != nil {
-		panic(http.ErrAbortHandler)
-	}
-	return nil
 }
 func (h *Handler) Maintain(ctx context.Context) {
 	errs := []string{}

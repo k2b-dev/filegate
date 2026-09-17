@@ -76,7 +76,7 @@ func assertACL(t *testing.T, r *domain.Root, p string, scope domain.ACLScope, wa
 func TestACLInheritanceAcrossCreationPaths(t *testing.T) {
 	x := setup(t, false, false)
 	uid, gid := os.Getuid(), os.Getgid()
-	if _, err := x.r.Mkdir("shared", &domain.Ownership{UID: &uid, GID: &gid, DirMode: "2770"}); err != nil {
+	if _, err := x.r.Mkdir("shared", domain.DirectoryOptions{Ownership: &domain.Ownership{UID: &uid, GID: &gid, DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	inherited := setACL(t, x.r, "shared", domain.DefaultACL, sharedACL())
@@ -92,7 +92,7 @@ func TestACLInheritanceAcrossCreationPaths(t *testing.T) {
 	if _, err = x.r.CommitSession(ctx, session.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = x.r.Mkdir("shared/child", nil); err != nil {
+	if _, err = x.r.Mkdir("shared/child", domain.DirectoryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	put(t, x.r, "shared/implicit/deep/file", "implicit", domain.WriteOptions{})
@@ -140,7 +140,7 @@ func TestACLOverwriteRestoreMoveAndCopy(t *testing.T) {
 	}
 	assertACL(t, x.r, "program", domain.AccessACL, current)
 	assertKernelRights(t, x, "program", 0750, uid, gid)
-	if _, err = x.r.Mkdir("target", &domain.Ownership{DirMode: "2770"}); err != nil {
+	if _, err = x.r.Mkdir("target", domain.DirectoryOptions{Ownership: &domain.Ownership{DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	setACL(t, x.r, "target", domain.DefaultACL, sharedACL())
@@ -208,7 +208,7 @@ func TestACLHTTPDirectAndResumableOwnership(t *testing.T) {
 	x, _, client := server(t)
 	r := client.Root("test")
 	uid, gid := os.Getuid(), os.Getgid()
-	if _, err := r.Mkdir(ctx, "shared", &domain.Ownership{UID: &uid, GID: &gid, DirMode: "2770"}); err != nil {
+	if _, err := r.Mkdir(ctx, "shared", domain.DirectoryOptions{Ownership: &domain.Ownership{UID: &uid, GID: &gid, DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	acl, err := r.SetACL(ctx, "shared", sdk.DefaultACL, sharedACL())
@@ -224,7 +224,7 @@ func TestACLHTTPDirectAndResumableOwnership(t *testing.T) {
 	}
 	owner := &domain.Ownership{UID: &uid, GID: &gid, Mode: "0640", DirMode: "2770"}
 	// Minted ownership and metadata must not be replaceable by upload URL parameters.
-	upload, err := r.DirectUpload(ctx, "shared/direct", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound direct"}})
+	upload, err := r.DirectUpload(ctx, "shared/direct", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound direct"}}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,15 +241,15 @@ func TestACLHTTPDirectAndResumableOwnership(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("direct upload: %s %s", resp.Status, body)
 	}
-	session, err := r.CreateSession(ctx, "shared/resumable", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound session"}})
+	session, err := r.CreateSession(ctx, "shared/resumable", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound session"}}, sdk.SessionLeaseRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct := sdk.DirectSession{URL: session.URL + "?mode=0777&uid=12345&gid=12345"}
+	direct := sdk.DirectSession{URL: session.Lease.URL + "?mode=0777&uid=12345&gid=12345"}
 	if _, err = direct.Put(ctx, 0, strings.NewReader("abc")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = direct.Commit(ctx); err != nil {
+	if _, err = r.CommitSession(ctx, session.Session.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"shared/direct", "shared/resumable"} {
@@ -364,7 +364,7 @@ func TestACLExternalWritersAndSetgidInheritance(t *testing.T) {
 		}
 	}
 	owner, group := 41001, 42001
-	if _, err = x.r.Mkdir("shared", &domain.Ownership{UID: &owner, GID: &group, DirMode: "2770"}); err != nil {
+	if _, err = x.r.Mkdir("shared", domain.DirectoryOptions{Ownership: &domain.Ownership{UID: &owner, GID: &group, DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	inherited := setACL(t, x.r, "shared", domain.DefaultACL, sharedACL())
@@ -513,7 +513,7 @@ func TestACLUnsupportedAllowsOnlyOrdinaryFileOperations(t *testing.T) {
 	assertKernelRights(t, x, "nested", 0700, os.Getuid(), os.Getgid())
 	put(t, x.r, "nested/file", "replacement", domain.WriteOptions{OnConflict: "overwrite"})
 	assertKernelRights(t, x, "nested/file", 0640, os.Getuid(), os.Getgid())
-	if _, err := x.r.Mkdir("directory", &domain.Ownership{DirMode: "2770"}); err != nil {
+	if _, err := x.r.Mkdir("directory", domain.DirectoryOptions{Ownership: &domain.Ownership{DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	assertKernelRights(t, x, "directory", 02770, os.Getuid(), os.Getgid())
@@ -537,7 +537,7 @@ func TestACLReadPermissionFailureDoesNotFallBackToModes(t *testing.T) {
 			t.Fatalf("ACL read permission error for %s: %v", p, err)
 		}
 	}
-	if _, err := x.r.Mkdir("new-dir", nil); !errors.Is(err, os.ErrPermission) {
+	if _, err := x.r.Mkdir("new-dir", domain.DirectoryOptions{}); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("parent ACL read permission error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(x.data, "new")); !errors.Is(err, os.ErrNotExist) {
@@ -566,11 +566,16 @@ func TestACLPrivateDirectoriesAreCreatedPrivate(t *testing.T) {
 	setACL(t, x.r, ".", domain.DefaultACL, sharedACL())
 	modes := map[string]os.FileMode{}
 	x.r.Files = recordingMkdirFiles{Files: x.files, modes: modes}
-	if _, err := x.r.Mkdir("private", &domain.Ownership{DirMode: "0700"}); err != nil {
+	if _, err := x.r.Mkdir("private", domain.DirectoryOptions{Ownership: &domain.Ownership{DirMode: "0700"}}); err != nil {
 		t.Fatal(err)
 	}
 	put(t, x.r, "implicit/deep/file", "private", domain.WriteOptions{Ownership: &domain.Ownership{DirMode: "0700"}})
-	for _, p := range []string{"private", "implicit", "implicit/deep"} {
+	for p, mode := range modes {
+		if strings.HasPrefix(p, ".filegate/staging/") && mode.Perm() != 0700 {
+			t.Fatalf("staged directory was not initially private: %04o", mode.Perm())
+		}
+	}
+	for _, p := range []string{"implicit", "implicit/deep"} {
 		if modes[p].Perm() != 0700 {
 			t.Fatalf("%s was initially created with %04o, want 0700", p, modes[p].Perm())
 		}
@@ -611,7 +616,7 @@ func TestACLMappedCreationOwnershipIsRespected(t *testing.T) {
 	put(t, x.r, "explicit", "explicit", domain.WriteOptions{Ownership: &domain.Ownership{UID: &explicitUID, GID: &explicitGID}})
 	assertKernelRights(t, x, "explicit", 0644, explicitUID, explicitGID)
 	// A setgid destination changes only the default group, not the mapped owner.
-	if _, err := x.r.Mkdir("shared", &domain.Ownership{DirMode: "2770"}); err != nil {
+	if _, err := x.r.Mkdir("shared", domain.DirectoryOptions{Ownership: &domain.Ownership{DirMode: "2770"}}); err != nil {
 		t.Fatal(err)
 	}
 	put(t, x.r, "shared/mapped", "mapped", domain.WriteOptions{})

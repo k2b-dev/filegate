@@ -13,12 +13,28 @@ check each user's access before making a request or issuing a scoped URL.
 
 Keep the bearer token out of browsers. Scoped upload/download/session URLs are
 bearer capabilities: anyone holding one can perform its bound operation until
-expiry. Do not log URL paths at the reverse proxy. Rotate the token by replacing
+expiry. Leases default to 60 seconds and are limited to 300 seconds. Expiry is
+checked when a request starts; an accepted download can finish afterward. Leases
+are reusable and have no individual revocation or authorization callback.
+Do not log URL paths at the reverse proxy. Rotate the token by replacing
 the token file and restarting; this invalidates outstanding scoped URLs too.
 
 Use TLS at the reverse proxy. Restrict direct daemon access to trusted networks.
 CORS only controls browser access; it is not authorization. Configure exact
 allowed origins for cross-origin direct transfers.
+
+## Controlled uploads and archive selections
+
+Session leases permit status queries and segment uploads, plus abort when the
+backend enables it. They never permit commit or lease renewal. Reauthorize the
+user and recheck the upload budget on your backend before commit. For public
+inboxes, use sessions for every file size, unique backend-selected paths and
+`onConflict: "error"`. A direct PUT publishes without another backend check.
+
+ZIP leases bind the complete selection manifest. A directory selection grants
+access to its whole current subtree, including files created after issuance.
+Authorize that scope before creating the lease. Path-based file download leases
+also serve the contents found at the authorized path when used.
 
 ## Unix ownership
 

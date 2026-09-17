@@ -232,12 +232,7 @@ func (r *Root) Info() (RootInfo, error) {
 		if e := json.Unmarshal(b, &s); e != nil {
 			return e
 		}
-		var result Node
-		doneErr := r.State.Get("done/"+s.ID, &result)
-		if doneErr != nil && !errors.Is(doneErr, os.ErrNotExist) {
-			return doneErr
-		}
-		if s.Expires.After(r.now()) && errors.Is(doneErr, os.ErrNotExist) {
+		if s.State == SessionOpen && s.Expires.After(r.now()) {
 			info.ActiveUploads++
 			info.StagingBytes += s.Received
 		}

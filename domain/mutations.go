@@ -330,6 +330,9 @@ func Transfer(ctx context.Context, src *Root, p string, dst *Root, to string, mo
 	return n, e
 }
 func (r *Root) cleanArtifacts() error {
+	if e := r.cleanupSessions(context.Background()); e != nil {
+		return e
+	}
 	referenced := map[string]bool{}
 	if e := r.State.Scan("session/", func(_ string, b []byte) error {
 		var s Session

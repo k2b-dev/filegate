@@ -30,9 +30,10 @@ try {
 ```
 
 `put` mints a direct URL and uploads through it. `directUpload` returns the URL
-instead, suitable for an authorized browser. `createSession` returns a scoped
-session URL for larger uploads. Import token-free browser helpers from
-`@k2b/filegate/utils`: `DirectSession`, `putDirect`, `segments` and `sha256`.
+instead, suitable for an authorized browser. `createSession` returns
+`{session,lease}` for any file size, including zero. Import token-free browser
+helpers from `@k2b/filegate/utils`: `DirectSession`, `putDirect`, `archiveRaw`,
+`downloadArchive`, `segments` and `sha256`.
 
 ## Root operations
 
@@ -43,13 +44,18 @@ session URL for larger uploads. Import token-free browser helpers from
 | `resolve(id)` | Current path for an indexed file ID. |
 | `list(path, { after, limit })` | Alphabetical page of immediate children. |
 | `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
-| `mkdir(path, ownership?)` | Create a directory and missing parents. |
+| `mkdir(path, { ownership, acl })` | Create one configured directory; parent must exist. |
 | `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
 | `getACL(path, scope)` | Read the access or default ACL. |
 | `setACL(path, scope, acl)` | Replace one ACL; returns its stored entries. |
 | `clearDefaultACL(path)` | Remove default inheritance from a directory. |
 | `remove(path, recursive?)` | Permanent deletion including histories. |
 | `transfer(path, targetRoot, targetPath, options)` | Copy; set `move: true` for a move. |
+| `createSession(path, size, options?)` | Create a session and its first lease. |
+| `session(id)` | Read backend status and any recorded commit result. |
+| `sessionLease(id, { expiresIn, allowAbort })` | Issue a new lease for an open session. |
+| `commitSession(id)` | Publish or return the original commit result. |
+| `abortSession(id)` | Abort an open session; cannot remove a committed result. |
 | `rebuild(signal?)` | Rebuild this root's metadata index. |
 | `refreshStats(maxEntries?, signal?)` | Explicit bounded filesystem accounting. |
 | `versions(path)` | History, newest first. |
@@ -68,7 +74,7 @@ List and search pages expose `next`. Pass it unchanged as `after` until absent.
 Page limits are 1–1000. Search without an index returns 413 when its traversal
 budget is exhausted. Narrow the search path or increase `maxEntries` to retry.
 
-Streaming methods `contentRaw`, `archiveRaw`, `thumbnailRaw` and
+Root streaming methods `contentRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
@@ -80,3 +86,57 @@ Use `getACL(path, "access" | "default")`, `setACL(path, scope, acl)` and
 identities and explicit permission strings. These methods work without an index.
 See [permissions and ACLs](/docs/en/permissions) for a shared-directory setup and
 [the HTTP ACL contract](/docs/en/http-api#posix-acls) for entry constraints.
+
+## Upload with backend approval
+
+```ts
+// Backend:
+const created = await root.createSession("inbox/unique-name.txt", 5, {
+  onConflict: "error",
+  expiresIn: 60,
+  allowAbort: true,
+});
+
+// Browser, given only the lease:
+import { DirectSession } from "@k2b/filegate/utils";
+const transfer = new DirectSession(created.lease.url);
+const progress = await transfer.upload(new Blob(["hello"]));
+console.log(progress.state, progress.received);
+
+// Backend, after checking the user's access and reserved budget again:
+const published = await root.commitSession(created.session.id);
+console.log(published.path, published.size);
+const receipt = await root.session(created.session.id);
+console.log(receipt.state, receipt.result);
+```
+
+`DirectSession` has `status`, `put`, `upload` and `abort`; it cannot commit.
+`upload` sends missing segments, checks already received segment hashes against
+the supplied Blob, and returns transfer status. It does not publish. If a lease
+expires, obtain another from your backend, construct a new `DirectSession` and
+resume the same file. `abort` requires a lease issued with `allowAbort: true`.
+Session options combine `WriteOptions` with `expiresIn` and `allowAbort`; the
+session deadline remains 24 hours. Terminal receipts remain available for seven
+days. See [direct transfers](/docs/en/uploads-downloads) for retry semantics.
+
+## Download a selection
+
+```ts
+// Backend, after authorizing every selection:
+const lease = await files.archiveLease([
+  { root: "documents", path: "reports", archivePath: "reports" },
+  { root: "shared", path: "logo.png", archivePath: "logo.png" },
+]);
+
+// Browser, given the complete lease:
+import { downloadArchive } from "@k2b/filegate/utils";
+downloadArchive(lease);
+```
+
+`downloadArchive` submits a native form with the signed manifest; it does not
+buffer the archive in JavaScript. For server relays or custom streaming, use
+`files.archiveRaw(lease, signal?)` or the token-free `archiveRaw(lease, options)`
+utility. These return the HTTP response unchanged; check its status and stream
+its body. `archiveLease(items, expiresIn?)` uses the same 60-second default and
+300-second maximum as other leases. A selected directory includes its entire
+current subtree. See the [archive limits](/docs/en/uploads-downloads#download-a-zip-selection).

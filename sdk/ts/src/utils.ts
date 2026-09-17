@@ -1,4 +1,4 @@
-import type { Node, Session } from "./types.js";
+import type { ArchiveLease, Node, SessionStatus } from "./types.js";
 export interface Segment { index: number; offset: number; size: number }
 export function segments(size: number, chunkSize = 8 * 1024 * 1024): Segment[] {
   if (!Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(chunkSize) || chunkSize < 1) throw new RangeError("Invalid segment size");
@@ -26,29 +26,49 @@ export async function putDirect(url: string, body: BodyInit, options: { signal?:
 /** Only a scoped session URL is needed in a browser. No bearer token is sent. */
 export class DirectSession {
   constructor(readonly url: string, private readonly request: typeof fetch = fetch) {}
-  status(signal?: AbortSignal): Promise<Session> { return this.call("GET", undefined, undefined, signal); }
-  put(index: number, body: BodyInit, signal?: AbortSignal): Promise<Session> { return this.call("PUT", body, index, signal); }
-  commit(signal?: AbortSignal): Promise<Node> { return this.call("POST", undefined, undefined, signal); }
+  status(signal?: AbortSignal): Promise<SessionStatus> { return this.call("GET", undefined, undefined, signal); }
+  put(index: number, body: BodyInit, signal?: AbortSignal): Promise<SessionStatus> { return this.call("PUT", body, index, signal); }
   abort(signal?: AbortSignal): Promise<void> { return this.call("DELETE", undefined, undefined, signal); }
   private async call<T>(method: string, body?: BodyInit, segment?: number, signal?: AbortSignal): Promise<T> {
     const url = new URL(this.url);
     if (segment !== undefined) { if (!Number.isInteger(segment) || segment < 0) throw new RangeError("Invalid segment"); url.searchParams.set("segment", String(segment)); }
     return checked<T>(await this.request(url, { method, body, signal, redirect: "error" }));
   }
-  async upload(blob: Blob, options: { signal?: AbortSignal; onProgress?: (bytes: number, total: number) => void } = {}): Promise<Node> {
-    const current = await this.status(options.signal);
-    if (current.result) return current.result;
+  async upload(blob: Blob, options: { signal?: AbortSignal; onProgress?: (bytes: number, total: number) => void } = {}): Promise<SessionStatus> {
+    let current = await this.status(options.signal);
+    if (current.state !== "open") return current;
     if (blob.size !== current.size) throw new RangeError("Upload size differs from session");
-    let received = current.received;
     for (const part of segments(blob.size, current.chunkSize)) {
       if (current.segments[String(part.index)]) {
- const hash = await sha256(await blob.slice(part.offset, part.offset + part.size).arrayBuffer());
- if (hash !== current.segments[String(part.index)]) throw new Error("File contents differ from the uploaded session segments");
- continue;
- }
-      await this.put(part.index, blob.slice(part.offset, part.offset + part.size), options.signal);
-      received += part.size; options.onProgress?.(received, blob.size);
+        const hash = await sha256(await blob.slice(part.offset, part.offset + part.size).arrayBuffer());
+        if (hash !== current.segments[String(part.index)]) throw new Error("File contents differ from the uploaded session segments");
+        continue;
+      }
+      current = await this.put(part.index, blob.slice(part.offset, part.offset + part.size), options.signal);
+      options.onProgress?.(current.received, blob.size);
     }
-    return this.commit(options.signal);
+    return current;
   }
+}
+
+/** Stream a signed ZIP response without a backend token or buffering the archive. */
+export function archiveRaw(lease: ArchiveLease, options: { signal?: AbortSignal; fetch?: typeof fetch } = {}): Promise<Response> {
+  return (options.fetch ?? fetch)(lease.url, { method: "POST", body: new URLSearchParams({ manifest: lease.manifest }), signal: options.signal, redirect: "error" });
+}
+/** Start a native browser download; the browser streams the archive to disk. */
+export function downloadArchive(lease: ArchiveLease): void {
+  const url = new URL(lease.url);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new TypeError("Archive URL must use HTTP(S)");
+  if (url.username || url.password) throw new TypeError("Archive URL must not contain credentials");
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = url.href;
+  form.enctype = "application/x-www-form-urlencoded";
+  const field = document.createElement("input");
+  field.type = "hidden";
+  field.name = "manifest";
+  field.value = lease.manifest;
+  form.append(field);
+  document.body.append(form);
+  try { form.submit(); } finally { form.remove(); }
 }
