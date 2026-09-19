@@ -156,7 +156,7 @@ func TestExecutionArchiveLeaseDoesNotReturnUnreadableBytes(t *testing.T) {
 		for i, file := range archive.File {
 			names[i] = file.Name
 		}
-		t.Fatal(fmt.Sprintf("permission denial returned successful ZIP: %v", names))
+		t.Fatalf("permission denial returned successful ZIP: %v", names)
 	}
 }
 

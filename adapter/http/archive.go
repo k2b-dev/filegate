@@ -186,10 +186,6 @@ func (h *Handler) mintArchive(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (h *Handler) archiveEntries(ctx context.Context, items []archiveSelection) ([]archiveEntry, error) {
-	return archiveEntries(ctx, items, h.roots)
-}
-
 func archiveEntries(ctx context.Context, items []archiveSelection, roots map[string]*domain.Root) ([]archiveEntry, error) {
 	if e := validateArchiveSelection(items); e != nil {
 		return nil, e

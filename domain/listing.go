@@ -22,7 +22,7 @@ const listingSnapshotLimit = 16
 const listingMemoryLimit int64 = 32 << 20
 
 var ErrCursorInvalid = errors.New("listing cursor is invalid or expired; restart the query")
-var listingStop = errors.New("listing complete")
+var errListingStop = errors.New("listing complete")
 
 // ListingOptions applies ordering and filtering to the complete selection before
 // pagination. After is an opaque cursor bound to every normalized query option.
@@ -212,7 +212,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 			return err
 		}
 		if scanned >= o.MaxEntries || len(out.Items) >= o.Limit {
-			return listingStop
+			return errListingStop
 		}
 		scanned++
 		last = k
@@ -241,7 +241,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	} else {
 		err = r.State.ScanAfter(prefix, c.Last, visit)
 	}
-	if errors.Is(err, listingStop) {
+	if errors.Is(err, errListingStop) {
 		c.Last = last
 		out.Next = encodeListingCursor(c)
 		err = nil

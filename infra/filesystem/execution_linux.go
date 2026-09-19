@@ -147,7 +147,7 @@ func (r *packetReader) read(c *net.UnixConn, value any) (*os.File, error) {
 // credentials of a Go server thread. Close the returned scope after its operation.
 func (f *Files) WithExecution(ctx context.Context, uid, gid uint32, groups []uint32) (domain.Files, func(), error) {
 	if os.Geteuid() != 0 || uid == 0 || uid == ^uint32(0) || gid == ^uint32(0) || len(groups) > 256 {
-		return nil, nil, fmt.Errorf("Unix execution requires a root daemon and a non-root UID: %w", os.ErrPermission)
+		return nil, nil, fmt.Errorf("unix execution requires a root daemon and a non-root UID: %w", os.ErrPermission)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -155,7 +155,7 @@ func (f *Files) WithExecution(ctx context.Context, uid, gid uint32, groups []uin
 	select {
 	case workers <- struct{}{}:
 	default:
-		return nil, nil, fmt.Errorf("Unix execution capacity: %w", domain.ErrExecutionCapacity)
+		return nil, nil, fmt.Errorf("unix execution capacity: %w", domain.ErrExecutionCapacity)
 	}
 	release := true
 	defer func() {
@@ -260,7 +260,7 @@ func (e *executionFiles) call(q executionRequest, file *os.File) (executionReply
 		if cause == nil {
 			cause = os.ErrInvalid
 		}
-		return reply, nil, fmt.Errorf("Unix execution: %s: %w", reply.Error, cause)
+		return reply, nil, fmt.Errorf("unix execution: %s: %w", reply.Error, cause)
 	}
 	return reply, output, nil
 }
@@ -587,7 +587,7 @@ func establishIdentity(q executionRequest) error {
 		return err
 	}
 	if strings.TrimSpace(string(dumpable)) == "1" {
-		return fmt.Errorf("Unix execution requires fs.suid_dumpable=0 or 2: %w", os.ErrPermission)
+		return fmt.Errorf("unix execution requires fs.suid_dumpable=0 or 2: %w", os.ErrPermission)
 	}
 	groups := make([]int, len(q.Groups))
 	for i, gid := range q.Groups {

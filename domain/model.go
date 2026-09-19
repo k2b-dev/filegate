@@ -18,7 +18,7 @@ var (
 	ErrDisabled          = errors.New("feature disabled")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrACLUnsupported    = errors.New("POSIX ACLs are not supported by this filesystem")
-	ErrExecutionCapacity = errors.New("Unix execution capacity exhausted")
+	ErrExecutionCapacity = errors.New("unix execution capacity exhausted")
 	ErrInvalidACL        = fmt.Errorf("%w: invalid ACL", ErrInvalid)
 )
 

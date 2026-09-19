@@ -19,7 +19,7 @@ type versionHead struct {
 
 const versionOrderFormat = "version-order/format"
 
-var stopVersionOrder = errors.New("version order entry found")
+var errStopVersionOrder = errors.New("version order entry found")
 
 func versionOrderKey(fileID string, head versionHead) string {
 	return "vo/" + fileID + "/" + head.Created.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + head.ID
@@ -68,9 +68,9 @@ func (r *Root) removeVersionRecord(v Version) error {
 			if err := json.Unmarshal(b, &previous); err != nil {
 				return err
 			}
-			return stopVersionOrder
+			return errStopVersionOrder
 		})
-		if err != nil && !errors.Is(err, stopVersionOrder) {
+		if err != nil && !errors.Is(err, errStopVersionOrder) {
 			return err
 		}
 		if previous.ID == "" {
