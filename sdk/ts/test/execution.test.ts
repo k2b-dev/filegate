@@ -30,3 +30,19 @@ test("execution validates numeric identity and bounds groups", () => {
   expect(() => client.as({ uid: 1001, gid: 100, groups: Array(65).fill(100) })).toThrow();
   expect(() => client.as({ uid: 1001, gid: 100, groups: [0xffffffff] })).toThrow();
 });
+
+test("transfers and historical copies bind destination separately from source", async () => {
+  const calls: { headers: Headers; body: unknown }[] = [];
+  const request: typeof fetch = async (_input, init) => {
+    calls.push({ headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) });
+    return Response.json({});
+  };
+  const client = new Filegate({ baseUrl: "https://files.example", token: "backend", fetch: request });
+  const identity = { uid: 1001, gid: 100, groups: [200] };
+  await client.root("ipa").as(identity).transfer("a", "cloud", "b", { targetExecution: { mode: "service" } });
+  await client.root("cloud").copyVersion("a", "version", "ipa", "b", { targetExecution: { mode: "unix", identity } });
+  expect(calls[0].headers.get("X-Filegate-Execution")).toBe(JSON.stringify(identity));
+  expect(calls[0].body).toEqual({ path: "a", targetRoot: "cloud", targetPath: "b", targetExecution: { mode: "service" } });
+  expect(calls[1].headers.has("X-Filegate-Execution")).toBe(false);
+  expect(calls[1].body).toEqual({ path: "a", targetRoot: "ipa", targetPath: "b", targetExecution: { mode: "unix", identity } });
+});

@@ -56,10 +56,20 @@ expiry or capacity eviction can invalidate a cursor. On `409 cursor_invalid`,
 discard the accumulated pages and restart the query. Filesystem observations
 are not atomic snapshots of external writers.
 
-A Unix execution identity is supported for directory listing. It uses a live
-filesystem observation even on indexed roots, and access is checked again for
-each page. Search does not accept that identity. Do not treat
-administrative search results as Unix permission-filtered results.
+Unix execution identities are supported for both listing and search. Scoped
+queries always use the live filesystem, including on indexed roots; they never
+fall back to unfiltered index results. A new query without a cursor observes
+external NFS changes without requiring a rebuild. Continuations retain the
+initial observation and remain bound to the original identity and options.
+
+A recursive scan that encounters an unreadable subtree fails the whole query,
+even when that subtree would not match the search text. It does not return a
+successful partial result. Each page rechecks base-directory access, traversal
+to each returned entry and read permission on its parent. An entry deleted by an
+external writer makes the page fail with 404; revoked access returns 403. Neither
+returns a partial page. Restart the query to obtain a new observation. A readable
+directory can expose a file's name and metadata without granting access to its
+bytes; download checks content read permission separately.
 
 ## Read recursive totals
 
@@ -83,5 +93,5 @@ is an atomic storage quota. The application must reserve upload budgets itself.
 
 `root.stats()` reads the cached root totals. `refreshStats()` updates that cache
 with a full bounded root walk and fails with 413 if incomplete. `recursiveStats`
-does not replace the root cache. Stats operations are administrative and reject
-Unix execution identities.
+does not replace the root cache and can use a Unix execution identity. Cached
+root totals and root-wide refresh are administrative and reject that identity.

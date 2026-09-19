@@ -222,6 +222,9 @@ func (f *listingFiles) Open(p string, flags int, mode os.FileMode) (*os.File, er
 	f.opens++
 	return os.OpenFile(filepath.Join(f.base, p), flags, mode)
 }
+func (f *listingFiles) Stat(p string) (os.FileInfo, error) {
+	return os.Stat(filepath.Join(f.base, p))
+}
 func (f *listingFiles) Identity(os.FileInfo) (uint64, uint64, uint32, uint32, uint64) {
 	return 1, 1, 1, 1, 1
 }

@@ -151,6 +151,10 @@ func fail(w http.ResponseWriter, e error) {
 		status, code = 400, "invalid_argument"
 	case errors.As(e, &sizeError), errors.Is(e, domain.ErrLimit):
 		status, code = 413, "limit_exceeded"
+	case errors.Is(e, domain.ErrPathConflict):
+		status, code = 409, "path_conflict"
+	case errors.Is(e, domain.ErrIdempotencyConflict):
+		status, code = 409, "idempotency_conflict"
 	case errors.Is(e, domain.ErrConflict), errors.Is(e, os.ErrExist):
 		status, code = 409, "conflict"
 	case errors.Is(e, os.ErrNotExist):
@@ -386,17 +390,11 @@ func (h *Handler) routes() {
 		if dst == nil {
 			return os.ErrNotExist
 		}
-		// Reuse the source view for same-root moves, including its shared lock.
-		if dst.Config.Name == root.Config.Name {
-			dst = root
-		} else {
-			scoped, closeScope, e := dst.WithExecution(r.Context(), root.Execution())
-			if e != nil {
-				return e
-			}
-			defer closeScope()
-			dst = scoped
+		dst, closeScope, e := transferDestination(r.Context(), root, dst, q.TargetExecution)
+		if e != nil {
+			return e
 		}
+		defer closeScope()
 		if q.Move && root.Config.Name != dst.Config.Name {
 			result, err := domain.TransferMove(r.Context(), root, q.Path, dst, q.TargetPath, q.WriteOptions, q.ID)
 			if err == nil {
@@ -519,16 +517,11 @@ func (h *Handler) routes() {
 		if destination == nil {
 			return os.ErrNotExist
 		}
-		if destination.Config.Name == root.Config.Name {
-			destination = root
-		} else {
-			scoped, closeScope, err := destination.WithExecution(r.Context(), root.Execution())
-			if err != nil {
-				return err
-			}
-			defer closeScope()
-			destination = scoped
+		destination, closeScope, err := transferDestination(r.Context(), root, destination, q.TargetExecution)
+		if err != nil {
+			return err
 		}
+		defer closeScope()
 		node, err := domain.CopyVersion(r.Context(), root, q.Path, r.PathValue("version"), destination, q.TargetPath, q.WriteOptions)
 		if err == nil {
 			setETag(w, node)

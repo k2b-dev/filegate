@@ -80,7 +80,7 @@ func TestExecutionRootRoutesRejectUnsupportedScopeBeforeAccess(t *testing.T) {
 		{"GET", "/v1/roots/files", 400},
 		{"GET", "/v1/roots/files/index", 400},
 		{"GET", "/v1/roots/files/stats", 400},
-		{"GET", "/v1/roots/files/search?q=a", 400},
+		{"GET", "/v1/roots/files/search?q=a", 409},
 		{"POST", "/v1/roots/files/index/rebuild", 400},
 		{"POST", "/v1/roots/files/stats/refresh", 400},
 		{"POST", "/v1/roots/files/versions/prune", 400},

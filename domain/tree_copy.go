@@ -45,7 +45,7 @@ func copyLocked(ctx context.Context, src *Root, p string, dst *Root, to string, 
 		if o.OnConflict == "overwrite" {
 			return Node{}, ErrInvalid
 		}
-		return Node{}, ErrConflict
+		return Node{}, ErrPathConflict
 	}
 	if !st.IsDir() {
 		if !st.Mode().IsRegular() {
@@ -70,6 +70,9 @@ func copyLocked(ctx context.Context, src *Root, p string, dst *Root, to string, 
 	}
 	target, _, err := dst.chooseTarget(to, true, o.OnConflict)
 	if err != nil {
+		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(err, ErrPathConflict) {
+			return Node{}, ErrPrecondition
+		}
 		return Node{}, err
 	}
 	if src.rootShared == dst.rootShared && (strings.HasPrefix(to, p+"/") || strings.HasPrefix(target, p+"/") || target == p) {
@@ -281,7 +284,7 @@ func copyLocked(ctx context.Context, src *Root, p string, dst *Root, to string, 
 		if errors.Is(err, syscall.EXDEV) {
 			return Node{}, ErrCrossDevice
 		}
-		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(err, os.ErrExist) {
+		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(err, ErrPathConflict) {
 			return Node{}, ErrPrecondition
 		}
 		return Node{}, err

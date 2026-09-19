@@ -20,15 +20,46 @@ console.log(copied.node?.path);
 ```
 
 A same-root move uses native rename and preserves the source inode, ID, revision
-and history. It accepts only `onConflict`; ownership, access ACL, metadata and
-publication conditions are rejected rather than silently ignored. Set those
+and history. Of the write options, it accepts only `onConflict`; ownership, access
+ACL, metadata and publication conditions are rejected rather than silently
+ignored. Set those
 attributes through their explicit APIs when needed.
+
+## Select destination execution rights
+
+Transfers and historical copies inherit the source request's execution identity
+unless the backend supplies `targetExecution`. This controls the destination's
+filesystem operations independently of the source:
+
+| `targetExecution` | Destination execution |
+| --- | --- |
+| Omitted | Inherit the source request's Unix identity, or its service context. |
+| `{mode: "service"}` | Use the Filegate service account. Valid even when the destination has `execution: false`. |
+| `{mode: "unix", identity: {uid, gid, groups?}}` | Use these numeric Unix credentials; the destination must have `execution: true`. |
+
+```ts
+const source = files.root("shared").as({ uid: 10001, gid: 20001, groups: [20002] });
+const copied = await source.transfer("teams/report.pdf", "documents", "report.pdf", {
+  targetExecution: { mode: "service" },
+  onConflict: "error",
+});
+```
+
+The source is still read under UID 10001 and its supplied groups. Selecting the
+service context explicitly does not retry denied source access or act as a
+permission fallback. `ownership` and `accessACL` remain separate destination
+metadata instructions.
+
+The same `targetExecution` option is available on `copyVersion` and cross-root
+moves. Operations within one root require identical source and destination
+execution contexts; differing contexts return 400. A Unix context requires both
+`uid` and `gid`; `groups` is optional. Service mode must not include `identity`.
 
 ## Choose a conflict policy
 
 | Policy | Existing target |
 | --- | --- |
-| `error` (default) | Return 409 without replacing it. |
+| `error` (default) | Return `409 path_conflict` without replacing it. |
 | `rename` | Choose a free sibling with a random suffix; return its actual path. |
 | `overwrite` | Replace a regular file with a regular file. Any directory target or directory source conflicts. |
 
@@ -93,9 +124,9 @@ if (result.state === "source_pending") {
 
 The destination root owns the receipt. Use `transferStatus(id)`,
 `resumeTransfer(id)` and `abandonTransfer(id)` on that root. A retry with the same
-UUID must describe the same source, destination, options and execution identity;
-reusing it for another request returns 409. Copies and same-root moves reject a
-transfer ID.
+UUID must describe the same source, destination, options and both execution
+contexts; reusing it for another request returns `409 idempotency_conflict`.
+Copies and same-root moves reject a transfer ID.
 
 | State | Meaning |
 | --- | --- |
@@ -113,9 +144,13 @@ conservative content/namespace generations for both roots. Even an unrelated
 write in either root can prevent source deletion with `412 precondition_failed`;
 the source is preserved. Inspect the files and abandon the old intent when it is
 no longer safe to continue. Startup recovery does not automatically resume source
-deletion. Bound Unix execution identities remain in effect for any resumed file
-operation. Changing either root's `managed` setting also invalidates pending
-source-deletion checks; an ordinary restart with unchanged settings does not.
+deletion. Receipts retain both source and destination execution contexts, and
+resume restores each for its respective file operations. Status, resume and
+abandon are destination-root operations; a scoped client must match the receipt's
+destination identity. An unscoped authenticated backend can manage the receipt
+without replacing its stored execution contexts. Changing either root's `managed`
+setting also invalidates pending source-deletion checks; an ordinary restart with
+unchanged settings does not.
 
 If source deletion was already durably confirmed, resume can finish the receipt
 even after managed mode or Unix execution is disabled. This only records the

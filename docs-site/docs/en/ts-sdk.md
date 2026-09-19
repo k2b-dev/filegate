@@ -23,7 +23,7 @@ try {
   });
   console.log(file.path, file.id);
 } catch (error) {
-  if (error instanceof FilegateError && error.status === 409) {
+  if (error instanceof FilegateError && error.code === "path_conflict") {
     console.log("Choose another name or explicitly overwrite");
   } else throw error;
 }
@@ -49,7 +49,7 @@ const lease = await actor.directDownload("teams/editors/report.pdf");
 
 The root must have `execution: true`. `uid` and `gid` are required; `groups` is
 optional. Invalid IDs or more than 64 groups throw `TypeError`. Use the unscoped
-client for root information, search and administrative operations. For an archive,
+client for root information and administrative operations. For an archive,
 use `files.as(identity).archiveLease(items)`; the identity applies to every root.
 
 Only backend requests carry `X-Filegate-Execution`. Return the lease unchanged
@@ -57,6 +57,23 @@ to the browser; direct helpers send neither this header nor the backend token.
 Sessions retain their creation identity through renewal and commit. See
 [Unix execution identity](/docs/en/permissions#unix-execution-identity) for
 permissions, ownership overrides and failure semantics.
+
+`actor.search(query, options)` is supported. It scans the live filesystem even
+when indexing is enabled, and an unreadable subtree fails the query. A fresh
+query observes external changes; an existing cursor keeps its bounded observation.
+
+`TransferOptions` and `VersionCopyOptions` accept `targetExecution`:
+
+```ts
+await actor.copyVersion("report.pdf", versionId, "documents", "recovered.pdf", {
+  targetExecution: { mode: "service" },
+});
+```
+
+The exported `ExecutionContext` type is either `{mode:"service"}` or
+`{mode:"unix",identity:ExecutionIdentity}`. Omission inherits the source context;
+`files.root("shared").as(identity)` still controls source access. See
+[destination execution rights](/docs/en/transfers#select-destination-execution-rights).
 
 ## Root operations
 

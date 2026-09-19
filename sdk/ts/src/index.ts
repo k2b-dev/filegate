@@ -1,4 +1,4 @@
-import type { TransferOptions, TransferResult, DownloadOptions, ListingOptions, ExecutionIdentity, ACL, ACLScope, ArchiveItem, ArchiveLease, DirectoryOptions, DirectURL, ThumbnailLeaseOptions, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, Session, SessionCreated, SessionCreateOptions, SessionSegmentPage, SessionLease, SessionLeaseRequest, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
+import type { VersionCopyOptions, TransferOptions, TransferResult, DownloadOptions, ListingOptions, ExecutionIdentity, ACL, ACLScope, ArchiveItem, ArchiveLease, DirectoryOptions, DirectURL, ThumbnailLeaseOptions, IndexStatus, Metadata, Node, Ownership, Page, RootInfo, Session, SessionCreated, SessionCreateOptions, SessionSegmentPage, SessionLease, SessionLeaseRequest, Stats, System, Version, VersionOptions, WriteOptions } from "./types.js";
 import { archiveRaw, checked, putDirect, DirectSession } from "./utils.js";
 export * from "./types.js";
 export { FilegateError } from "./utils.js";
@@ -75,7 +75,7 @@ export class RootClient {
   transferStatus(id: string): Promise<TransferResult> { return this.client.json("GET", `${this.prefix}/transfers/${encodeURIComponent(id)}`); }
   resumeTransfer(id: string): Promise<TransferResult> { return this.client.json("POST", `${this.prefix}/transfers/${encodeURIComponent(id)}/resume`); }
   abandonTransfer(id: string): Promise<TransferResult> { return this.client.json("POST", `${this.prefix}/transfers/${encodeURIComponent(id)}/abandon`); }
-  copyVersion(path: string, id: string, targetRoot: string, targetPath: string, options: WriteOptions = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/versions/${encodeURIComponent(id)}/copy`, undefined, { path, targetRoot, targetPath, ...options }); }
+  copyVersion(path: string, id: string, targetRoot: string, targetPath: string, options: VersionCopyOptions = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/versions/${encodeURIComponent(id)}/copy`, undefined, { path, targetRoot, targetPath, ...options }); }
   directUpload(path: string, size: number, options: WriteOptions & { expiresIn?: number } = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/uploads/direct`, undefined, { path, size, ...options }); }
   directDownload(path: string, options: DownloadOptions = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { path, ...options }); }
   /** Issue a GET/HEAD lease for exactly this historical version. */

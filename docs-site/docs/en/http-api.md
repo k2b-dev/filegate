@@ -33,7 +33,7 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `PUT /acl` | `path`, `scope=access\|default`; body `{entries}` | Stored ACL. |
 | `DELETE /acl` | `path`, `scope=default` | 204. |
 | `DELETE /files` | `path`, `recursive` | 204. |
-| `POST /transfers` | `{path,targetRoot,targetPath,move?,id?,...WriteOptions}` | `TransferResult`; 202 when pending. |
+| `POST /transfers` | `{path,targetRoot,targetPath,move?,id?,targetExecution?,...WriteOptions}` | `TransferResult`; 202 when pending. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,...WriteOptions}` | `{url,method,expires}`. |
 | `POST /downloads/direct` | `{path,expiresIn?,fileName?}` | `{url,method,expires}`. |
 | `POST /versions/{id}/downloads/direct` | `{path,expiresIn?,fileName?}` | Version lease: `{url,method:"GET",expires}`. |
@@ -81,7 +81,7 @@ Additional transfer and segment routes use the same root prefix:
 | `GET /transfers/{id}` | Destination root | `TransferResult`. |
 | `POST /transfers/{id}/resume` | Destination root | Result; 202 while pending. |
 | `POST /transfers/{id}/abandon` | Destination root | Terminal result; no file deletion. |
-| `POST /versions/{id}/copy` | `{path,targetRoot,targetPath,...WriteOptions}` | 201 destination Node. |
+| `POST /versions/{id}/copy` | `{path,targetRoot,targetPath,targetExecution?,...WriteOptions}` | 201 destination Node. |
 
 `TransferResult` has `state`, optional `node`, `id` and `sourceRoot`. Cross-root
 moves require an application-generated UUID `id` and two managed roots. Copies
@@ -101,9 +101,14 @@ normalized by sorting and removing duplicates. The header accepts one JSON
 object, no unknown fields, and at most 4096 bytes. The root must advertise
 `execution: true`.
 
-The same identity applies to source and destination roots in transfers and to
-all roots in an archive selection. Direct upload, download, historical and
-thumbnail leases sign the identity. Session creation persists it in the backend
+Transfers inherit the source execution identity at the destination unless
+`targetExecution` explicitly selects `{mode:"service"}` or
+`{mode:"unix",identity:{uid,gid,groups?}}`. This field is also supported by
+historical copy requests. Service mode omits `identity`; Unix mode requires it.
+Source access always retains the request's identity. Same-root differing contexts
+return 400. Archive selections use one identity across all selected roots. Direct
+upload, download, historical and thumbnail leases sign the identity. Session
+creation persists it in the backend
 session's optional `execution` field. A new session lease or commit uses that
 stored identity. An unscoped backend can manage the session, but cannot change
 its execution identity by omitting the header.
@@ -119,9 +124,11 @@ its execution identity by omitting the header.
 | Execution capacity exhausted | 503 `execution_capacity`, with `Retry-After: 1`. |
 
 Administrative routes that reject the header are system information, root lists
-and root information, search, index status/rebuild, stats/read/refresh and version
-pruning. Their results are not filtered by the identity. File operations,
-including ownership and ACL routes, accept it. See
+and root information, index status/rebuild, cached stats/root-wide refresh and
+version pruning. Their results are not filtered by the identity. Listing and
+search accept the identity and always use the live filesystem for scoped queries.
+Subtree stats (`POST /stats/refresh?path=...`) also accept it. File operations,
+including ownership and ACL routes, use the supplied identity. See
 [permissions](/docs/en/permissions#unix-execution-identity) for the exact native
 permission semantics and private provisioning behavior.
 
@@ -206,7 +213,8 @@ returns 404, which does not reveal whether the upload committed.
 
 Session creation may be retried with the same `idempotencyKey` and identical
 path, size, write options and execution identity while the record is retained.
-A different request with the same key returns 409. Terminal replay returns the
+A different request with the same key returns `409 idempotency_conflict`.
+Terminal replay returns the
 session without a lease. Keys are root-scoped strings of at most 128 bytes,
 without leading or trailing whitespace. Segment pages use an exclusive numeric
 `after` index (-1 initially) and a limit of 1–1000; terminal pages are empty.
@@ -286,12 +294,27 @@ UTF-8 and portable Windows-compatible relative paths. Collision checks normalize
 Unicode and ignore case. Use `path: "."` to select a root; an empty path is invalid.
 Read failures after response headers abort the stream. Selections are not snapshots.
 
+## Distinguish conflicts
+
+| Error code | Meaning |
+| --- | --- |
+| `409 path_conflict` | The requested target is occupied or cannot be replaced under the selected conflict policy. |
+| `409 idempotency_conflict` | A session key or transfer UUID was reused with different bound request parameters. |
+| `409 conflict` | Another operation conflict; inspect its message and current state. |
+| `412 precondition_failed` | A bound publication revision or transfer safety condition no longer matches. |
+
+Do not treat every 409 as an instruction to overwrite. A path conflict may need
+a different destination or an explicit conflict policy. An idempotency conflict
+requires reconciling the original operation or using a new key for a new request.
+
 ## Errors and retries
 
 Raw stream routes return normal HTTP statuses. Common JSON statuses are 400 for
 invalid input, 401 for authentication/lease failure, 403 for permissions,
-404 for missing files or receipts, 409 for conflicts/closed sessions/disabled
-features, 410 for expired sessions, 413 for limits, 501 for unsupported POSIX ACLs
-or storage layout, and 503 for concurrent transfer capacity. Do not retry a mutation blindly after an
-ambiguous transport failure: session commits are idempotent while their receipts
-are retained; ordinary mutations require reading back the resulting state.
+404 for missing files or receipts, and 409 for conflicts/closed sessions/disabled
+features. Expired sessions return 410; limits return 413. Unsupported POSIX ACLs
+or storage layouts return 501; concurrent transfer capacity returns 503.
+
+Do not retry a mutation blindly after an ambiguous transport failure. Session
+commits are idempotent while their receipts are retained; ordinary mutations
+require reading back the resulting state.

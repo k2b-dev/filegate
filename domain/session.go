@@ -99,7 +99,7 @@ func (r *Root) CreateSession(p string, size int64, o WriteOptions, idempotencyKe
 			existing, err := r.session(previous.SessionID)
 			if err == nil {
 				if previous.Fingerprint != fingerprint {
-					return Session{}, ErrConflict
+					return Session{}, ErrIdempotencyConflict
 				}
 				return existing, nil
 			}

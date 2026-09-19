@@ -114,7 +114,7 @@ func (r *Root) MoveWithOptions(p, to string, o WriteOptions) (Node, error) {
 		return Node{}, ErrInvalid
 	}
 	if p == to && o.OnConflict != "rename" {
-		return Node{}, ErrConflict
+		return Node{}, ErrPathConflict
 	}
 	requested := to
 	to, _, err = r.chooseTarget(to, n.Directory, o.OnConflict)
@@ -167,19 +167,24 @@ func (r *Root) MoveWithOptions(p, to string, o WriteOptions) (Node, error) {
 				err = nil
 				break
 			}
-		} else if !errors.Is(e, os.ErrNotExist) {
-			return Node{}, e
+		} else {
+			// EEXIST without an observed public target is not evidence that
+			// choosing another destination will resolve the filesystem error.
+			return Node{}, ErrConflict
 		}
 		st, e := r.Files.Stat(p)
 		if e != nil {
-			return Node{}, err
+			if errors.Is(e, os.ErrNotExist) {
+				return Node{}, fmt.Errorf("%w: source changed during conflict retry", ErrConflict)
+			}
+			return Node{}, e
 		}
 		dev, ino, _, _, _ := r.Files.Identity(st)
 		if dev != m.Device || ino != m.Inode {
 			return Node{}, ErrConflict
 		}
 		if attempt == 7 {
-			return Node{}, ErrConflict
+			return Node{}, pathConflict(err)
 		}
 		to, _, err = r.chooseTarget(requested, n.Directory, "rename")
 		if err != nil {
@@ -187,6 +192,9 @@ func (r *Root) MoveWithOptions(p, to string, o WriteOptions) (Node, error) {
 		}
 	}
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Node{}, r.classifyPathConflict(to, err)
+		}
 		return Node{}, err
 	}
 	m.Applied = true
@@ -403,12 +411,12 @@ func Transfer(ctx context.Context, src *Root, p string, dst *Root, to string, mo
 	if err = ValidateOptions(o); err != nil {
 		return Node{}, err
 	}
+	if src.rootShared == dst.rootShared && !sameExecution(src.execution, dst.execution) {
+		return Node{}, fmt.Errorf("%w: same-root transfers require one execution identity", ErrInvalid)
+	}
 	if move {
 		if src.rootShared != dst.rootShared {
 			return Node{}, fmt.Errorf("%w: cross-root moves require a transfer ID", ErrInvalid)
-		}
-		if !sameExecution(src.execution, dst.execution) {
-			return Node{}, ErrInvalid
 		}
 		return src.MoveWithOptions(p, to, o)
 	}

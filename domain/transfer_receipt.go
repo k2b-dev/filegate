@@ -34,6 +34,19 @@ type TransferResult struct {
 	SourceRoot string `json:"sourceRoot,omitempty"`
 }
 
+// transferDestination distinguishes an explicitly unscoped destination from an
+// old receipt whose single Execution identity applies to both roots.
+type transferDestination struct {
+	Identity *ExecutionIdentity
+}
+
+func transferDestinationFor(source, destination *ExecutionIdentity) *transferDestination {
+	if sameExecution(source, destination) {
+		return nil
+	}
+	return &transferDestination{Identity: destination}
+}
+
 type transferReceipt struct {
 	ID                    string
 	State                 string
@@ -45,6 +58,7 @@ type transferReceipt struct {
 	RequestHash           string
 	Options               WriteOptions
 	Execution             *ExecutionIdentity
+	DestinationExecution  *transferDestination `json:",omitempty"`
 	SourceGeneration      string
 	DestinationGeneration string
 	Node                  *Node
@@ -65,6 +79,13 @@ func (t transferReceipt) result() TransferResult {
 	}
 	return out
 }
+func (t transferReceipt) destinationExecution() *ExecutionIdentity {
+	if t.DestinationExecution != nil {
+		return t.DestinationExecution.Identity
+	}
+	return t.Execution
+}
+
 func (t transferReceipt) terminal() bool {
 	return t.State == TransferCompleted || t.State == TransferAbandoned
 }
@@ -103,15 +124,16 @@ func (r *Root) pendingTransfers() (int, error) {
 	}
 	return count, err
 }
-func transferRequestHash(srcStore, dstStore, p, to string, o WriteOptions, execution *ExecutionIdentity) (string, error) {
+func transferRequestHash(srcStore, dstStore, p, to string, o WriteOptions, source, destination *ExecutionIdentity) (string, error) {
 	b, err := json.Marshal(struct {
-		SourceStore      string
-		DestinationStore string
-		Path             string
-		Target           string
-		Options          WriteOptions
-		Execution        *ExecutionIdentity
-	}{srcStore, dstStore, p, to, o, execution})
+		SourceStore          string
+		DestinationStore     string
+		Path                 string
+		Target               string
+		Options              WriteOptions
+		Execution            *ExecutionIdentity
+		DestinationExecution *transferDestination `json:",omitempty"`
+	}{srcStore, dstStore, p, to, o, source, transferDestinationFor(source, destination)})
 	if err != nil {
 		return "", err
 	}
@@ -125,7 +147,7 @@ func TransferMove(ctx context.Context, src *Root, p string, dst *Root, to string
 	if err := ctx.Err(); err != nil {
 		return TransferResult{}, err
 	}
-	if !validTransferID(id) || src.rootShared == dst.rootShared || !sameExecution(src.execution, dst.execution) {
+	if !validTransferID(id) || src.rootShared == dst.rootShared {
 		return TransferResult{}, ErrInvalid
 	}
 	var err error
@@ -154,14 +176,14 @@ func TransferMove(ctx context.Context, src *Root, p string, dst *Root, to string
 	if err != nil {
 		return TransferResult{}, err
 	}
-	hash, err := transferRequestHash(sourceStore, destinationStore, p, to, o, src.execution)
+	hash, err := transferRequestHash(sourceStore, destinationStore, p, to, o, src.execution, dst.execution)
 	if err != nil {
 		return TransferResult{}, err
 	}
 	t, err := dst.transferReceipt(id)
 	if err == nil {
 		if t.RequestHash != hash || t.SourceRoot != src.Config.Name {
-			return TransferResult{}, ErrConflict
+			return TransferResult{}, ErrIdempotencyConflict
 		}
 		if t.terminal() {
 			return t.result(), nil
@@ -186,7 +208,7 @@ func TransferMove(ctx context.Context, src *Root, p string, dst *Root, to string
 		if e != nil {
 			return TransferResult{}, e
 		}
-		t = transferReceipt{ID: id, State: TransferPrepared, SourceRoot: src.Config.Name, SourceStore: sourceStore, DestinationStore: destinationStore, SourcePath: p, TargetPath: to, RequestHash: hash, Options: o, Execution: src.Execution(), SourceGeneration: generation}
+		t = transferReceipt{ID: id, State: TransferPrepared, SourceRoot: src.Config.Name, SourceStore: sourceStore, DestinationStore: destinationStore, SourcePath: p, TargetPath: to, RequestHash: hash, Options: o, Execution: src.Execution(), DestinationExecution: transferDestinationFor(src.Execution(), dst.Execution()), SourceGeneration: generation}
 		receipt, e := encoded(transferPrefix+id, t)
 		if e != nil {
 			return TransferResult{}, e
@@ -250,7 +272,7 @@ func resumeTransferLocked(ctx context.Context, src, dst *Root, t transferReceipt
 	if !src.Config.Managed || !dst.Config.Managed {
 		return t.result(), fmt.Errorf("%w: cross-root moves require two managed roots", ErrDisabled)
 	}
-	if !sameExecution(t.Execution, src.execution) || !sameExecution(t.Execution, dst.execution) {
+	if !sameExecution(t.Execution, src.execution) || !sameExecution(t.destinationExecution(), dst.execution) {
 		return t.result(), os.ErrPermission
 	}
 	if t.State == TransferPrepared {
@@ -374,7 +396,7 @@ func (r *Root) TransferStatus(id string) (TransferResult, error) {
 		return TransferResult{}, err
 	}
 	t, err := r.transferReceipt(id)
-	if err == nil && r.execution != nil && !sameExecution(r.execution, t.Execution) {
+	if err == nil && r.execution != nil && !sameExecution(r.execution, t.destinationExecution()) {
 		return t.result(), os.ErrPermission
 	}
 	return t.result(), err
@@ -400,7 +422,7 @@ func ResumeTransfer(ctx context.Context, src, dst *Root, id string) (TransferRes
 		if err != nil {
 			return err
 		}
-		if src.execution != nil && !sameExecution(src.execution, t.Execution) || dst.execution != nil && !sameExecution(dst.execution, t.Execution) {
+		if src.execution != nil && !sameExecution(src.execution, t.Execution) || dst.execution != nil && !sameExecution(dst.execution, t.destinationExecution()) {
 			return os.ErrPermission
 		}
 		if err = transferBindings(src, dst, t); err != nil {
@@ -435,7 +457,7 @@ func ResumeTransfer(ctx context.Context, src, dst *Root, id string) (TransferRes
 		return t.result(), err
 	}
 	defer closeSource()
-	destination, closeDestination, err := dst.WithExecution(ctx, t.Execution)
+	destination, closeDestination, err := dst.WithExecution(ctx, t.destinationExecution())
 	if err != nil {
 		return t.result(), err
 	}
@@ -467,7 +489,7 @@ func (r *Root) AbandonTransfer(id string) (TransferResult, error) {
 	if err != nil {
 		return TransferResult{}, err
 	}
-	if r.execution != nil && !sameExecution(r.execution, t.Execution) {
+	if r.execution != nil && !sameExecution(r.execution, t.destinationExecution()) {
 		return t.result(), os.ErrPermission
 	}
 	t, err = r.finishTransfer(t, TransferAbandoned)

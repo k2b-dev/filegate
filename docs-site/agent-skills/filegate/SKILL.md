@@ -62,7 +62,7 @@ const upload = await root.directUpload("notes.txt", 5, { onConflict: "error" });
 | `remove(path, recursive?)` | Permanent removal, including histories. |
 | `transfer(path,targetRoot,targetPath,TransferOptions?)` | `TransferResult`; inspect state before considering a move complete. |
 | `transferStatus(id)`, `resumeTransfer(id)`, `abandonTransfer(id)` | Destination-root move receipts. |
-| `copyVersion(path,id,targetRoot,targetPath,WriteOptions?)` | Historical bytes at a distinct target; returns Node. |
+| `copyVersion(path,id,targetRoot,targetPath,VersionCopyOptions?)` | Historical bytes at a distinct target; returns Node. |
 | `directDownload(path, DownloadOptions?)` | GET/HEAD lease; Range supported. |
 | `directVersionDownload(path,id,DownloadOptions?)` | One concrete version, current path/file identity. |
 | `directThumbnail(path,{width?,height?,expiresIn?})` | Bound JPEG preview lease. |
@@ -144,9 +144,34 @@ caller deadlines.
   `DownloadRaw`, `ArchiveRaw`, `DirectSession` and `Root.Put` use that origin;
   `TransferURL(lease.URL)` maps a signed lease explicitly.
 
+## Independent transfer execution
+
+A transfer or historical copy reads under the source client's `.as(identity)`,
+`WithExecution(identity)` or authenticated execution header. `targetExecution`
+selects destination execution independently:
+
+- Omitted: inherit the source context.
+- `{mode:"service"}`: explicitly use the service account. The destination may
+  have execution disabled. No identity is allowed in this context.
+- `{mode:"unix",identity:{uid,gid,groups?}}`: use these Unix credentials; requires
+  execution enabled at the destination. UID and GID are mandatory.
+
+TypeScript exports `ExecutionContext`, `VersionCopyOptions`, `TransferOptions`.
+Example: `source.transfer(path, "cloud", target, {targetExecution:{mode:"service"}})`.
+Go request envelopes have `TargetExecution *filegate.ExecutionContext`;
+use `&filegate.ExecutionContext{Mode:"service"}` or
+`&filegate.ExecutionContext{Mode:"unix", Identity:&filegate.ExecutionIdentity{...}}`.
+`ExecutionContext` is also available from `api/v1`.
+
+Selecting a service destination does not elevate source reads or retry a denied
+Unix operation. Ownership/accessACL are separate destination metadata settings.
+Same-root operations require identical normalized source/destination contexts;
+differing contexts return 400. ZIP has no per-target context override.
+
 ## Publication and revisions
 
-Default conflict policy is `error`. `rename` chooses a random sibling with a
+Default conflict policy is `error`; an occupied/incompatible destination returns
+`409 path_conflict`. `rename` chooses a random sibling with a
 128-bit suffix and a bounded retry count; always use the returned path.
 `overwrite` supports regular-file-to-regular-file replacement, never directory
 merge. A new destination gets a new ID/history; file overwrite retains the
@@ -175,6 +200,12 @@ size, nanosecond mtime and ctime detect observed external changes, but cannot ma
 uncooperative NFS changes atomic. Metadata changes may invalidate revisions too.
 Never describe this as external-writer CAS.
 
+Distinguish conflict codes in client handling: `409 path_conflict` is an occupied
+or incompatible target; `409 idempotency_conflict` is reused session/transfer
+identity with different bound parameters. Other conflicts retain `409 conflict`.
+A failed publication condition remains `412 precondition_failed`. Do not turn an
+idempotency conflict into a blind overwrite or reuse the key for new work.
+
 ## Sessions and recovery
 
 Sessions last 24 hours; segments are 8 MiB, last segment shorter, maximum 10000.
@@ -186,7 +217,7 @@ Generate a key per logical upload and persist it before issuance. Keys are
 root-scoped strings <=128 bytes without leading/trailing whitespace. Retrying
 identical path/size/write options/execution with the same key returns the same
 session while retrievable. Lease duration/abort permission may differ; changing
-the bound upload returns 409. A terminal replay omits the lease.
+the bound upload returns `409 idempotency_conflict`. A terminal replay omits the lease.
 
 Status contains `uploadedSegments` and `received`, not the full hash map. Use
 paged `{items:[{index,hash}],next?}` receipts, start after=-1, limit 1–1000
@@ -214,9 +245,10 @@ retry of abort, non-replayable bodies or expired leases.
 
 ## Transfers and history
 
-`TransferOptions` adds `move?` and `id?` to WriteOptions. Copies and same-root moves
+`VersionCopyOptions` extends WriteOptions with `targetExecution?`; TransferOptions
+also adds `move?` and `id?`. Copies and same-root moves
 return `{state:"completed",node}`. Same-root moves preserve the inode/ID/history
-and accept only onConflict; other write options are rejected. File-over-file
+and accept only onConflict among write options; other write options are rejected. File-over-file
 native move removes the replaced target's identity/history. Source==target with
 rename selects a sibling; ordinary same-path moves conflict.
 
@@ -238,8 +270,10 @@ resume and abandon. Pending HTTP 202 is not completed success:
 - `abandoned`: no further deletion intent; current files untouched, removed
   sources are not restored.
 
-Same UUID + changed request conflicts. Explicit resume restores the stored Unix
-identity and checks root-wide content/namespace generations. Unrelated changes
+Same UUID + changed bound request returns `409 idempotency_conflict`. Receipts
+retain both source and destination execution contexts; explicit resume restores
+each and checks root-wide content/namespace generations. Scoped destination-root
+status/resume/abandon must match the stored destination identity. Unrelated changes
 can cause 412 and prevent source deletion. Never automatically delete during
 startup or assume a whole cross-root transaction is atomic. At most 128 unresolved
 receipts per destination; pending never expires. Terminal records last at least
@@ -273,7 +307,15 @@ descendants, excluding its base.
 Indexed scans seek forward; an empty page can still have next. Filesystem scans
 sort one bounded observation: 60-second lifetime, 16 snapshots / 32 MiB per root,
 100000 entries max. Exceeded budget returns 413, not a globally sorted partial
-result. Scoped Unix listings use filesystem observations even on indexed roots.
+result. Scoped Unix listing and search use live filesystem observations even on
+indexed roots. A new query sees external NFS changes without an index rebuild;
+continuations retain their original observation. An unreadable subtree during
+recursive search fails the whole query even if it would not match. Every page
+checks its base, traversal to each returned entry and parent read permissions.
+External deletion of a returned entry fails the whole page with 404; revoked
+access returns 403. Neither returns a partial page; restart for a new observation.
+A visible name and metadata do not grant content read access; download checks it
+separately.
 Keep query parameters unchanged. Mutations/rebuild/restart/query change/
 expiry/eviction can return 409 cursor_invalid: discard pages and restart.
 
@@ -291,8 +333,10 @@ and deduplicated. Unknown fields invalid. Identity selects execution rights;
 Ownership selects resulting owner metadata. Resolve identities in the application.
 
 Kernel checks apply to traversal, content opens and public mutations under that
-identity. No privileged fallback on denial. Same identity covers all copy/move/ZIP
-roots. Each root must enable execution. Leases sign it; sessions store it immutably.
+identity. No privileged fallback on denial. Source and destination contexts may
+differ for cross-root transfers; ZIP selections use one bound identity across all
+roots. Each root used with Unix execution must enable it. Leases sign their
+identity; sessions store it immutably.
 Browser execution headers return 400 execution_override_not_allowed. Session scope
 mismatch 403 execution_mismatch; disabled root 409; denied filesystem 403.
 
@@ -319,9 +363,10 @@ current-file read access; historical ACLs are not stored. Open descriptors are
 not retroactively revoked by chmod. NFS credentials/export/root_squash/Kerberos
 rules still apply; local UID switching cannot override them.
 
-Search/dashboards/index/stats/prune reject execution scope; use the unscoped
-backend. Results are not filtered by Unix user rights. Worker capacity returns 503
-execution_capacity with Retry-After: 1.
+Dashboards/index/cached stats/root-wide stats refresh/prune reject execution
+scope; use the unscoped backend. Those results are not filtered by Unix rights.
+Scoped listing, search and subtree statistics use the filesystem. Worker capacity
+returns 503 execution_capacity with Retry-After: 1.
 
 ## Downloads and previews
 

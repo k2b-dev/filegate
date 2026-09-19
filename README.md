@@ -15,6 +15,7 @@ its TypeScript or Go client from your application backend.
 - Optional backend-bound Unix execution identities for file operations and direct
   transfers; requires explicit root-service configuration.
 - Sorted, filtered cursor browsing and directory observations with completeness.
+- Live Unix-scoped search and independent source/destination execution for transfers.
 - Conditional publication on roots written exclusively through Filegate.
 - Historical copies, atomic directory-copy publication and recoverable cross-root moves.
 - Bounded thumbnails and ZIP selection downloads.

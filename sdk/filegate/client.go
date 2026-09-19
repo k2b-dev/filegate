@@ -26,6 +26,7 @@ type ListingOptions = api.ListingOptions
 type DownloadOptions = api.DownloadOptions
 type Ownership = api.Ownership
 type ExecutionIdentity = api.ExecutionIdentity
+type ExecutionContext = api.ExecutionContext
 type ACLScope = api.ACLScope
 type ACLPermissions = api.ACLPermissions
 type ACLTag = api.ACLTag

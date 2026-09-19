@@ -63,7 +63,7 @@ func TestConflictChoiceHasBoundedCost(t *testing.T) {
 	}
 	files.allOccupied = true
 	files.probes = 0
-	if _, _, err := root.chooseTarget("file", false, "rename"); !errors.Is(err, ErrLimit) {
+	if _, _, err := root.chooseTarget("file", false, "rename"); !errors.Is(err, ErrPathConflict) {
 		t.Fatal(err)
 	}
 	if files.probes != conflictAttempts+1 {
@@ -155,7 +155,7 @@ func TestPublicationConflictRetriesUpdateJournalAndReceipt(t *testing.T) {
 			root := &Root{Files: files, State: journal}
 			err = root.renamePublication("pending/test", &rec, false, "file.txt", "rename")
 			if collisions == conflictAttempts {
-				if !errors.Is(err, ErrLimit) || files.calls != conflictAttempts {
+				if !errors.Is(err, ErrPathConflict) || files.calls != conflictAttempts {
 					t.Fatal(files.calls, err)
 				}
 			} else if err != nil || files.calls != collisions+1 {

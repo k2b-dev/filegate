@@ -111,11 +111,9 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 }
 
 // Search selects descendants of base, matching the case-insensitive basename.
-// Indexed scans seek to their cursor; live queries scan and sort once per cursor.
+// Unscoped indexed scans seek to their cursor. Execution views always scan the
+// live filesystem once and bind the resulting snapshot to their Unix identity.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {
-	if r.execution != nil {
-		return Page{}, ErrInvalid
-	}
 	return r.queryListing(ctx, base, strings.ToLower(query), true, o)
 }
 
@@ -147,8 +145,8 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 			return Page{}, ErrCursorInvalid
 		}
 	}
-	// Search remains an administrative index operation; live/actor directory
-	// listings always check current traversal and directory read permissions.
+	// Live selections check traversal and base directory read permission on every
+	// page. Execution views also authorize every returned node and parent below.
 	if !r.Config.Index || r.execution != nil || !recursive {
 		d, e := r.Files.Open(p, os.O_RDONLY, 0)
 		if e != nil {
@@ -314,6 +312,11 @@ func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o List
 	}
 	end := min(c.Offset+o.Limit, len(snapshot.entries))
 	out := Page{Items: append([]Node{}, snapshot.entries[c.Offset:end]...)}
+	if r.execution != nil {
+		if err := r.checkListingAccess(ctx, p, out.Items); err != nil {
+			return Page{}, err
+		}
+	}
 	if end < len(snapshot.entries) {
 		c.Offset = end
 		out.Next = encodeListingCursor(c)
@@ -464,4 +467,43 @@ func (r *Root) evictListing() {
 		r.listingBytes -= r.listings[oldest].bytes
 		delete(r.listings, oldest)
 	}
+}
+
+// Recheck only returned nodes and their ancestor directories, without scanning
+// their children again. Stat enforces search permission on every ancestor;
+// opening each distinct parent additionally enforces directory read permission.
+// Leaf read permission is intentionally separate: listing names and metadata
+// does not authorize reading the file's bytes.
+func (r *Root) checkListingAccess(ctx context.Context, base string, nodes []Node) error {
+	checked := map[string]bool{base: true}
+	for _, n := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := r.Files.Stat(n.Path); err != nil {
+			return err
+		}
+		for parent := path.Dir(n.Path); !checked[parent]; parent = path.Dir(parent) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			d, err := r.Files.Open(parent, os.O_RDONLY, 0)
+			if err != nil {
+				return err
+			}
+			st, err := d.Stat()
+			d.Close()
+			if err != nil {
+				return err
+			}
+			if !st.IsDir() {
+				return ErrConflict
+			}
+			checked[parent] = true
+			if parent == "." {
+				break
+			}
+		}
+	}
+	return nil
 }

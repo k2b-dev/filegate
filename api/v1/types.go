@@ -118,17 +118,19 @@ type MkdirRequest struct {
 }
 type TransferResult = domain.TransferResult
 type VersionCopyRequest struct {
-	Path       string `json:"path"`
-	TargetRoot string `json:"targetRoot"`
-	TargetPath string `json:"targetPath"`
+	TargetExecution *ExecutionContext `json:"targetExecution,omitempty"`
+	Path            string            `json:"path"`
+	TargetRoot      string            `json:"targetRoot"`
+	TargetPath      string            `json:"targetPath"`
 	WriteOptions
 }
 type TransferRequest struct {
-	ID         string `json:"id,omitempty"`
-	Path       string `json:"path"`
-	TargetRoot string `json:"targetRoot"`
-	TargetPath string `json:"targetPath"`
-	Move       bool   `json:"move"`
+	TargetExecution *ExecutionContext `json:"targetExecution,omitempty"`
+	ID              string            `json:"id,omitempty"`
+	Path            string            `json:"path"`
+	TargetRoot      string            `json:"targetRoot"`
+	TargetPath      string            `json:"targetPath"`
+	Move            bool              `json:"move"`
 	WriteOptions
 }
 type VersionRequest struct {

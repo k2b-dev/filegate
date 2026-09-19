@@ -47,7 +47,7 @@ func sameExecution(a, b *domain.ExecutionIdentity) bool {
 
 func executionAdminRoute(pattern string) bool {
 	switch pattern {
-	case "GET /v1/roots/{root}", "GET /v1/roots/{root}/index", "GET /v1/roots/{root}/stats", "GET /v1/roots/{root}/search", "POST /v1/roots/{root}/index/rebuild", "POST /v1/roots/{root}/stats/refresh", "POST /v1/roots/{root}/versions/prune":
+	case "GET /v1/roots/{root}", "GET /v1/roots/{root}/index", "GET /v1/roots/{root}/stats", "POST /v1/roots/{root}/index/rebuild", "POST /v1/roots/{root}/stats/refresh", "POST /v1/roots/{root}/versions/prune":
 		return true
 	}
 	return false

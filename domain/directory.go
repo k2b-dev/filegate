@@ -54,7 +54,7 @@ func (r *Root) mkdir(p string, o DirectoryOptions) (Node, error) {
 		return Node{}, e
 	}
 	if _, e := r.Files.Stat(p); e == nil {
-		return Node{}, ErrConflict
+		return Node{}, ErrPathConflict
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return Node{}, e
 	}
@@ -111,6 +111,9 @@ func (r *Root) mkdir(p string, o DirectoryOptions) (Node, error) {
 	}
 	r.needsRecovery = true
 	if e = r.Files.Rename(temp, p, false); e != nil {
+		if errors.Is(e, os.ErrExist) {
+			return Node{}, r.classifyPathConflict(p, e)
+		}
 		if errors.Is(e, syscall.EXDEV) {
 			return Node{}, ErrCrossDevice
 		}

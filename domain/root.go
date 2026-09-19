@@ -406,6 +406,9 @@ func (r *Root) publishTransfer(p, temp string, f *os.File, o WriteOptions, force
 	requested := p
 	p, exists, e := r.chooseTarget(requested, false, o.OnConflict)
 	if e != nil {
+		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(e, ErrPathConflict) {
+			return Node{}, ErrPrecondition
+		}
 		return Node{}, e
 	}
 	var old Node
@@ -463,7 +466,7 @@ func (r *Root) publishTransfer(p, temp string, f *os.File, o WriteOptions, force
 	}
 	r.needsRecovery = true
 	if e = r.renamePublication(key, &rec, exists, requested, o.OnConflict); e != nil {
-		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(e, os.ErrExist) {
+		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(e, ErrPathConflict) {
 			return Node{}, fmt.Errorf("%w: target appeared before publication", ErrPrecondition)
 		}
 		return Node{}, e

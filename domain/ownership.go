@@ -128,7 +128,7 @@ func (r *Root) parentPermissions(p string) (os.FileInfo, ACL, error) {
 // Callers already hold the root lock and have validated ownership options.
 func (r *Root) makeDirectory(p string, o *Ownership) error {
 	_, err := r.mkdir(p, DirectoryOptions{Ownership: o})
-	if errors.Is(err, ErrConflict) {
+	if errors.Is(err, ErrPathConflict) {
 		return os.ErrExist
 	}
 	return err

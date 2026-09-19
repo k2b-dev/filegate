@@ -10,6 +10,9 @@ import (
 // modifying the source. Ownership, ACL, conflict and conditional-publication
 // options describe the destination, whose ordinary publication rules apply.
 func CopyVersion(ctx context.Context, src *Root, p, id string, dst *Root, to string, o WriteOptions) (Node, error) {
+	if src.rootShared == dst.rootShared && !sameExecution(src.execution, dst.execution) {
+		return Node{}, ErrInvalid
+	}
 	if !src.Config.Versioning.Enabled {
 		return Node{}, ErrDisabled
 	}

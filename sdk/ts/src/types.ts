@@ -43,4 +43,7 @@ export interface ErrorResponse { error: string; message: string }
 
 export type TransferState = "prepared" | "source_pending" | "completed" | "abandoned";
 export interface TransferResult { node?: Node; id?: string; state: TransferState; sourceRoot?: string }
-export interface TransferOptions extends WriteOptions { move?: boolean; id?: string }
+/** Destination actor. Omit to inherit the source actor. */
+export type ExecutionContext = { mode: "service"; identity?: never } | { mode: "unix"; identity: ExecutionIdentity };
+export interface VersionCopyOptions extends WriteOptions { targetExecution?: ExecutionContext }
+export interface TransferOptions extends VersionCopyOptions { move?: boolean; id?: string }

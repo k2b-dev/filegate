@@ -86,7 +86,7 @@ then resume the same session. Do not create a new session merely to renew access
 Set an `idempotencyKey` when creating a session if the first response may be lost.
 Retry with the same key, path, size, write options and execution identity to get
 the same session while its record remains available. Reusing a key for a different
-request returns 409. Keys are optional strings of at most 128 bytes, without
+request returns `409 idempotency_conflict`. Keys are optional strings of at most 128 bytes, without
 leading or trailing whitespace; generate a fresh UUID for each logical upload.
 
 Creation returns `{session, lease?}`. An open session receives a new short-lived
@@ -127,7 +127,7 @@ if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
 The lease binds the root, path, exact byte count, conflict policy, ownership,
 access ACL, metadata, publication condition, execution identity and expiry. The uploader cannot override those fields. Reusing a URL
 before expiry repeats the authorized operation: single PUT URLs are not one-shot
-or resumable. Default conflict behavior is `error` (409); `overwrite` and
+or resumable. Default conflict behavior is `error` (`409 path_conflict`); `overwrite` and
 `rename` must be explicit. Rename uses a random suffix and returns the actual
 path; it does not search for the next numbered filename. See
 [copy and move conflicts](/docs/en/transfers#choose-a-conflict-policy).

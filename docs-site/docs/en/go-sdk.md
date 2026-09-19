@@ -18,7 +18,7 @@ node, err := root.Put(ctx, "notes/today.txt", strings.NewReader("hello"), 5,
     filegate.WriteOptions{Metadata: filegate.Metadata{"message": "First note"}})
 if err != nil {
     var apiErr *filegate.APIError
-    if errors.As(err, &apiErr) && apiErr.Status == 409 {
+    if errors.As(err, &apiErr) && apiErr.Code == "path_conflict" {
         // Ask the application user to choose a conflict policy.
     }
     return err
@@ -53,10 +53,29 @@ use the identity bound in the lease without an additional header or bearer token
 For a selection across roots, use `client.WithExecution(identity)` and call
 `ArchiveLease` on the returned client.
 
-Use the unscoped client for root information, search and administrative calls.
+Use the unscoped client for root information and administrative calls.
 Sessions retain their creation identity through renewal and commit. See
 [Unix execution identity](/docs/en/permissions#unix-execution-identity) for native
 permissions, ownership overrides and failure semantics.
+
+A scoped `Search` uses the live filesystem even when the root has an index.
+Unreadable subtrees fail the query. Transfers and historical copies accept an
+optional `TargetExecution *filegate.ExecutionContext` in their request:
+
+```go
+result, err := actor.Transfer(ctx, apiv1.TransferRequest{
+    Path: "teams/report.pdf", TargetRoot: "documents", TargetPath: "report.pdf",
+    TargetExecution: &filegate.ExecutionContext{Mode: "service"},
+})
+if err != nil { return err }
+fmt.Println(result.State)
+```
+
+Import `apiv1` from `github.com/k2b-dev/filegate/v6/api/v1`. For destination Unix
+execution, use `Mode: "unix"` and `Identity: &filegate.ExecutionIdentity{...}`.
+Omitting `TargetExecution` inherits the source context. Service mode must omit
+`Identity`; it explicitly selects service execution and never retries a denied
+source operation. See [transfer execution](/docs/en/transfers#select-destination-execution-rights).
 
 ## Resumable upload
 

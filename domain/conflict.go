@@ -62,12 +62,12 @@ func (r *Root) chooseTarget(requested string, directory bool, policy string) (st
 	}
 	if policy == "overwrite" {
 		if directory || !st.Mode().IsRegular() {
-			return "", false, ErrConflict
+			return "", false, ErrPathConflict
 		}
 		return requested, true, nil
 	}
 	if policy != "rename" {
-		return "", false, ErrConflict
+		return "", false, ErrPathConflict
 	}
 	for i := 0; i < conflictAttempts; i++ {
 		candidate, err := conflictName(requested, directory)
@@ -81,7 +81,7 @@ func (r *Root) chooseTarget(requested string, directory bool, policy string) (st
 			return "", false, err
 		}
 	}
-	return "", false, fmt.Errorf("%w: no free conflict target after %d attempts", ErrLimit, conflictAttempts)
+	return "", false, fmt.Errorf("%w: no free conflict target after %d attempts", ErrPathConflict, conflictAttempts)
 }
 
 // renamePublication keeps each attempted destination durable before invoking the
@@ -108,16 +108,24 @@ func (r *Root) renamePublication(key string, rec *publication, replace bool, req
 				}
 				return r.Files.Sync(path.Dir(rec.Temp))
 			}
+		} else {
+			// No occupied public target was observed. EEXIST can originate
+			// in private staging/bridge setup; do not rename or report a path
+			// conflict (or a failed IfNoneMatch) on that evidence alone.
+			return ErrConflict
 		}
 		if policy != "rename" {
-			return err
+			return pathConflict(err)
 		}
 		if attempt == conflictAttempts-1 {
-			return fmt.Errorf("%w: publication collided %d times", ErrLimit, conflictAttempts)
+			return fmt.Errorf("%w: publication collided %d times", ErrPathConflict, conflictAttempts)
 		}
 		st, e := r.Files.Stat(rec.Temp)
 		if e != nil {
-			return err
+			if errors.Is(e, os.ErrNotExist) {
+				return fmt.Errorf("%w: staged publication changed during conflict retry", ErrConflict)
+			}
+			return e
 		}
 		dev, ino, _, _, _ := r.Files.Identity(st)
 		if dev != rec.Claim.Device || ino != rec.Claim.Inode {
@@ -137,5 +145,5 @@ func (r *Root) renamePublication(key string, rec *publication, replace bool, req
 		}
 		replace = false
 	}
-	return ErrLimit
+	return ErrPathConflict
 }

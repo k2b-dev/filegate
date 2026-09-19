@@ -48,9 +48,11 @@ const lease = await actor.directDownload("teams/editors/report.pdf");
 
 The kernel checks directory traversal, content opens and live mutations using
 the supplied UID, primary GID and supplementary groups. POSIX ACLs apply. A denied
-operation fails; Filegate does not retry it under the daemon identity. Copies,
-moves and ZIP selections use the same identity for every involved root. Each
-root must have execution enabled.
+operation fails; Filegate does not retry it under the daemon identity. Copies
+and moves inherit the source identity at the destination unless the backend
+explicitly selects `targetExecution`; see [destination execution rights](/docs/en/transfers#select-destination-execution-rights).
+Every root used with a Unix identity must have execution enabled. ZIP selections
+use the same bound identity across all selected roots.
 
 File metadata can be read after successful traversal without granting content
 read access. Live ownership, mode and ACL changes still require the execution
@@ -84,9 +86,11 @@ Observe these native filesystem semantics:
 - Changing permissions does not revoke an already-open file descriptor.
   Lease expiry prevents new requests; an accepted transfer can finish afterward.
 
-Search, root dashboards, index maintenance, stats and pruning do not accept an
-execution identity. Use an unscoped backend client for those administrative
-operations; their results are not filtered by a user's Unix rights.
+Scoped listing and search read the live filesystem and fail when traversal is
+denied; they do not filter an administrative index result. Scoped subtree stats
+are also supported. Root dashboards, index maintenance, cached/root-wide stats
+and pruning require an unscoped backend client. Their results are not filtered
+by a user's Unix rights.
 
 Numeric identities use the permissions exposed by the actual filesystem or NFS
 mount. They do not obtain Kerberos credentials or bypass export policies such as
