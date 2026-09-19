@@ -4,10 +4,171 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"time"
 )
+
+// versionHead is derived from immutable version identity and creation time.
+// Metadata edits do not rewrite the chronological index or cooldown pointer.
+type versionHead struct {
+	ID      string    `json:"id"`
+	Created time.Time `json:"created"`
+}
+
+const versionOrderFormat = "version-order/format"
+
+var stopVersionOrder = errors.New("version order entry found")
+
+func versionOrderKey(fileID string, head versionHead) string {
+	return "vo/" + fileID + "/" + head.Created.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + head.ID
+}
+func newerVersion(a, b versionHead) bool {
+	return a.Created.After(b.Created) || a.Created.Equal(b.Created) && a.ID > b.ID
+}
+func (r *Root) latestVersion(fileID string) (versionHead, error) {
+	var head versionHead
+	err := r.State.Get("vl/"+fileID, &head)
+	if errors.Is(err, os.ErrNotExist) {
+		return versionHead{}, nil
+	}
+	return head, err
+}
+func (r *Root) recordVersion(v Version, latest versionHead) error {
+	head := versionHead{ID: v.ID, Created: v.Created}
+	record, err := encoded("v/"+v.FileID+"/"+v.ID, v)
+	if err != nil {
+		return err
+	}
+	ordered, err := encoded(versionOrderKey(v.FileID, head), head)
+	if err != nil {
+		return err
+	}
+	changes := []Change{record, ordered}
+	if latest.ID == "" || newerVersion(head, latest) {
+		pointer, err := encoded("vl/"+v.FileID, head)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, pointer)
+	}
+	return r.State.Batch(changes)
+}
+func (r *Root) removeVersionRecord(v Version) error {
+	head := versionHead{ID: v.ID, Created: v.Created}
+	latest, err := r.latestVersion(v.FileID)
+	if err != nil {
+		return err
+	}
+	changes := []Change{{Key: "v/" + v.FileID + "/" + v.ID, Delete: true}, {Key: versionOrderKey(v.FileID, head), Delete: true}}
+	if latest.ID == v.ID {
+		var previous versionHead
+		err = r.State.ScanBefore("vo/"+v.FileID+"/", versionOrderKey(v.FileID, head), func(_ string, b []byte) error {
+			if err := json.Unmarshal(b, &previous); err != nil {
+				return err
+			}
+			return stopVersionOrder
+		})
+		if err != nil && !errors.Is(err, stopVersionOrder) {
+			return err
+		}
+		if previous.ID == "" {
+			changes = append(changes, Change{Key: "vl/" + v.FileID, Delete: true})
+		} else {
+			pointer, err := encoded("vl/"+v.FileID, previous)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, pointer)
+		}
+	}
+	return r.State.Batch(changes)
+}
+
+// ensureVersionOrder builds derived order records once, before startup recovery.
+// Batches remain bounded and a crash before the format marker simply restarts
+// the idempotent scan. Durable version IDs, metadata and blobs are untouched.
+func (r *Root) ensureVersionOrder() error {
+	var format int
+	err := r.State.Get(versionOrderFormat, &format)
+	if err == nil {
+		if format != 1 {
+			return fmt.Errorf("unsupported version order format %d", format)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	changes := make([]Change, 0, 512)
+	flush := func() error {
+		if len(changes) == 0 {
+			return nil
+		}
+		if err := r.State.Batch(changes); err != nil {
+			return err
+		}
+		changes = changes[:0]
+		return nil
+	}
+	appendChange := func(c Change) error {
+		changes = append(changes, c)
+		if len(changes) >= 512 {
+			return flush()
+		}
+		return nil
+	}
+	fileID := ""
+	var latest versionHead
+	finishFile := func() error {
+		if fileID == "" {
+			return nil
+		}
+		pointer, err := encoded("vl/"+fileID, latest)
+		if err != nil {
+			return err
+		}
+		return appendChange(pointer)
+	}
+	err = r.State.Scan("v/", func(_ string, b []byte) error {
+		var v Version
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		if v.FileID == "" || v.ID == "" || v.Created.IsZero() {
+			return fmt.Errorf("invalid persisted version: %w", ErrInvalid)
+		}
+		if fileID != v.FileID {
+			if err := finishFile(); err != nil {
+				return err
+			}
+			fileID = v.FileID
+			latest = versionHead{}
+		}
+		head := versionHead{ID: v.ID, Created: v.Created}
+		if latest.ID == "" || newerVersion(head, latest) {
+			latest = head
+		}
+		ordered, err := encoded(versionOrderKey(fileID, head), head)
+		if err != nil {
+			return err
+		}
+		return appendChange(ordered)
+	})
+	if err != nil {
+		return err
+	}
+	if err = finishFile(); err != nil {
+		return err
+	}
+	marker, err := encoded(versionOrderFormat, 1)
+	if err != nil {
+		return err
+	}
+	changes = append(changes, marker)
+	return flush()
+}
 
 func (r *Root) versions(id string) ([]Version, error) {
 	vs := []Version{}
@@ -19,7 +180,12 @@ func (r *Root) versions(id string) ([]Version, error) {
 		vs = append(vs, v)
 		return nil
 	})
-	sort.Slice(vs, func(i, j int) bool { return vs[i].Created.After(vs[j].Created) })
+	sort.Slice(vs, func(i, j int) bool {
+		if vs[i].Created.Equal(vs[j].Created) {
+			return vs[i].ID > vs[j].ID
+		}
+		return vs[i].Created.After(vs[j].Created)
+	})
 	return vs, e
 }
 func (r *Root) Versions(p string) ([]Version, error) {
@@ -32,7 +198,15 @@ func (r *Root) Versions(p string) ([]Version, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	n, e := r.node(p, true)
+	if err := r.guard(); err != nil {
+		return nil, err
+	}
+	f, e := r.Files.Open(p, os.O_RDONLY, 0)
+	if e != nil {
+		return nil, e
+	}
+	defer f.Close()
+	n, e := r.nodeFile(p, f, true)
 	if e != nil {
 		return nil, e
 	}
@@ -45,11 +219,12 @@ func (r *Root) snapshot(n Node, pinned bool, metadata Metadata, force bool) (*Ve
 	if n.Directory {
 		return nil, ErrInvalid
 	}
-	vs, e := r.versions(n.ID)
+	latest, e := r.latestVersion(n.ID)
 	if e != nil {
 		return nil, e
 	}
-	if !force && len(vs) > 0 && r.now().Sub(vs[0].Created) < r.Config.Versioning.Cooldown {
+	now := r.now().UTC()
+	if !force && latest.ID != "" && now.Sub(latest.Created) < r.Config.Versioning.Cooldown {
 		return nil, nil
 	}
 	if metadata == nil {
@@ -60,13 +235,21 @@ func (r *Root) snapshot(n Node, pinned bool, metadata Metadata, force bool) (*Ve
 		}
 		metadata = c.Metadata
 	}
-	v := Version{ID: newID(), FileID: n.ID, Created: r.now().UTC(), Size: n.Size, Pinned: pinned, Metadata: metadata, CopyMode: "copy"}
+	v := Version{ID: newID(), FileID: n.ID, Created: now, Size: n.Size, Pinned: pinned, Metadata: metadata, CopyMode: "copy"}
 	blob := ".filegate/versions/" + v.ID
 	src, e := r.Files.Open(n.Path, os.O_RDONLY, 0)
 	if e != nil {
 		return nil, e
 	}
 	defer src.Close()
+	current, e := r.nodeFile(n.Path, src, false)
+	if e != nil {
+		return nil, e
+	}
+	if current.ID != n.ID || current.Directory {
+		return nil, ErrConflict
+	}
+	v.Size = current.Size
 	dst, e := r.Files.Open(blob, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if e != nil {
 		return nil, e
@@ -92,7 +275,7 @@ func (r *Root) snapshot(n Node, pinned bool, metadata Metadata, force bool) (*Ve
 		return nil, e
 	}
 	success = true
-	if e = r.State.Put("v/"+n.ID+"/"+v.ID, v); e != nil {
+	if e = r.recordVersion(v, latest); e != nil {
 		return nil, e
 	}
 	success = true
@@ -119,7 +302,17 @@ func (r *Root) Snapshot(p string, pinned bool, m Metadata) (Version, error) {
 	return *v, nil
 }
 func (r *Root) versionFor(p, id string) (Node, Version, error) {
-	n, e := r.node(p, true)
+	if err := r.guard(); err != nil {
+		return Node{}, Version{}, err
+	}
+	// Current-file read permission authorizes historical bytes. Derive the file
+	// identity from this exact actor-opened descriptor, never a privileged reopen.
+	f, e := r.Files.Open(p, os.O_RDONLY, 0)
+	if e != nil {
+		return Node{}, Version{}, e
+	}
+	defer f.Close()
+	n, e := r.nodeFile(p, f, true)
 	if e != nil {
 		return n, Version{}, e
 	}
@@ -165,11 +358,17 @@ func (r *Root) DeleteVersion(p, id string) error {
 	return r.removeVersion(v)
 }
 func (r *Root) removeVersion(v Version) error {
-	e := r.Files.Remove(".filegate/versions/"+v.ID, false)
-	if e != nil && !errors.Is(e, os.ErrNotExist) {
-		return e
+	// Commit reference removal before deleting immutable content. A failed state
+	// commit preserves readable history; a failed unlink leaves an unreferenced
+	// blob that the existing startup artifact cleanup can safely remove.
+	if err := r.removeVersionRecord(v); err != nil {
+		return err
 	}
-	return r.State.Delete("v/" + v.FileID + "/" + v.ID)
+	err := r.Files.Remove(".filegate/versions/"+v.ID, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 func (r *Root) deleteHistory(id string) error {
 	if id == "" {
@@ -297,6 +496,9 @@ func Retained(vs []Version, keep Keep, now time.Time) map[string]bool {
 	return out
 }
 func (r *Root) Prune(ctx context.Context) (int, error) {
+	if r.execution != nil {
+		return 0, ErrInvalid
+	}
 	if !r.Config.Versioning.Enabled {
 		return 0, ErrDisabled
 	}

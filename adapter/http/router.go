@@ -42,18 +42,20 @@ type Handler struct {
 	requests         sync.WaitGroup
 }
 type capability struct {
-	Root         string              `json:"root"`
-	Path         string              `json:"path"`
-	Purpose      string              `json:"purpose"`
-	Session      string              `json:"session,omitempty"`
-	Size         int64               `json:"size"`
-	Expires      int64               `json:"expires"`
-	Nonce        string              `json:"nonce"`
-	Options      domain.WriteOptions `json:"options"`
-	Operations   []string            `json:"operations"`
-	ManifestHash string              `json:"manifestHash,omitempty"`
-	Version      string              `json:"version,omitempty"`
-	Thumbnail    *thumbnailSize      `json:"thumbnail,omitempty"`
+	FileName     string                    `json:"fileName,omitempty"`
+	Root         string                    `json:"root"`
+	Path         string                    `json:"path"`
+	Purpose      string                    `json:"purpose"`
+	Session      string                    `json:"session,omitempty"`
+	Size         int64                     `json:"size"`
+	Expires      int64                     `json:"expires"`
+	Nonce        string                    `json:"nonce"`
+	Options      domain.WriteOptions       `json:"options"`
+	Operations   []string                  `json:"operations"`
+	ManifestHash string                    `json:"manifestHash,omitempty"`
+	Version      string                    `json:"version,omitempty"`
+	Thumbnail    *thumbnailSize            `json:"thumbnail,omitempty"`
+	Execution    *domain.ExecutionIdentity `json:"execution,omitempty"`
 }
 
 func New(roots []*domain.Root, o Options) *Handler {
@@ -83,8 +85,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Add("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range")
-				w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range, If-Match, If-None-Match")
+				w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Disposition, ETag, Retry-After")
 				break
 			}
 		}
@@ -97,6 +99,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if h.opts.Token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(h.opts.Token)) != 1 {
 			fail(w, errHTTP{401, "unauthorized"})
+			return
+		}
+	}
+	if _, present := r.Header[http.CanonicalHeaderKey(ExecutionHeader)]; present {
+		if strings.HasPrefix(r.URL.Path, "/v1/direct/") {
+			fail(w, errHTTP{400, "execution_override_not_allowed"})
+			return
+		}
+		if r.URL.Path == "/health" || r.URL.Path == "/v1/system" || r.URL.Path == "/v1/roots" {
+			fail(w, errHTTP{400, "execution_not_supported"})
 			return
 		}
 	}
@@ -116,6 +128,13 @@ func fail(w http.ResponseWriter, e error) {
 	switch {
 	case errors.As(e, &he):
 		status, code = he.status, he.msg
+	case errors.Is(e, domain.ErrExecutionCapacity):
+		status, code = 503, "execution_capacity"
+		w.Header().Set("Retry-After", "1")
+	case errors.Is(e, domain.ErrCursorInvalid):
+		status, code = 409, "cursor_invalid"
+	case errors.Is(e, domain.ErrPrecondition):
+		status, code = 412, "precondition_failed"
 	case errors.Is(e, domain.ErrSessionCommitted):
 		status, code = 409, "session_committed"
 	case errors.Is(e, domain.ErrSessionAborted):
@@ -145,6 +164,8 @@ func fail(w http.ResponseWriter, e error) {
 	}
 	message := e.Error()
 	switch code {
+	case "execution_capacity":
+		message = "Unix execution capacity is exhausted; retry later"
 	case "internal_error":
 		message = "file operation failed"
 	case "unsupported_storage_layout":
@@ -192,7 +213,28 @@ func (h *Handler) route(pattern string, fn func(http.ResponseWriter, *http.Reque
 			fail(w, os.ErrNotExist)
 			return
 		}
-		if e := fn(w, r, root); e != nil {
+		execution, e := requestExecution(r)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		if execution != nil && executionAdminRoute(pattern) && !(pattern == "POST /v1/roots/{root}/stats/refresh" && r.URL.Query().Has("path")) {
+			fail(w, errHTTP{400, "execution_not_supported"})
+			return
+		}
+		if session := r.PathValue("session"); session != "" {
+			if e := checkSessionExecution(root, session, execution, false); e != nil {
+				fail(w, e)
+				return
+			}
+		}
+		scoped, closeScope, e := root.WithExecution(r.Context(), execution)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		defer closeScope()
+		if e := fn(w, r, scoped); e != nil {
 			fail(w, e)
 		}
 	})
@@ -288,6 +330,7 @@ func (h *Handler) routes() {
 	h.route("GET /v1/roots/{root}/stat", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Stat(r.URL.Query().Get("path"))
 		if e == nil {
+			setETag(w, v)
 			send(w, 200, v)
 		}
 		return e
@@ -300,21 +343,21 @@ func (h *Handler) routes() {
 		return e
 	})
 	h.route("GET /v1/roots/{root}/entries", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		v, e := root.List(r.URL.Query().Get("path"), r.URL.Query().Get("after"), paramInt(r, "limit", 100))
+		v, e := root.List(r.Context(), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
 			send(w, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/search", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), r.URL.Query().Get("after"), paramInt(r, "limit", 100), paramInt(r, "maxEntries", 100000))
+		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
 			send(w, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/content", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		return content(w, r, root, r.URL.Query().Get("path"))
+		return content(w, r, root, r.URL.Query().Get("path"), r.URL.Query().Get("fileName"))
 	})
 	h.route("POST /v1/roots/{root}/directories", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		var q api.MkdirRequest
@@ -343,12 +386,63 @@ func (h *Handler) routes() {
 		if dst == nil {
 			return os.ErrNotExist
 		}
-		n, e := domain.Transfer(r.Context(), root, q.Path, dst, q.TargetPath, q.Move, q.WriteOptions)
-		if e == nil {
-			send(w, 200, n)
+		// Reuse the source view for same-root moves, including its shared lock.
+		if dst.Config.Name == root.Config.Name {
+			dst = root
+		} else {
+			scoped, closeScope, e := dst.WithExecution(r.Context(), root.Execution())
+			if e != nil {
+				return e
+			}
+			defer closeScope()
+			dst = scoped
 		}
-		return e
+		if q.Move && root.Config.Name != dst.Config.Name {
+			result, err := domain.TransferMove(r.Context(), root, q.Path, dst, q.TargetPath, q.WriteOptions, q.ID)
+			if err == nil {
+				sendTransferResult(w, result)
+			}
+			return err
+		}
+		if q.ID != "" {
+			return domain.ErrInvalid
+		}
+		n, err := domain.Transfer(r.Context(), root, q.Path, dst, q.TargetPath, q.Move, q.WriteOptions)
+		if err == nil {
+			sendTransferResult(w, domain.TransferResult{Node: &n, State: domain.TransferCompleted})
+		}
+		return err
 	})
+	h.route("GET /v1/roots/{root}/transfers/{transfer}", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		result, err := root.TransferStatus(r.PathValue("transfer"))
+		if err == nil {
+			sendTransferResult(w, result)
+		}
+		return err
+	})
+	h.route("POST /v1/roots/{root}/transfers/{transfer}/resume", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		status, err := root.TransferStatus(r.PathValue("transfer"))
+		if err != nil {
+			return err
+		}
+		source := h.roots[status.SourceRoot]
+		if source == nil {
+			return os.ErrNotExist
+		}
+		result, err := domain.ResumeTransfer(r.Context(), source, root, status.ID)
+		if err == nil {
+			sendTransferResult(w, result)
+		}
+		return err
+	})
+	h.route("POST /v1/roots/{root}/transfers/{transfer}/abandon", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		result, err := root.AbandonTransfer(r.PathValue("transfer"))
+		if err == nil {
+			sendTransferResult(w, result)
+		}
+		return err
+	})
+
 	h.route("POST /v1/roots/{root}/index/rebuild", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		e := root.Rebuild(r.Context())
 		if e == nil {
@@ -361,7 +455,13 @@ func (h *Handler) routes() {
 		return e
 	})
 	h.route("POST /v1/roots/{root}/stats/refresh", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		v, e := root.RefreshStats(r.Context(), paramInt(r, "maxEntries", 100000))
+		var v domain.Stats
+		var e error
+		if r.URL.Query().Has("path") {
+			v, e = root.RecursiveStats(r.Context(), r.URL.Query().Get("path"), paramInt(r, "maxEntries", 100000))
+		} else {
+			v, e = root.RefreshStats(r.Context(), paramInt(r, "maxEntries", 100000))
+		}
 		if e == nil {
 			send(w, 200, v)
 		}
@@ -410,6 +510,32 @@ func (h *Handler) routes() {
 		}
 		return e
 	})
+	h.route("POST /v1/roots/{root}/versions/{version}/copy", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+		var q api.VersionCopyRequest
+		if err := decode(w, r, &q); err != nil {
+			return err
+		}
+		destination := h.roots[q.TargetRoot]
+		if destination == nil {
+			return os.ErrNotExist
+		}
+		if destination.Config.Name == root.Config.Name {
+			destination = root
+		} else {
+			scoped, closeScope, err := destination.WithExecution(r.Context(), root.Execution())
+			if err != nil {
+				return err
+			}
+			defer closeScope()
+			destination = scoped
+		}
+		node, err := domain.CopyVersion(r.Context(), root, q.Path, r.PathValue("version"), destination, q.TargetPath, q.WriteOptions)
+		if err == nil {
+			setETag(w, node)
+			send(w, http.StatusCreated, node)
+		}
+		return err
+	})
 	h.route("POST /v1/roots/{root}/versions/{version}/restore", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Restore(r.URL.Query().Get("path"), r.PathValue("version"))
 		if e == nil {
@@ -418,7 +544,7 @@ func (h *Handler) routes() {
 		return e
 	})
 	h.route("GET /v1/roots/{root}/versions/{version}/content", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		return versionContent(w, r, root, r.URL.Query().Get("path"), r.PathValue("version"))
+		return versionContent(w, r, root, r.URL.Query().Get("path"), r.PathValue("version"), r.URL.Query().Get("fileName"))
 	})
 	h.route("POST /v1/roots/{root}/uploads/direct", h.mintUpload)
 	h.route("POST /v1/roots/{root}/downloads/direct", h.mintDownload)
@@ -427,27 +553,62 @@ func (h *Handler) routes() {
 	h.route("POST /v1/roots/{root}/uploads/sessions", h.createSession)
 	h.mux.HandleFunc("/v1/direct/{token}", h.direct)
 	h.route("GET /v1/roots/{root}/uploads/sessions/{session}", h.sessionStatus)
+	h.route("GET /v1/roots/{root}/uploads/sessions/{session}/segments", h.sessionSegments)
 	h.route("POST /v1/roots/{root}/uploads/sessions/{session}/lease", h.renewSessionLease)
 	h.route("POST /v1/roots/{root}/uploads/sessions/{session}/commit", h.commitSession)
 	h.route("DELETE /v1/roots/{root}/uploads/sessions/{session}", h.abortSession)
 	h.archiveRoutes()
 	h.route("GET /v1/roots/{root}/thumbnail", thumbnail)
 }
-func content(w http.ResponseWriter, r *http.Request, root *domain.Root, p string) error {
-	f, e := root.Open(p)
-	if e != nil {
-		return e
+func content(w http.ResponseWriter, r *http.Request, root *domain.Root, p, fileName string) error {
+	if fileName == "" {
+		fileName = defaultDownloadName(p)
+	}
+	if err := ValidateDownloadName(fileName); err != nil {
+		return err
+	}
+	f, node, err := root.OpenWithNode(p)
+	if err != nil {
+		return err
 	}
 	defer f.Close()
-	st, e := f.Stat()
-	if e != nil {
-		return e
+	if err := setDownloadDisposition(w, fileName); err != nil {
+		return err
 	}
+	setETag(w, node)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment")
-	http.ServeContent(w, r, path.Base(p), st.ModTime(), f)
+	http.ServeContent(w, r, path.Base(p), node.Modified, f)
 	return nil
 }
+func setETag(w http.ResponseWriter, node domain.Node) {
+	if node.Revision != "" {
+		w.Header().Set("ETag", strconv.Quote(node.Revision))
+	}
+}
+
+// A browser may repeat a signed condition, but cannot replace or add one.
+func matchPublicationHeaders(r *http.Request, condition *domain.Precondition) error {
+	for _, header := range []string{"If-Match", "If-None-Match"} {
+		values, present := r.Header[http.CanonicalHeaderKey(header)]
+		if !present {
+			continue
+		}
+		expected := ""
+		if condition != nil {
+			if header == "If-Match" && condition.IfMatch != "" {
+				expected = strconv.Quote(condition.IfMatch)
+			}
+			if header == "If-None-Match" && condition.IfNoneMatch {
+				expected = "*"
+			}
+		}
+		if len(values) != 1 || expected == "" || values[0] != expected {
+			return errHTTP{400, "precondition_header_mismatch"}
+		}
+	}
+	return nil
+}
+
 func (h *Handler) sign(c capability) string {
 	b, _ := json.Marshal(c)
 	payload := base64.RawURLEncoding.EncodeToString(b)
@@ -585,6 +746,9 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 	if e = domain.ValidateOptions(q.WriteOptions); e != nil {
 		return e
 	}
+	if q.Precondition != nil && !root.Config.Managed {
+		return domain.ErrDisabled
+	}
 	if q.Size < 0 || q.Size > root.MaxBytes {
 		return domain.ErrLimit
 	}
@@ -592,7 +756,7 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 	if e != nil {
 		return e
 	}
-	c := capability{Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: expires.Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions, Operations: []string{"write"}}
+	c := capability{Execution: root.Execution(), Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: expires.Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions, Operations: []string{"write"}}
 	send(w, 201, api.DirectURL{URL: h.url(c), Method: "PUT", Expires: time.Unix(c.Expires, 0)})
 	return nil
 }
@@ -604,14 +768,28 @@ func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *dom
 	if _, e := leaseSeconds(q.ExpiresIn); e != nil {
 		return e
 	}
-	n, e := root.Stat(q.Path)
+	if q.FileName != "" {
+		if e := ValidateDownloadName(q.FileName); e != nil {
+			return e
+		}
+	}
+	p, e := domain.CleanPath(q.Path)
 	if e != nil {
 		return e
 	}
-	if n.Directory {
+	f, e := root.Open(p)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	st, e := f.Stat()
+	if e != nil {
+		return e
+	}
+	if !st.Mode().IsRegular() {
 		return domain.ErrInvalid
 	}
-	return h.issueDownload(w, capability{Root: root.Config.Name, Path: n.Path, Purpose: "download"}, q.ExpiresIn)
+	return h.issueDownload(w, capability{Execution: root.Execution(), Root: root.Config.Name, Path: p, Purpose: "download", FileName: q.FileName}, q.ExpiresIn)
 }
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	var q api.SessionRequest
@@ -622,13 +800,17 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *do
 	if e != nil {
 		return e
 	}
-	s, e := root.CreateSession(q.Path, q.Size, q.WriteOptions)
+	s, e := root.CreateSession(q.Path, q.Size, q.WriteOptions, q.IdempotencyKey)
 	if e != nil {
 		return e
 	}
-	lease, e := h.sessionLease(s, q.ExpiresIn, q.AllowAbort)
-	if e != nil {
-		return e
+	var lease *api.SessionLease
+	if s.State == domain.SessionOpen {
+		minted, err := h.sessionLease(s, q.ExpiresIn, q.AllowAbort)
+		if err != nil {
+			return err
+		}
+		lease = &minted
 	}
 	send(w, 201, api.SessionCreated{Session: s, Lease: lease})
 	return nil
@@ -649,7 +831,7 @@ func (h *Handler) sessionLease(s domain.Session, seconds int, allowAbort bool) (
 	if allowAbort {
 		operations = append(operations, "abort")
 	}
-	c := capability{Root: s.Root, Session: s.ID, Purpose: "session", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: operations}
+	c := capability{Execution: s.Execution, Root: s.Root, Session: s.ID, Purpose: "session", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: operations}
 	return api.SessionLease{URL: h.url(c), Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
 }
 
@@ -694,8 +876,18 @@ func (h *Handler) renewSessionLease(w http.ResponseWriter, r *http.Request, root
 }
 
 func (h *Handler) commitSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	if _, match := r.Header["If-Match"]; match || r.Header["If-None-Match"] != nil {
+		session, err := root.Session(r.PathValue("session"))
+		if err != nil {
+			return err
+		}
+		if err := matchPublicationHeaders(r, session.Options.Precondition); err != nil {
+			return err
+		}
+	}
 	n, e := root.CommitSession(r.Context(), r.PathValue("session"))
 	if e == nil {
+		setETag(w, n)
 		send(w, 200, n)
 	}
 	return e
@@ -711,7 +903,7 @@ func (h *Handler) abortSession(w http.ResponseWriter, r *http.Request, root *dom
 
 func publicSession(s domain.Session) api.SessionStatus {
 	return api.SessionStatus{ID: s.ID, Root: s.Root, Size: s.Size, ChunkSize: s.ChunkSize,
-		Expires: s.Expires, State: s.State, Segments: s.Segments, Received: s.Received,
+		Expires: s.Expires, State: s.State, UploadedSegments: s.UploadedSegments, Received: s.Received,
 		TerminalAt: s.TerminalAt, RetainUntil: s.RetainUntil}
 }
 
@@ -736,6 +928,19 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 		fail(w, os.ErrNotExist)
 		return
 	}
+	if c.Purpose == "session" {
+		if e := checkSessionExecution(root, c.Session, c.Execution, true); e != nil {
+			fail(w, e)
+			return
+		}
+	}
+	scoped, closeScope, e := root.WithExecution(r.Context(), c.Execution)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	defer closeScope()
+	root = scoped
 	if r.Method == "PUT" {
 		select {
 		case h.uploadSlots <- struct{}{}:
@@ -755,9 +960,13 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 			e = domain.ErrInvalid
 			break
 		}
+		if e = matchPublicationHeaders(r, c.Options.Precondition); e != nil {
+			break
+		}
 		var n domain.Node
 		n, e = root.Put(r.Context(), c.Path, &exactReader{r: http.MaxBytesReader(w, r.Body, c.Size), remaining: c.Size}, c.Options)
 		if e == nil {
+			setETag(w, n)
 			send(w, 201, n)
 		}
 	case "download":
@@ -765,9 +974,9 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 			e = errHTTP{405, "method_not_allowed"}
 			break
 		}
-		e = content(w, r, root, c.Path)
+		e = content(w, r, root, c.Path, c.FileName)
 	case "version":
-		e = versionContent(w, r, root, c.Path, c.Version)
+		e = versionContent(w, r, root, c.Path, c.Version, c.FileName)
 	case "thumbnail":
 		if c.Thumbnail == nil {
 			e = domain.ErrInvalid
@@ -777,6 +986,10 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 	case "session":
 		switch r.Method {
 		case "GET":
+			if r.URL.Query().Get("segments") == "1" {
+				e = h.sendSessionSegments(w, r, root, c.Session)
+				break
+			}
 			var s domain.Session
 			s, e = root.Session(c.Session)
 			if e == nil {
@@ -822,6 +1035,9 @@ func (r *exactReader) Read(b []byte) (int, error) {
 }
 func (h *Handler) Maintain(ctx context.Context) {
 	errs := []string{}
+	if e := domain.CleanupTransfers(ctx, h.roots); e != nil {
+		errs = append(errs, fmt.Sprintf("transfers: %v", e))
+	}
 	for _, name := range h.order {
 		r := h.roots[name]
 		if e := r.CleanupSessions(ctx); e != nil {
@@ -840,3 +1056,39 @@ func (h *Handler) Maintain(ctx context.Context) {
 
 // Drain prevents state from closing while a handler still publishes a file.
 func (h *Handler) Drain() { h.mu.Lock(); h.draining = true; h.mu.Unlock(); h.requests.Wait() }
+
+func (h *Handler) sessionSegments(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
+	return h.sendSessionSegments(w, r, root, r.PathValue("session"))
+}
+func (h *Handler) sendSessionSegments(w http.ResponseWriter, r *http.Request, root *domain.Root, id string) error {
+	after, limit := -1, 100
+	var err error
+	if value := r.URL.Query().Get("after"); value != "" {
+		after, err = strconv.Atoi(value)
+		if err != nil {
+			return domain.ErrInvalid
+		}
+	}
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil {
+			return domain.ErrInvalid
+		}
+	}
+	page, err := root.SessionSegments(id, after, limit)
+	if err == nil {
+		send(w, 200, page)
+	}
+	return err
+}
+
+func sendTransferResult(w http.ResponseWriter, result domain.TransferResult) {
+	status := http.StatusOK
+	if result.State == domain.TransferPrepared || result.State == domain.TransferSourcePending {
+		status = http.StatusAccepted
+	}
+	if result.Node != nil {
+		setETag(w, *result.Node)
+	}
+	send(w, status, result)
+}

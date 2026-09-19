@@ -17,11 +17,80 @@ users. Filegate requires sufficient operating-system privileges and a filesystem
 that supports POSIX ACLs. It does not translate NFSv4 ACLs. Verify support on the
 actual NFS mount; `root_squash` can deny changes even when the daemon runs as root.
 
-The service must retain read access to managed files and read/traverse access to
-directories. Metadata operations open the target before changing it. If an ACL
+Without an execution identity, the service must retain read access to managed
+files and read/traverse access to directories. Metadata operations open the
+target before changing it. If an ACL
 removes the service's access, an operator may need to restore it outside Filegate.
 Ownership and ACL updates can partially succeed before a later step fails;
 inspect the resulting state before retrying.
+
+## Unix execution identity
+
+Enable `execution: true` on a root to let a trusted backend run file operations
+with a numeric Unix identity. The default is false. This requires the explicit
+[root-service setup](/docs/en/operations#enable-unix-execution); ordinary requests
+without an execution identity continue to use the daemon account.
+
+Execution identity selects **whose filesystem permissions apply**. `ownership`
+selects **who owns the resulting file**. The backend supplies both when needed;
+Filegate does not resolve users or groups, or make application authorization
+decisions.
+
+```ts
+const actor = files.root("shared").as({
+  uid: 10001,
+  gid: 20001,
+  groups: [20002],
+});
+const lease = await actor.directDownload("teams/editors/report.pdf");
+// Return only lease.url to the authorized browser.
+```
+
+The kernel checks directory traversal, content opens and live mutations using
+the supplied UID, primary GID and supplementary groups. POSIX ACLs apply. A denied
+operation fails; Filegate does not retry it under the daemon identity. Copies,
+moves and ZIP selections use the same identity for every involved root. Each
+root must have execution enabled.
+
+File metadata can be read after successful traversal without granting content
+read access. Live ownership, mode and ACL changes still require the execution
+identity's permissions. Explicit `ownership` on a new upload, copied file or
+new directory is a privileged provisioning instruction from the backend:
+Filegate prepares it privately, then publishes it with the execution identity's
+destination permissions. Without an ownership override, new objects use that
+identity's UID/GID, with setgid-group and default-ACL inheritance from the parent.
+Overwrites preserve the previous ownership and access ACL. Newly created parent
+directories use the same private preparation and publication rules.
+
+Leases bind the identity at issuance. Upload sessions store it at creation;
+renewal and commit cannot replace it. Browser requests use only the lease and
+must not send an execution header. Historical content requires read access to
+the current file with the matching identity; Filegate does not store historical
+ACLs. Thumbnail generation also opens its source under the bound identity.
+
+Observe these native filesystem semantics:
+
+- Replacing a directory entry checks write/search permission on its parent and
+  sticky-directory rules. A read-only destination file alone does not prevent
+  replacement when those directory permissions allow it. Moving a directory
+  between parents also requires write permission on the moved directory.
+- Recursive deletion removes the selected entry through a private quarantine.
+  Authorization is for removing that entry from its parent, not a recursive
+  `rm` permission check on every descendant. Filegate cleans up the detached
+  tree and its history privately.
+- Directory copies are prepared privately and published as a complete tree. A
+  ZIP read failure aborts the stream; unreadable entries are never silently skipped to produce a
+  successful archive. Treat an incomplete ZIP as a failed download.
+- Changing permissions does not revoke an already-open file descriptor.
+  Lease expiry prevents new requests; an accepted transfer can finish afterward.
+
+Search, root dashboards, index maintenance, stats and pruning do not accept an
+execution identity. Use an unscoped backend client for those administrative
+operations; their results are not filtered by a user's Unix rights.
+
+Numeric identities use the permissions exposed by the actual filesystem or NFS
+mount. They do not obtain Kerberos credentials or bypass export policies such as
+`root_squash`. Verify the intended identities against the actual deployment.
 
 ## Configure a shared directory
 

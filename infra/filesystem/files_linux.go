@@ -17,11 +17,13 @@ import (
 )
 
 type Files struct {
-	lock       *os.File
-	root       *os.File
-	private    *os.File
-	privateDev uint64
-	privateIno uint64
+	lock           *os.File
+	root           *os.File
+	private        *os.File
+	privateDev     uint64
+	privateIno     uint64
+	searchOnly     bool
+	protectPrivate bool
 }
 
 func Open(p string) (*Files, error) {
@@ -50,7 +52,7 @@ func (f *Files) parent(p string) (*os.File, string, error) {
 		base = f.private
 		parts = parts[1:]
 	}
-	fd, e := unix.Dup(int(base.Fd()))
+	fd, e := unix.FcntlInt(base.Fd(), unix.F_DUPFD_CLOEXEC, 0)
 	if e != nil {
 		return nil, "", e
 	}
@@ -62,12 +64,16 @@ func (f *Files) parent(p string) (*os.File, string, error) {
 		if c == "." {
 			continue
 		}
-		next, e := unix.Openat(fd, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		flags := unix.O_RDONLY
+		if f.searchOnly {
+			flags = unix.O_PATH
+		}
+		next, e := unix.Openat(fd, c, flags|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		unix.Close(fd)
 		if e != nil {
 			return nil, "", e
 		}
-		if f.private != nil && !strings.HasPrefix(p, ".filegate/") && p != ".filegate" {
+		if (f.private != nil || f.protectPrivate) && !strings.HasPrefix(p, ".filegate/") && p != ".filegate" {
 			var st unix.Stat_t
 			if e := unix.Fstat(next, &st); e != nil {
 				unix.Close(next)
@@ -106,7 +112,7 @@ func (f *Files) Open(p string, flag int, mode os.FileMode) (*os.File, error) {
 		}
 		return nil, e
 	}
-	if f.private != nil && !strings.HasPrefix(p, ".filegate/") && p != ".filegate" {
+	if (f.private != nil || f.protectPrivate) && !strings.HasPrefix(p, ".filegate/") && p != ".filegate" {
 		dev, ino, _, _, _ := f.Identity(st)
 		if dev == f.privateDev && ino == f.privateIno {
 			o.Close()
@@ -116,7 +122,7 @@ func (f *Files) Open(p string, flag int, mode os.FileMode) (*os.File, error) {
 	return o, nil
 }
 func (f *Files) Stat(p string) (os.FileInfo, error) {
-	o, e := f.Open(p, os.O_RDONLY, 0)
+	o, e := f.Open(p, unix.O_PATH, 0)
 	if e != nil {
 		return nil, e
 	}
@@ -149,12 +155,20 @@ func (f *Files) Rename(a, b string, replace bool) error {
 	if e = unix.Renameat2(int(ad.Fd()), an, int(bd.Fd()), bn, flags); e != nil {
 		return e
 	}
+	if f.searchOnly {
+		return nil
+	}
 	if e = bd.Sync(); e != nil {
 		return e
 	}
 	return ad.Sync()
 }
 func (f *Files) Remove(p string, recursive bool) error {
+	privateCleanup := f.private != nil && strings.HasPrefix(p, ".filegate/staging/")
+	return f.remove(p, recursive, privateCleanup)
+}
+
+func (f *Files) remove(p string, recursive, privateCleanup bool) error {
 	d, n, e := f.parent(p)
 	if e != nil {
 		return e
@@ -166,17 +180,47 @@ func (f *Files) Remove(p string, recursive bool) error {
 	}
 	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
 		if recursive {
+			// These directories have already been detached from the public tree.
+			// Restore service traversal only inside private staging, never on a
+			// live directory or as an execution-identity authorization fallback.
+			if privateCleanup && st.Mode&0700 != 0700 {
+				// Pin the directory before chmod. /proc/self/fd follows this
+				// held descriptor rather than a mutable user path, and works on
+				// supported older Linux kernels without fchmodat2 (Linux 6.5).
+				pinned, err := unix.Openat(int(d.Fd()), n, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+				if err != nil {
+					return err
+				}
+				var actual unix.Stat_t
+				err = unix.Fstat(pinned, &actual)
+				if err == nil && (actual.Dev != st.Dev || actual.Ino != st.Ino) {
+					err = domain.ErrConflict
+				}
+				if err == nil {
+					err = unix.Chmod(fmt.Sprintf("/proc/self/fd/%d", pinned), st.Mode&07777|0700)
+				}
+				unix.Close(pinned)
+				if err != nil {
+					return err
+				}
+			}
 			fd, e := unix.Openat(int(d.Fd()), n, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 			if e != nil {
 				return e
 			}
-			child := &Files{root: os.NewFile(uintptr(fd), p)}
-			names, e := child.root.Readdirnames(-1)
-			if e == nil {
+			child := &Files{root: os.NewFile(uintptr(fd), p), searchOnly: f.searchOnly, protectPrivate: f.protectPrivate, privateDev: f.privateDev, privateIno: f.privateIno}
+			for {
+				names, readErr := child.root.Readdirnames(256)
 				for _, name := range names {
-					if e = child.Remove(name, true); e != nil {
+					if e = child.remove(name, true, privateCleanup); e != nil {
 						break
 					}
+				}
+				if e == nil && readErr != nil && !errors.Is(readErr, io.EOF) {
+					e = readErr
+				}
+				if e != nil || errors.Is(readErr, io.EOF) || len(names) == 0 {
+					break
 				}
 			}
 			child.Close()
@@ -190,6 +234,9 @@ func (f *Files) Remove(p string, recursive bool) error {
 	}
 	if e != nil {
 		return e
+	}
+	if f.searchOnly {
+		return nil
 	}
 	return d.Sync()
 }
@@ -226,6 +273,12 @@ func (f *Files) SetID(o *os.File, id string) error {
 func (f *Files) Identity(st os.FileInfo) (uint64, uint64, uint32, uint32, uint64) {
 	s := st.Sys().(*syscall.Stat_t)
 	return uint64(s.Dev), s.Ino, s.Uid, s.Gid, uint64(s.Nlink)
+}
+
+// ChangeTime exposes the kernel change timestamp without another filesystem read.
+func (f *Files) ChangeTime(st os.FileInfo) (int64, int64) {
+	s := st.Sys().(*syscall.Stat_t)
+	return int64(s.Ctim.Sec), int64(s.Ctim.Nsec)
 }
 func (f *Files) Clone(src, dst *os.File) (bool, error) {
 	e := unix.IoctlFileClone(int(dst.Fd()), int(src.Fd()))

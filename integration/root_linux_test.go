@@ -149,7 +149,7 @@ func TestNoIndexUsesFilesystemAndNoXattrs(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(x.data, "external"), []byte("b"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	page, e := x.r.List(".", "", 20)
+	page, e := x.r.List(ctx, ".", domain.ListingOptions{Limit: 20})
 	if e != nil || len(page.Items) != 2 {
 		t.Fatalf("external file missing %v %v", page, e)
 	}
@@ -213,13 +213,13 @@ func TestSymlinksAndPrivatePathsRejected(t *testing.T) {
 	if e := os.Symlink(".filegate", filepath.Join(x.data, "alias")); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := x.r.List("alias", "", 10); e == nil {
+	if _, e := x.r.List(ctx, "alias", domain.ListingOptions{Limit: 10}); e == nil {
 		t.Fatal("private symlink readable")
 	}
 }
 func TestSessionsIdempotentDurableAndIntegrity(t *testing.T) {
 	x := setup(t, true, true)
-	s, e := x.r.CreateSession("a", 3, domain.WriteOptions{Metadata: domain.Metadata{"message": "upload"}})
+	s, e := x.r.CreateSession("a", 3, domain.WriteOptions{Metadata: domain.Metadata{"message": "upload"}}, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -248,7 +248,7 @@ func TestSessionsIdempotentDurableAndIntegrity(t *testing.T) {
 	if e != nil || info.ActiveUploads != 0 || info.StagingBytes != 0 {
 		t.Fatal("completed session counted", info, e)
 	}
-	s, e = x.r.CreateSession("b", 3, domain.WriteOptions{})
+	s, e = x.r.CreateSession("b", 3, domain.WriteOptions{}, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -301,7 +301,7 @@ func TestFailedPublicationRecoversBeforeNextReadAndRestart(t *testing.T) {
 			if e != nil || len(vs) != 1 {
 				t.Fatal("lost versions", e)
 			}
-			page, e := x.r.Search(ctx, "a", ".", "", 10, 100)
+			page, e := x.r.Search(ctx, "a", ".", domain.ListingOptions{Limit: 10, MaxEntries: 100})
 			if e != nil || len(page.Items) != 1 || page.Items[0].ID != a.ID {
 				t.Fatal("wrong generation", page, e)
 			}
@@ -328,6 +328,7 @@ func TestSnapshotFailurePreservesCurrentBytes(t *testing.T) {
 func TestTransferDirectoriesAndHistoryBoundary(t *testing.T) {
 	a, b := setup(t, true, true), setup(t, false, false)
 	b.r.Config.Name = "second"
+	a.r.Config.Managed, b.r.Config.Managed = true, true
 	n := put(t, a.r, "dir/a", "A", domain.WriteOptions{})
 	if _, e := a.r.Snapshot("dir/a", true, nil); e != nil {
 		t.Fatal(e)
@@ -338,7 +339,7 @@ func TestTransferDirectoriesAndHistoryBoundary(t *testing.T) {
 	if read(t, b.r, "copy/a") != "A" {
 		t.Fatal("copy failed")
 	}
-	if _, e := domain.Transfer(ctx, a.r, "dir/a", b.r, "moved", true, domain.WriteOptions{}); e != nil {
+	if _, e := domain.TransferMove(ctx, a.r, "dir/a", b.r, "moved", domain.WriteOptions{}, "bf4fbf7c-7ca2-4605-aa79-053d9b64d100"); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := a.r.Resolve(n.ID); !errors.Is(e, os.ErrNotExist) {
@@ -368,11 +369,12 @@ func TestUnsafePrivateDirectoryFailsStartup(t *testing.T) {
 func TestCrossRootMoveNeverDeletesSkippedEntries(t *testing.T) {
 	a, b := setup(t, false, false), setup(t, false, false)
 	b.r.Config.Name = "second"
+	a.r.Config.Managed, b.r.Config.Managed = true, true
 	put(t, a.r, "dir/a", "A", domain.WriteOptions{})
 	if e := os.Symlink("a", filepath.Join(a.data, "dir/link")); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := domain.Transfer(ctx, a.r, "dir", b.r, "copied", true, domain.WriteOptions{}); e == nil {
+	if _, e := domain.TransferMove(ctx, a.r, "dir", b.r, "copied", domain.WriteOptions{}, "b243e7e1-094d-49fc-ad14-1f4247d1fa18"); e == nil {
 		t.Fatal("move accepted unsupported symlink")
 	}
 	if read(t, a.r, "dir/a") != "A" {
@@ -384,7 +386,7 @@ func TestCrossRootMoveNeverDeletesSkippedEntries(t *testing.T) {
 }
 func TestFailedSessionPublicationRetryIsIdempotent(t *testing.T) {
 	x := setup(t, true, true)
-	s, e := x.r.CreateSession("a", 1, domain.WriteOptions{})
+	s, e := x.r.CreateSession("a", 1, domain.WriteOptions{}, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -454,7 +456,7 @@ func TestNoIndexSearchBudgetIsScoped(t *testing.T) {
 	for _, p := range []string{"elsewhere/a", "elsewhere/b", "wanted/c"} {
 		put(t, x.r, p, "x", domain.WriteOptions{})
 	}
-	page, e := x.r.Search(ctx, "c", "wanted", "", 10, 2)
+	page, e := x.r.Search(ctx, "c", "wanted", domain.ListingOptions{Limit: 10, MaxEntries: 2})
 	if e != nil || len(page.Items) != 1 {
 		t.Fatal(page, e)
 	}
@@ -476,7 +478,7 @@ func TestRelocatedPrivateDirectoryCannotBeRead(t *testing.T) {
 
 func TestSlowSegmentDoesNotHoldRootLock(t *testing.T) {
 	x := setup(t, true, true)
-	s, e := x.r.CreateSession("a", 3, domain.WriteOptions{})
+	s, e := x.r.CreateSession("a", 3, domain.WriteOptions{}, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -518,18 +520,14 @@ func (r *signaledReader) Read(b []byte) (int, error) {
 }
 func TestCooldownExpiresAndPinsSurvivePruning(t *testing.T) {
 	x := setup(t, true, true)
-	n := put(t, x.r, "a", "A", domain.WriteOptions{})
+	put(t, x.r, "a", "A", domain.WriteOptions{})
 	put(t, x.r, "a", "B", domain.WriteOptions{OnConflict: "overwrite"})
 	put(t, x.r, "a", "C", domain.WriteOptions{OnConflict: "overwrite"})
 	vs, e := x.r.Versions("a")
 	if e != nil || len(vs) != 1 {
 		t.Fatal(vs, e)
 	}
-	v := vs[0]
-	v.Created = time.Now().Add(-2 * time.Minute)
-	if e = x.state.Put("v/"+n.ID+"/"+v.ID, v); e != nil {
-		t.Fatal(e)
-	}
+	x.r.Config.Versioning.Cooldown = time.Nanosecond
 	put(t, x.r, "a", "D", domain.WriteOptions{OnConflict: "overwrite"})
 	vs, e = x.r.Versions("a")
 	if e != nil || len(vs) != 2 {

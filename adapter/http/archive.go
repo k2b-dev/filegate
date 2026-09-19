@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -89,20 +90,33 @@ func validateArchiveSelection(items []archiveSelection) error {
 	if len(items) > archiveItemLimit {
 		return domain.ErrLimit
 	}
-	for i, item := range items {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
 		p, e := domain.CleanPath(item.Path)
 		if e != nil || p != item.Path || item.Root == "" || !validArchiveName(item.ArchivePath) {
 			return domain.ErrInvalid
 		}
-		name := archiveNameKey(item.ArchivePath)
-		for _, prev := range items[:i] {
-			other := archiveNameKey(prev.ArchivePath)
-			if name == other || strings.HasPrefix(name, other+"/") || strings.HasPrefix(other, name+"/") {
-				return domain.ErrConflict
-			}
+		// The trailing separator makes ancestors adjacent to their first descendant
+		// even when a sibling such as "a-" sorts between "a" and "a/child".
+		names = append(names, archiveNameKey(item.ArchivePath)+"/")
+	}
+	if overlappingArchiveNames(names) {
+		return domain.ErrConflict
+	}
+
+	return nil
+}
+
+// overlappingArchiveNames sorts once, then checks each neighboring pair. Keys
+// include a trailing separator, so lexical prefixes are component prefixes.
+func overlappingArchiveNames(keys []string) bool {
+	slices.Sort(keys)
+	for i := 1; i < len(keys); i++ {
+		if strings.HasPrefix(keys[i], keys[i-1]) {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 func (h *Handler) mintArchive(w http.ResponseWriter, r *http.Request) error {
@@ -132,11 +146,20 @@ func (h *Handler) mintArchive(w http.ResponseWriter, r *http.Request) error {
 	if e := validateArchiveSelection(items); e != nil {
 		return e
 	}
+	execution, e := requestExecution(r)
+	if e != nil {
+		return e
+	}
+	roots, closeScopes, e := h.archiveRoots(r.Context(), items, execution)
+	if e != nil {
+		return e
+	}
+	defer closeScopes()
 	for i := range items {
 		if e := r.Context().Err(); e != nil {
 			return e
 		}
-		root := h.roots[items[i].Root]
+		root := roots[items[i].Root]
 		if root == nil {
 			return os.ErrNotExist
 		}
@@ -158,12 +181,16 @@ func (h *Handler) mintArchive(w http.ResponseWriter, r *http.Request) error {
 		return domain.ErrLimit
 	}
 	hash := sha256.Sum256(manifest)
-	c := capability{Purpose: "archive", ManifestHash: hex.EncodeToString(hash[:]), Operations: []string{"read"}, Expires: expires.Unix(), Nonce: uuid.NewString()}
+	c := capability{Execution: execution, Purpose: "archive", ManifestHash: hex.EncodeToString(hash[:]), Operations: []string{"read"}, Expires: expires.Unix(), Nonce: uuid.NewString()}
 	send(w, http.StatusCreated, api.ArchiveLease{URL: h.url(c), Method: http.MethodPost, Expires: time.Unix(c.Expires, 0), Manifest: string(manifest)})
 	return nil
 }
 
 func (h *Handler) archiveEntries(ctx context.Context, items []archiveSelection) ([]archiveEntry, error) {
+	return archiveEntries(ctx, items, h.roots)
+}
+
+func archiveEntries(ctx context.Context, items []archiveSelection, roots map[string]*domain.Root) ([]archiveEntry, error) {
 	if e := validateArchiveSelection(items); e != nil {
 		return nil, e
 	}
@@ -172,7 +199,7 @@ func (h *Handler) archiveEntries(ctx context.Context, items []archiveSelection) 
 	var bytes int64
 	scanBudget := archiveScanLimit
 	for _, item := range items {
-		root := h.roots[item.Root]
+		root := roots[item.Root]
 		if root == nil {
 			return nil, os.ErrNotExist
 		}
@@ -254,7 +281,15 @@ func (h *Handler) directArchive(w http.ResponseWriter, r *http.Request, c capabi
 	default:
 		return errHTTP{503, "archive_capacity"}
 	}
-	entries, e := h.archiveEntries(r.Context(), items)
+	if e := validateArchiveSelection(items); e != nil {
+		return e
+	}
+	roots, closeScopes, e := h.archiveRoots(r.Context(), items, c.Execution)
+	if e != nil {
+		return e
+	}
+	defer closeScopes()
+	entries, e := archiveEntries(r.Context(), items, roots)
 	if e != nil {
 		return e
 	}
@@ -327,4 +362,34 @@ func streamArchive(ctx context.Context, out io.Writer, entries []archiveEntry) e
 		}
 	}
 	return zw.Close()
+}
+
+// A request keeps at most one execution view per selected root, including while
+// streaming. Every entry is opened again through that same restricted view.
+func (h *Handler) archiveRoots(ctx context.Context, items []archiveSelection, identity *domain.ExecutionIdentity) (map[string]*domain.Root, func(), error) {
+	roots := make(map[string]*domain.Root)
+	var closes []func()
+	cleanup := func() {
+		for i := len(closes) - 1; i >= 0; i-- {
+			closes[i]()
+		}
+	}
+	for _, item := range items {
+		if roots[item.Root] != nil {
+			continue
+		}
+		root := h.roots[item.Root]
+		if root == nil {
+			cleanup()
+			return nil, nil, os.ErrNotExist
+		}
+		scoped, closeScope, err := root.WithExecution(ctx, identity)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		roots[item.Root] = scoped
+		closes = append(closes, closeScope)
+	}
+	return roots, cleanup, nil
 }

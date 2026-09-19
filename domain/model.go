@@ -12,12 +12,14 @@ import (
 )
 
 var (
-	ErrInvalid        = errors.New("invalid argument")
-	ErrConflict       = errors.New("conflict")
-	ErrDisabled       = errors.New("feature disabled")
-	ErrLimit          = errors.New("limit exceeded")
-	ErrACLUnsupported = errors.New("POSIX ACLs are not supported by this filesystem")
-	ErrInvalidACL     = fmt.Errorf("%w: invalid ACL", ErrInvalid)
+	ErrInvalid           = errors.New("invalid argument")
+	ErrConflict          = errors.New("conflict")
+	ErrPrecondition      = errors.New("publication precondition failed")
+	ErrDisabled          = errors.New("feature disabled")
+	ErrLimit             = errors.New("limit exceeded")
+	ErrACLUnsupported    = errors.New("POSIX ACLs are not supported by this filesystem")
+	ErrExecutionCapacity = errors.New("Unix execution capacity exhausted")
+	ErrInvalidACL        = fmt.Errorf("%w: invalid ACL", ErrInvalid)
 )
 
 const MetadataLimit = 8192
@@ -42,11 +44,14 @@ type Ownership struct {
 	DirMode string `json:"dirMode,omitempty"`
 }
 type WriteOptions struct {
-	OnConflict string     `json:"onConflict,omitempty"`
-	Ownership  *Ownership `json:"ownership,omitempty"`
-	Metadata   Metadata   `json:"metadata,omitempty"`
+	AccessACL    *ACL          `json:"accessACL,omitempty"`
+	Precondition *Precondition `json:"precondition,omitempty"`
+	OnConflict   string        `json:"onConflict,omitempty"`
+	Ownership    *Ownership    `json:"ownership,omitempty"`
+	Metadata     Metadata      `json:"metadata,omitempty"`
 }
 type Node struct {
+	Revision  string    `json:"revision,omitempty"`
 	Root      string    `json:"root"`
 	Path      string    `json:"path"`
 	ID        string    `json:"id,omitempty"`
@@ -74,6 +79,8 @@ type Versioning struct {
 	Keep     Keep          `json:"keep" yaml:"keep"`
 }
 type RootConfig struct {
+	Managed    bool       `json:"managed"`
+	Execution  bool       `json:"execution"`
 	Name       string     `json:"name"`
 	Path       string     `json:"-"`
 	Index      bool       `json:"index"`
@@ -89,11 +96,17 @@ type Version struct {
 	CopyMode string    `json:"copyMode"`
 }
 type Stats struct {
-	Files       int64     `json:"files"`
-	Directories int64     `json:"directories"`
-	Bytes       int64     `json:"bytes"`
-	Updated     time.Time `json:"updated"`
-	Source      string    `json:"source"`
+	Path        string     `json:"path"`
+	Started     time.Time  `json:"started"`
+	Completed   time.Time  `json:"completed"`
+	Complete    bool       `json:"complete"`
+	Freshness   string     `json:"freshness"`
+	IndexBuilt  *time.Time `json:"indexBuilt,omitempty"`
+	Files       int64      `json:"files"`
+	Directories int64      `json:"directories"`
+	Bytes       int64      `json:"bytes"`
+	Updated     time.Time  `json:"updated"`
+	Source      string     `json:"source"`
 }
 type IndexStatus struct {
 	Enabled    bool       `json:"enabled"`
@@ -104,6 +117,8 @@ type IndexStatus struct {
 	Error      string     `json:"error,omitempty"`
 }
 type RootInfo struct {
+	Managed       bool        `json:"managed"`
+	Execution     bool        `json:"execution"`
 	Name          string      `json:"name"`
 	Index         IndexStatus `json:"index"`
 	Stats         *Stats      `json:"stats"`
@@ -130,6 +145,8 @@ type State interface {
 	Delete(string) error
 	Batch([]Change) error
 	Scan(string, func(string, []byte) error) error
+	ScanAfter(string, string, func(string, []byte) error) error
+	ScanBefore(string, string, func(string, []byte) error) error
 	Close() error
 }
 

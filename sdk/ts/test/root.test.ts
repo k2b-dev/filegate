@@ -8,7 +8,7 @@ describe("root contract", () => {
     const request: typeof fetch = async (input, init) => {
       const url = String(input); calls.push({ url, init });
       return Response.json(url.endsWith("/uploads/direct")
-        ? { url: "https://files.example/v1/direct/scoped", method: "PUT", expires: "2026-09-16T20:00:00Z" }
+        ? { url: "https://files.example/v1/direct/scoped.signature", method: "PUT", expires: "2026-09-16T20:00:00Z" }
         : { root: "cloud", path: "a.txt", size: 5, directory: false });
     };
     const files = new Filegate({ baseUrl: "https://files.example", token: "backend-secret", fetch: request });
@@ -26,14 +26,15 @@ describe("root contract", () => {
   });
   test("browser session resumes received segments and sends no bearer", async () => {
     const methods: string[] = [];
-    const request: typeof fetch = async (_input, init) => {
+    const request: typeof fetch = async (input, init) => {
       expect(new Headers(init?.headers).has("Authorization")).toBe(false);
       methods.push(init?.method ?? "GET");
-      if (init?.method === "GET") return Response.json({ state: "open", size: 5, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("hel")) } });
-      return Response.json({ state: "open", size: 5, chunkSize: 3, received: 5, segments: {} });
+      if (new URL(String(input)).searchParams.has("segments")) return Response.json({items:[{index:0,hash:await sha256(new TextEncoder().encode("hel"))}]});
+      if (init?.method === "GET") return Response.json({ state: "open", size: 5, chunkSize: 3, received: 3, uploadedSegments: 1 });
+      return Response.json({ state: "open", size: 5, chunkSize: 3, received: 5, uploadedSegments: 2 });
     };
     await new DirectSession("https://files.example/v1/direct/session", request).upload(new Blob(["hello"]));
-    expect(methods).toEqual(["GET", "PUT"]);
+    expect(methods).toEqual(["GET", "GET", "PUT"]);
     expect(segments(5, 3)).toEqual([{ index: 0, offset: 0, size: 3 }, { index: 1, offset: 3, size: 2 }]);
   });
   test("backend raw requests cannot send credentials to another origin", async () => {
@@ -44,22 +45,23 @@ describe("root contract", () => {
 
 test("resuming with different same-size file stops before uploading", async () => {
   const methods: string[] = [];
-  const request: typeof fetch = async (_input, init) => {
+  const request: typeof fetch = async (input, init) => {
     methods.push(init?.method ?? "GET");
-    return Response.json({ state: "open", size: 6, chunkSize: 3, received: 3, segments: { "0": await sha256(new TextEncoder().encode("AAA")) } });
+    if (new URL(String(input)).searchParams.has("segments")) return Response.json({items:[{index:0,hash:await sha256(new TextEncoder().encode("AAA"))}]});
+    return Response.json({ state: "open", size: 6, chunkSize: 3, received: 3, uploadedSegments: 1 });
   };
   await expect(new DirectSession("https://files.example/v1/direct/session", request).upload(new Blob(["BBBBBB"]))).rejects.toThrow("differ");
-  expect(methods).toEqual(["GET"]);
+  expect(methods).toEqual(["GET", "GET"]);
 });
 
 test("version and thumbnail leases keep authorization on the backend", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   const request: typeof fetch = async (input, init) => {
     calls.push({ url: String(input), init });
-    return Response.json({ url: "https://files.example/v1/direct/scoped", method: "GET", expires: "2026-09-17T20:00:00Z" });
+    return Response.json({ url: "https://files.example/v1/direct/scoped.signature", method: "GET", expires: "2026-09-17T20:00:00Z" });
   };
   const root = new Filegate({ baseUrl: "https://files.example", token: "backend-secret", fetch: request }).root("cloud");
-  const version = await root.directVersionDownload("notes/a & b.txt", "version id", 30);
+  const version = await root.directVersionDownload("notes/a & b.txt", "version id", { expiresIn: 30 });
   const thumbnail = await root.directThumbnail("photos/a.png", { width: 320, height: 180, expiresIn: 45 });
   await root.directThumbnail("photos/a.png");
   expect(calls.map(c => new URL(c.url).pathname)).toEqual([

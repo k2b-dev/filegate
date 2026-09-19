@@ -54,12 +54,49 @@ func (s *State) Batch(cs []domain.Change) error {
 	return b.Commit(pebble.Sync)
 }
 func (s *State) Scan(prefix string, fn func(string, []byte) error) error {
+	return s.ScanAfter(prefix, "", fn)
+}
+
+// ScanAfter seeks directly to the first key strictly after after, within prefix.
+// The callback sees each remaining key once; returning an error stops iteration.
+func (s *State) ScanAfter(prefix, after string, fn func(string, []byte) error) error {
 	i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
 	if e != nil {
 		return e
 	}
 	defer i.Close()
-	for i.First(); i.Valid(); i.Next() {
+	var valid bool
+	if after == "" {
+		valid = i.First()
+	} else {
+		valid = i.SeekGE([]byte(after))
+		if valid && string(i.Key()) == after {
+			valid = i.Next()
+		}
+	}
+	for ; valid; valid = i.Next() {
+		if e := fn(string(i.Key()), i.Value()); e != nil {
+			return e
+		}
+	}
+	return i.Error()
+}
+
+// ScanBefore seeks to the first key strictly before before and walks backwards.
+// An empty before starts with the last key in prefix.
+func (s *State) ScanBefore(prefix, before string, fn func(string, []byte) error) error {
+	i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
+	if e != nil {
+		return e
+	}
+	defer i.Close()
+	var valid bool
+	if before == "" {
+		valid = i.Last()
+	} else {
+		valid = i.SeekLT([]byte(before))
+	}
+	for ; valid; valid = i.Prev() {
 		if e := fn(string(i.Key()), i.Value()); e != nil {
 			return e
 		}

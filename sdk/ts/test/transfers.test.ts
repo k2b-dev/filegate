@@ -29,7 +29,7 @@ test("backend owns session lifecycle, leases, and directory provisioning", async
 test("empty browser upload stays open and never commits", async () => {
   const request: typeof fetch = async (_input, init) => {
     expect(init?.method).toBe("GET");
-    return Response.json({ state: "open", size: 0, received: 0, chunkSize: 8, segments: {} });
+    return Response.json({ state: "open", size: 0, received: 0, chunkSize: 8, uploadedSegments: 0 });
   };
   const session = new DirectSession("https://files.example/v1/direct/session", request);
   expect("commit" in session).toBe(false);
@@ -39,14 +39,14 @@ test("empty browser upload stays open and never commits", async () => {
 test("terminal browser session does not write or attempt to publish", async () => {
   const request: typeof fetch = async (_input, init) => {
     expect(init?.method).toBe("GET");
-    return Response.json({ state: "aborted", size: 5, received: 0, chunkSize: 8, segments: {} });
+    return Response.json({ state: "aborted", size: 5, received: 0, chunkSize: 8, uploadedSegments: 0 });
   };
   const session = new DirectSession("https://files.example/v1/direct/session", request);
   expect(await session.upload(new Blob(["hello"]))).toMatchObject({ state: "aborted" });
 });
 
 test("archive mint is authenticated, download posts exact manifest without bearer and preserves errors", async () => {
-  const lease: ArchiveLease = { url: "https://download.example/v1/direct/archive", method: "POST", expires: "2026-09-18T00:00:00Z", manifest: '{"items":[{"path":"a & b"}]}' };
+  const lease: ArchiveLease = { url: "https://download.example/v1/direct/archive.signature", method: "POST", expires: "2026-09-18T00:00:00Z", manifest: '{"items":[{"path":"a & b"}]}' };
   const request: typeof fetch = async (input, init) => {
     if (String(input).endsWith("/downloads/archives")) {
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer backend");

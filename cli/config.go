@@ -32,6 +32,8 @@ type Config struct {
 	maxBytes int64
 }
 type rootConfig struct {
+	Managed    bool   `yaml:"managed"`
+	Execution  bool   `yaml:"execution"`
 	Name       string `yaml:"name"`
 	Path       string `yaml:"path"`
 	Index      bool   `yaml:"index"`

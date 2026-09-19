@@ -10,25 +10,35 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Root struct {
-	needsRecovery bool
-	recovering    bool
-	Config        RootConfig
-	Files         Files
-	State         State
-	MaxBytes      int64
-	mu            sync.RWMutex
-	statusMu      sync.RWMutex
-	status        IndexStatus
-	stats         *Stats
-	generation    string
-	now           func() time.Time
+	*rootShared
+	Config    RootConfig
+	Files     Files
+	State     State
+	MaxBytes  int64
+	control   *Root
+	execution *ExecutionIdentity
+}
+
+// Every request view shares coordination and recovery with its service root.
+type rootShared struct {
+	needsRecovery   bool
+	recovering      bool
+	mu              sync.RWMutex
+	statusMu        sync.RWMutex
+	status          IndexStatus
+	stats           *Stats
+	listings        map[string]*listingSnapshot
+	listingBytes    int64
+	listingEpoch    uint64
+	listingInstance string
+	generation      string
+	now             func() time.Time
 }
 type claim struct {
 	Device uint64
@@ -37,17 +47,20 @@ type claim struct {
 }
 type revision struct{ Metadata Metadata }
 type publication struct {
-	Path      string
-	Temp      string
-	Node      Node
-	Claim     claim
-	Metadata  Metadata
-	ResultKey string
-	Receipt   *sessionReceipt
+	TransferID      string
+	Tree            bool
+	WriteGeneration string
+	Path            string
+	Temp            string
+	Node            Node
+	Claim           claim
+	Metadata        Metadata
+	ResultKey       string
+	Receipt         *sessionReceipt
 }
 
 func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
-	r := &Root{Config: cfg, Files: f, State: s, MaxBytes: maxBytes, now: time.Now}
+	r := &Root{rootShared: &rootShared{now: time.Now}, Config: cfg, Files: f, State: s, MaxBytes: maxBytes}
 	if cfg.Versioning.Enabled && !cfg.Index || maxBytes <= 0 {
 		return nil, ErrInvalid
 	}
@@ -90,6 +103,9 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 	if e := r.bindState(); e != nil {
 		return nil, e
 	}
+	if e := r.ensureVersionOrder(); e != nil {
+		return nil, e
+	}
 	e := s.Get("index/generation", &r.generation)
 	if e != nil && !errors.Is(e, os.ErrNotExist) {
 		return nil, e
@@ -98,6 +114,9 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 		return nil, e
 	}
 	if e := r.recoverMutations(); e != nil {
+		return nil, e
+	}
+	if e := r.initializeManagedSetting(); e != nil {
 		return nil, e
 	}
 	if e := r.cleanArtifacts(); e != nil {
@@ -114,7 +133,11 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 	if e := s.Get("index/built", &built); e == nil {
 		r.status.LastBuilt = &built
 	}
-	if cfg.Index && r.generation == "" {
+	var indexFormat int
+	if err := s.Get("index/format", &indexFormat); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if cfg.Index && (r.generation == "" || indexFormat != currentIndexFormat) {
 		if e := r.Rebuild(context.Background()); e != nil {
 			return nil, e
 		}
@@ -144,6 +167,14 @@ func validWrite(p string) (string, error) {
 	return p, e
 }
 func ValidateOptions(o WriteOptions) error {
+	if o.AccessACL != nil {
+		if _, e := NormalizeACL(*o.AccessACL); e != nil {
+			return e
+		}
+	}
+	if e := validatePrecondition(o); e != nil {
+		return e
+	}
 	if o.OnConflict != "" && o.OnConflict != "error" && o.OnConflict != "overwrite" && o.OnConflict != "rename" {
 		return ErrInvalid
 	}
@@ -156,11 +187,15 @@ func (r *Root) node(p string, assign bool) (Node, error) {
 	if e := r.guard(); e != nil {
 		return Node{}, e
 	}
-	f, e := r.Files.Open(p, os.O_RDONLY, 0)
+	f, e := r.openMetadata(p)
 	if e != nil {
 		return Node{}, e
 	}
 	defer f.Close()
+	return r.nodeFile(p, f, assign)
+}
+
+func (r *Root) nodeFile(p string, f *os.File, assign bool) (Node, error) {
 	st, e := f.Stat()
 	if e != nil {
 		return Node{}, e
@@ -171,7 +206,7 @@ func (r *Root) node(p string, assign bool) (Node, error) {
 		n.Size = 0
 	}
 	if !r.Config.Index {
-		return n, nil
+		return r.withRevision(n, f, assign)
 	}
 	if !st.IsDir() && links != 1 {
 		return Node{}, fmt.Errorf("%w: indexed files must not have hard links", ErrInvalid)
@@ -192,7 +227,7 @@ func (r *Root) node(p string, assign bool) (Node, error) {
 	}
 	if id == "" {
 		if !assign {
-			return n, nil
+			return r.withRevision(n, f, assign)
 		}
 		id = newID()
 		if e := r.Files.SetID(f, id); e != nil {
@@ -208,7 +243,7 @@ func (r *Root) node(p string, assign bool) (Node, error) {
 			return n, e
 		}
 	}
-	return n, nil
+	return r.withRevision(n, f, assign)
 }
 func (r *Root) Stat(p string) (Node, error) {
 	p, e := CleanPath(p)
@@ -240,47 +275,35 @@ func (r *Root) Open(p string) (*os.File, error) {
 	}
 	return f, nil
 }
-func (r *Root) List(p, after string, limit int) (Page, error) {
-	p, e := CleanPath(p)
-	if e != nil {
-		return Page{}, e
-	}
-	if limit < 1 || limit > 1000 {
-		return Page{}, ErrInvalid
+
+// OpenWithNode returns metadata and content for the same opened inode. Managed
+// callers can use Revision as the strong HTTP ETag without a Stat/Open race.
+func (r *Root) OpenWithNode(p string) (*os.File, Node, error) {
+	p, err := validWrite(p)
+	if err != nil {
+		return nil, Node{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	d, e := r.Files.Open(p, os.O_RDONLY, 0)
-	if e != nil {
-		return Page{}, e
+	if err := r.guard(); err != nil {
+		return nil, Node{}, err
 	}
-	defer d.Close()
-	entries, e := d.ReadDir(-1)
-	if e != nil {
-		return Page{}, e
+	f, err := r.Files.Open(p, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, Node{}, err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	out := Page{Items: []Node{}}
-	for _, entry := range entries {
-		if entry.Name() <= after || entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		q := path.Join(p, entry.Name())
-		if _, e := CleanPath(q); e != nil {
-			continue
-		}
-		if len(out.Items) == limit {
-			out.Next = path.Base(out.Items[len(out.Items)-1].Path)
-			break
-		}
-		n, e := r.node(q, true)
-		if e != nil {
-			return out, e
-		}
-		out.Items = append(out.Items, n)
+	n, err := r.nodeFile(p, f, true)
+	if err != nil {
+		f.Close()
+		return nil, Node{}, err
 	}
-	return out, nil
+	if n.Directory {
+		f.Close()
+		return nil, Node{}, ErrInvalid
+	}
+	return f, n, nil
 }
+
 func (r *Root) parents(p string, o *Ownership) error {
 	dir := path.Dir(p)
 	if dir == "." {
@@ -312,7 +335,22 @@ func (r *Root) indexNode(n Node) error {
 	if !r.Config.Index {
 		return nil
 	}
-	return r.State.Put("i/"+r.generation+"/"+n.Path, n)
+	var previous Node
+	var old *Node
+	if err := r.State.Get("i/"+r.generation+"/"+n.Path, &previous); err == nil {
+		old = &previous
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	changes, err := r.indexChanges(n, old)
+	if err != nil {
+		return err
+	}
+	if err := r.State.Batch(changes); err != nil {
+		return err
+	}
+	r.invalidateListings()
+	return nil
 }
 
 // Put streams outside the root lock; only publication waits for a rebuild.
@@ -353,40 +391,29 @@ func (c *contextReader) Read(b []byte) (int, error) {
 	return c.r.Read(b)
 }
 func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, resultKey string) (Node, error) {
+	return r.publishTransfer(p, temp, f, o, force, resultKey, "")
+}
+func (r *Root) publishTransfer(p, temp string, f *os.File, o WriteOptions, force bool, resultKey, transferID string) (Node, error) {
+	if err := r.guard(); err != nil {
+		return Node{}, err
+	}
+	if e := r.checkPrecondition(p, o.Precondition); e != nil {
+		return Node{}, e
+	}
 	if e := r.parents(p, o.Ownership); e != nil {
 		return Node{}, e
 	}
-	old, e := r.node(p, true)
-	exists := e == nil
-	if e != nil && !errors.Is(e, os.ErrNotExist) {
+	requested := p
+	p, exists, e := r.chooseTarget(requested, false, o.OnConflict)
+	if e != nil {
 		return Node{}, e
 	}
-	if exists && old.Directory {
-		return Node{}, ErrConflict
-	}
-	if exists && o.OnConflict != "overwrite" {
-		if o.OnConflict != "rename" {
-			return Node{}, ErrConflict
+	var old Node
+	if exists {
+		old, e = r.node(p, true)
+		if e != nil {
+			return Node{}, e
 		}
-		base, ext := strings.TrimSuffix(p, path.Ext(p)), path.Ext(p)
-		for i := 1; i <= 10000; i++ {
-			candidate := fmt.Sprintf("%s-%02d%s", base, i, ext)
-			_, e := r.Files.Stat(candidate)
-			if errors.Is(e, os.ErrNotExist) {
-				p = candidate
-				exists = false
-				break
-			}
-			if e != nil {
-				return Node{}, e
-			}
-			if i == 10000 {
-				return Node{}, ErrLimit
-			}
-		}
-	}
-	if e = r.preparePublication(p, f, exists, o.Ownership); e != nil {
-		return Node{}, e
 	}
 	id := ""
 	if r.Config.Index {
@@ -397,6 +424,9 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 		if e = r.Files.SetID(f, id); e != nil {
 			return Node{}, e
 		}
+	}
+	if e = r.preparePublication(p, f, exists, o.Ownership, o.AccessACL); e != nil {
+		return Node{}, e
 	}
 	if e = f.Sync(); e != nil {
 		return Node{}, e
@@ -412,7 +442,13 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 	}
 	dev, ino, uid, gid, _ := r.Files.Identity(st)
 	n := Node{Root: r.Config.Name, Path: p, ID: id, Size: st.Size(), Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", UnixMode(st.Mode())), UID: uid, GID: gid}
-	rec := publication{Path: p, Temp: temp, Node: n, Claim: claim{dev, ino, p}, Metadata: o.Metadata, ResultKey: resultKey}
+	if r.Config.Managed {
+		n.Revision = newID()
+	}
+	rec := publication{TransferID: transferID, Path: p, Temp: temp, Node: n, Claim: claim{dev, ino, p}, Metadata: o.Metadata, ResultKey: resultKey}
+	if r.Config.Managed {
+		rec.WriteGeneration = newID()
+	}
 	if resultKey != "" {
 		var session Session
 		if e := r.State.Get("session/"+strings.TrimPrefix(resultKey, "done/"), &session); e != nil {
@@ -426,7 +462,10 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 		return Node{}, e
 	}
 	r.needsRecovery = true
-	if e = r.Files.Rename(temp, p, exists); e != nil {
+	if e = r.renamePublication(key, &rec, exists, requested, o.OnConflict); e != nil {
+		if o.Precondition != nil && o.Precondition.IfNoneMatch && errors.Is(e, os.ErrExist) {
+			return Node{}, fmt.Errorf("%w: target appeared before publication", ErrPrecondition)
+		}
 		return Node{}, e
 	}
 	if e = r.finishPublication(key, rec); e != nil {
@@ -434,11 +473,24 @@ func (r *Root) publish(p, temp string, f *os.File, o WriteOptions, force bool, r
 	}
 	r.needsRecovery = false
 	r.invalidateStats()
-	return n, nil
+	return rec.Node, nil
 }
 func (r *Root) finishPublication(key string, p publication) error {
+	if p.Tree {
+		if err := r.finishTreePublication(p); err != nil {
+			return err
+		}
+	}
 	cs := []Change{{Key: key, Delete: true}, {Key: "index/stats", Delete: true}}
+	if p.WriteGeneration != "" {
+		cs = append(cs, generationChange(p.WriteGeneration))
+	}
 	add := func(k string, v any) error { c, e := encoded(k, v); cs = append(cs, c); return e }
+	if change, err := r.publicationRevision(p); err != nil {
+		return err
+	} else if change != nil {
+		cs = append(cs, *change)
+	}
 	if p.Node.ID != "" {
 		if e := add("identity/"+p.Node.ID, p.Claim); e != nil {
 			return e
@@ -446,9 +498,18 @@ func (r *Root) finishPublication(key string, p publication) error {
 		if e := add("current/"+p.Node.ID, revision{p.Metadata}); e != nil {
 			return e
 		}
-		if e := add("i/"+r.generation+"/"+p.Path, p.Node); e != nil {
-			return e
+		var previous Node
+		var old *Node
+		if err := r.State.Get("i/"+r.generation+"/"+p.Path, &previous); err == nil {
+			old = &previous
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
+		changes, err := r.indexChanges(p.Node, old)
+		if err != nil {
+			return err
+		}
+		cs = append(cs, changes...)
 	}
 	if p.ResultKey != "" {
 		if p.Receipt == nil {
@@ -459,6 +520,11 @@ func (r *Root) finishPublication(key string, p publication) error {
 			return e
 		}
 	}
+	transferChanges, err := r.transferPublicationChanges(p)
+	if err != nil {
+		return err
+	}
+	cs = append(cs, transferChanges...)
 	return r.State.Batch(cs)
 }
 func (r *Root) recover() error {
@@ -482,11 +548,19 @@ func (r *Root) recover() error {
 		} else if !errors.Is(e, os.ErrNotExist) {
 			return e
 		}
-		_ = r.Files.Remove(p.Temp, false)
+		if e := r.Files.Remove(p.Temp, p.Tree); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+		if p.Tree {
+			if e := r.deleteTreeManifest(p.Temp); e != nil {
+				return e
+			}
+		}
 		return r.State.Delete(k)
 	})
 }
 func (r *Root) invalidateStats() {
+	r.invalidateListings()
 	r.statusMu.Lock()
 	r.stats = nil
 	r.statusMu.Unlock()
@@ -537,6 +611,9 @@ func (r *Root) walkFrom(ctx context.Context, base string, fn func(Node) error) e
 }
 
 func (r *Root) guard() error {
+	if r.control != nil {
+		return r.control.guard()
+	}
 	if !r.needsRecovery || r.recovering {
 		return nil
 	}

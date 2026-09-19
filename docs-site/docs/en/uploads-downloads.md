@@ -16,6 +16,12 @@ finish afterward. Leases are reusable until expiry, cannot be individually
 revoked and do not call your application to recheck access. Keep signed URLs out
 of logs and analytics. The application owns users, public links and storage budgets.
 
+Roots with `execution: true` can bind numeric Unix credentials to transfers.
+Create leases or sessions from a scoped backend client (`root.as(identity)` in
+TypeScript, `root.WithExecution(identity)` in Go). Browsers use the returned lease
+without sending an identity header. Renewal and commit retain the session's
+original identity. See [Unix permissions](/docs/en/permissions#unix-execution-identity).
+
 ## Upload and publish separately
 
 Use sessions when your backend must approve publication, including for small or
@@ -32,6 +38,7 @@ const created = await files.root("documents").createSession("videos/demo.mp4", s
 
 // Browser:
 import { DirectSession } from "@k2b/filegate/utils";
+if (!created.lease) throw new Error(`Session is already ${created.session.state}; reconcile its result`);
 const transfer = new DirectSession(created.lease.url);
 await transfer.upload(file, { onProgress: (done, total) => console.log(done, total) });
 // Ask your application backend to commit. Uploading alone does not publish.
@@ -45,7 +52,9 @@ approval step.
 
 Segments are 8 MiB except the final one, with at most 10,000 segments. Empty files
 need no segments. Repeating the same segment bytes is safe; different bytes at an
-already uploaded segment return 409. Status reports received segment hashes.
+already uploaded segment return 409. Status reports `received` bytes and
+`uploadedSegments`; acknowledged hashes are retrieved through paged segment
+receipts, independently of the status response.
 Commit verifies lengths and hashes, then publishes the complete file. A segment
 accepted before lease expiry can finish only while its session remains open.
 
@@ -72,6 +81,34 @@ state, not backend write options or commit metadata.
 When a lease expires, ask your backend for another one after reauthorization,
 then resume the same session. Do not create a new session merely to renew access.
 
+## Recover session creation and segments
+
+Set an `idempotencyKey` when creating a session if the first response may be lost.
+Retry with the same key, path, size, write options and execution identity to get
+the same session while its record remains available. Reusing a key for a different
+request returns 409. Keys are optional strings of at most 128 bytes, without
+leading or trailing whitespace; generate a fresh UUID for each logical upload.
+
+Creation returns `{session, lease?}`. An open session receives a new short-lived
+lease. A recovered terminal session has no lease: inspect its state and recorded
+result instead of starting another upload. Session deadlines and receipt retention
+are unchanged by a retry.
+
+Use `root.sessionSegments(id, after, limit)` on the backend or
+`DirectSession.segments(after, limit, signal)` in the browser. Pages contain
+`{items: [{index, hash}], next?}` in ascending segment order. Start with `after: -1`,
+then pass `next` unchanged until absent. The default limit is 100, maximum 1000.
+Terminal sessions return an empty segment page; use their terminal result.
+
+`DirectSession.upload` checks each acknowledged hash against the supplied file
+once, then sends missing segments. An `AbortSignal` cancels local requests and
+retry waits; it does not abort the stored session. `abort()` explicitly changes
+the session state and requires an abort-enabled lease. Browser helpers retry GET
+and replayable segment PUT requests at most twice for transport failures or
+429/502/503/504. Retry waits are bounded to two seconds; a longer `Retry-After`
+is returned to the caller without an earlier retry. Non-replayable bodies,
+explicit aborts and lease expiry are not retried automatically.
+
 ## Publish with one PUT
 
 Use a direct PUT when the backend can authorize publication before uploading.
@@ -83,15 +120,57 @@ const upload = await files.root("documents").directUpload("homes/alex/note.txt",
   metadata: { message: "Updated note" },
 });
 // Browser:
-const response = await fetch(upload.url, { method: "PUT", body: "hello" });
+const response = await fetch(upload.url, { method: "PUT", body: "hello", credentials: "omit" });
 if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
 ```
 
 The lease binds the root, path, exact byte count, conflict policy, ownership,
-metadata and expiry. The uploader cannot override those fields. Reusing a URL
+access ACL, metadata, publication condition, execution identity and expiry. The uploader cannot override those fields. Reusing a URL
 before expiry repeats the authorized operation: single PUT URLs are not one-shot
 or resumable. Default conflict behavior is `error` (409); `overwrite` and
-`rename` must be explicit. Rename appends `-01`, `-02`, … before the extension.
+`rename` must be explicit. Rename uses a random suffix and returns the actual
+path; it does not search for the next numbered filename. See
+[copy and move conflicts](/docs/en/transfers#choose-a-conflict-policy).
+
+## Publish only if unchanged
+
+On a root configured with `managed: true`, read the file's opaque `revision`
+before editing, then bind it to the upload:
+
+```ts
+const current = await root.stat("notes.txt");
+if (!current.revision) throw new Error("A managed regular file is required");
+const upload = await root.directUpload("notes.txt", updated.size, {
+  onConflict: "overwrite",
+  precondition: { ifMatch: current.revision },
+});
+```
+
+Use `precondition: { ifNoneMatch: true }` for create-only publication. Choose
+exactly one condition. Conditions cannot use `onConflict: "rename"`, and
+`ifNoneMatch` cannot use `overwrite`. Both direct PUT and session commit check
+the condition atomically with publication against other Filegate operations.
+
+A mismatch returns `412 precondition_failed` without changing the destination,
+creating parents, assigning IDs or capturing history. A session remains open
+with its acknowledged segments, so the backend can inspect the conflict. The
+condition itself is immutable; choosing a different condition requires a new
+lease or session.
+
+The condition is signed into a direct lease or stored in a session. A browser
+cannot add or weaken it. Optional `If-Match` or `If-None-Match` headers on the
+publishing request must exactly match the bound condition: a quoted revision or
+`*`, respectively. An unbound or different header returns
+`400 precondition_header_mismatch`. Omitting headers still enforces the bound
+condition. Stat, current-content and successful publication responses expose a
+quoted `ETag` on managed regular files.
+
+Managed roots require all writers to use Filegate. This setting is independent
+of indexing. A live filesystem fingerprint detects observed external inode,
+size, nanosecond modification-time and change-time differences, but cannot make
+an external NFS writer participate in an atomic check-and-replace. Keep managed
+mode off for roots with external writers; conditional publication there returns
+`409 feature_disabled`. Metadata changes can also invalidate a revision.
 
 ## Ownership and inherited permissions
 
@@ -129,7 +208,7 @@ and obsolete receipts every five minutes.
 authorizes the contents found at that path when used; it is not an immutable
 revision link.
 
-For historical contents, use `directVersionDownload(path, versionId, expiresIn?)`.
+For historical contents, use `directVersionDownload(path, versionId, options?)`.
 It binds that version to its root and file path. A deleted version or a file that
 has moved is no longer available through the URL.
 
@@ -144,7 +223,7 @@ const preview = await root.directThumbnail("photo.png", { width: 320, height: 18
 // Return the leases to the browser; keep the backend token private.
 
 // Browser:
-const response = await fetch(version.url);
+const response = await fetch(version.url, { credentials: "omit" });
 if (!response.ok) throw new Error(`Version download failed: ${response.status}`);
 const bytes = await response.blob();
 const image = document.createElement("img");
@@ -153,7 +232,8 @@ document.body.append(image);
 ```
 
 Both URLs support HEAD. Versions support HTTP Range; thumbnails ignore Range and
-return the whole JPEG. Neither response sets Content-Disposition. Appending path,
+return the whole JPEG. Current and historical downloads set attachment filenames;
+thumbnails do not set Content-Disposition. Appending path,
 version or image parameters to the URL cannot change its scope. The usual
 60-second default and 300-second maximum apply; a lease does not retain a version
 against deletion or pruning. See the [HTTP contract](/docs/en/http-api#version-and-thumbnail-download-leases)
@@ -163,6 +243,42 @@ Backend clients can stream `contentRaw`, `versionContentRaw` and `thumbnailRaw`.
 Raw methods return HTTP responses unchanged, including error statuses; check the
 status and close/drain response bodies in Go. Thumbnails accept JPEG, PNG and GIF,
 up to 64 MiB and 40 million decoded pixels; requested bounds are at most 2048 × 2048.
+
+Current and historical download options accept `fileName`, for example
+`root.directVersionDownload("report.pdf", versionId, { fileName: "Approved report.pdf" })`.
+The lease binds this name. Responses include a quoted ASCII `filename` fallback
+and UTF-8 `filename*`. Names must be valid UTF-8, at most 255 bytes, and contain
+no control characters or path separators; `.` and `..` are invalid. Without an
+override, Filegate uses a sanitized basename. A browser cannot change the signed
+name with a query parameter.
+
+Thumbnail capacity failures return `503 thumbnail_capacity` with `Retry-After: 1`.
+At most four renders run concurrently, with 32 callers waiting for identical
+in-flight results. Every caller opens its source under its own access rules
+before sharing a result. Results are not persistently cached. Input is bounded
+to 64 MiB and 40 million pixels, and each generated JPEG to 16 MiB. Cancellation
+stops waiting and cancels unnecessary work between render stages; a running image
+transform can finish before its capacity slot is released.
+
+## Use an internal transfer origin
+
+A backend can configure a trusted internal origin for its own direct transfers,
+while browsers continue to receive public lease URLs:
+
+```ts
+const internal = new Filegate({
+  baseUrl: "https://files.example.org",
+  token,
+  transferBaseUrl: "http://filegate.internal:8080",
+});
+const lease = await internal.root("documents").directDownload("report.pdf");
+const response = await internal.downloadRaw(lease);
+```
+
+`put`, `downloadRaw`, `archiveRaw` and `directSession` use the configured transfer
+origin. Lease issuance and returned public URLs are unchanged. Direct requests
+send neither the backend token nor an execution header. The setting is operator
+configuration for Filegate-issued leases, not an arbitrary URL-import feature.
 
 ## Download a ZIP selection
 
@@ -183,9 +299,15 @@ that string unchanged as the `manifest` field in an
 response directly without buffering the archive in JavaScript. The lease binds
 the manifest hash; changing any selection or archive name invalidates the request.
 
+Fetch-based direct helpers set `credentials: "omit"`. Native form downloads
+cannot suppress browser cookies for the target origin. Serve Filegate on a
+dedicated origin outside the scope of application cookies when using
+`downloadArchive` or other native browser requests.
+
 A selected directory includes its entire current subtree. Authorize the whole
-subtree before issuing the lease; selecting a folder cannot enforce permissions
-on individual descendants. ZIP selections can span roots. Archive names must be
+subtree before issuing the lease. With a bound Unix execution identity, every
+source open also checks that identity's permissions; any denied entry fails the
+archive. ZIP selections can span roots. Archive names must be
 safe relative paths, with no duplicates, nested selection names or case-insensitive
 collisions. Symbolic links and explicit private Filegate selections are rejected.
 Private Filegate entries are excluded when traversing a directory.

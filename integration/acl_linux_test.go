@@ -82,7 +82,7 @@ func TestACLInheritanceAcrossCreationPaths(t *testing.T) {
 	inherited := setACL(t, x.r, "shared", domain.DefaultACL, sharedACL())
 	assertKernelRights(t, x, "shared", 02770, uid, gid)
 	put(t, x.r, "shared/direct", "direct", domain.WriteOptions{})
-	session, err := x.r.CreateSession("shared/resumable", 3, domain.WriteOptions{})
+	session, err := x.r.CreateSession("shared/resumable", 3, domain.WriteOptions{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestACLHTTPDirectAndResumableOwnership(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("direct upload: %s %s", resp.Status, body)
 	}
-	session, err := r.CreateSession(ctx, "shared/resumable", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound session"}}, sdk.SessionLeaseRequest{})
+	session, err := r.CreateSession(ctx, "shared/resumable", 3, domain.WriteOptions{Ownership: owner, Metadata: domain.Metadata{"message": "bound session"}}, sdk.SessionCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,15 +570,21 @@ func TestACLPrivateDirectoriesAreCreatedPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, x.r, "implicit/deep/file", "private", domain.WriteOptions{Ownership: &domain.Ownership{DirMode: "0700"}})
+	staged := 0
 	for p, mode := range modes {
-		if strings.HasPrefix(p, ".filegate/staging/") && mode.Perm() != 0700 {
+		if !strings.HasPrefix(p, ".filegate/staging/") {
+			t.Fatalf("directory created outside private preparation: %s", p)
+		}
+		staged++
+		if mode.Perm() != 0700 {
 			t.Fatalf("staged directory was not initially private: %04o", mode.Perm())
 		}
 	}
-	for _, p := range []string{"implicit", "implicit/deep"} {
-		if modes[p].Perm() != 0700 {
-			t.Fatalf("%s was initially created with %04o, want 0700", p, modes[p].Perm())
-		}
+	if staged != 3 {
+		t.Fatalf("expected three privately prepared directories, got %d", staged)
+	}
+	for _, p := range []string{"private", "implicit", "implicit/deep"} {
+		assertKernelRights(t, x, p, 0700, os.Getuid(), os.Getgid())
 	}
 }
 

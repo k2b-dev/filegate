@@ -5,9 +5,16 @@ import (
 	"os"
 
 	"github.com/k2b-dev/filegate/v5/cli"
+	"github.com/k2b-dev/filegate/v5/infra/filesystem"
 )
 
 func main() {
+	if handled, err := filesystem.RunExecutionWorker(); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if err := cli.Execute(); err != nil {
 		log.Printf("error: %v", err)
 		os.Exit(1)

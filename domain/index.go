@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
-	"path"
-	"sort"
 	"strings"
 )
 
 func (r *Root) Rebuild(ctx context.Context) (err error) {
+	if r.execution != nil {
+		return ErrInvalid
+	}
 	if !r.Config.Index {
 		return ErrDisabled
 	}
@@ -35,9 +37,8 @@ func (r *Root) Rebuild(ctx context.Context) (err error) {
 		r.statusMu.Unlock()
 	}()
 	generation := newID()
-	prefix := "i/" + generation + "/"
 	cs := make([]Change, 0, 256)
-	stats := Stats{Source: "index", Updated: r.now()}
+	stats := Stats{Path: ".", Source: "index", Started: started, Freshness: "unknown"}
 	flush := func() error {
 		if len(cs) == 0 {
 			return nil
@@ -47,21 +48,18 @@ func (r *Root) Rebuild(ctx context.Context) (err error) {
 		return e
 	}
 	err = r.walk(ctx, func(n Node) error {
-		if n.Directory {
-			stats.Directories++
-		} else {
-			stats.Files++
-			stats.Bytes += n.Size
+		if err := addStatsNode(&stats, n); err != nil {
+			return err
 		}
-		c, e := encoded(prefix+n.Path, n)
+		changes, e := indexChangesFor(generation, n, nil)
 		if e != nil {
 			return e
 		}
-		cs = append(cs, c)
+		cs = append(cs, changes...)
 		r.statusMu.Lock()
 		r.status.Scanned++
 		r.statusMu.Unlock()
-		if len(cs) == 256 {
+		if len(cs) >= 256 {
 			return flush()
 		}
 		return nil
@@ -72,13 +70,19 @@ func (r *Root) Rebuild(ctx context.Context) (err error) {
 	if err = flush(); err != nil {
 		return err
 	}
-	built, _ := encoded("index/built", r.now())
+	stats.Completed = r.now()
+	stats.Updated = stats.Completed
+	stats.Complete = true
+	stats.IndexBuilt = &stats.Completed
+	built, _ := encoded("index/built", stats.Completed)
 	gen, _ := encoded("index/generation", generation)
 	st, _ := encoded("index/stats", stats)
-	if err = r.State.Batch([]Change{gen, st, built}); err != nil {
+	format, _ := encoded("index/format", currentIndexFormat)
+	if err = r.State.Batch([]Change{gen, st, built, format}); err != nil {
 		return err
 	}
 	r.generation = generation
+	r.invalidateListings()
 	r.statusMu.Lock()
 	r.stats = &stats
 	t := r.now()
@@ -86,41 +90,37 @@ func (r *Root) Rebuild(ctx context.Context) (err error) {
 	r.statusMu.Unlock()
 	// Only derived rows are collected. Identities, sessions and versions survive.
 	cs = cs[:0]
-	err = r.State.Scan("i/", func(k string, _ []byte) error {
-		if !strings.HasPrefix(k, prefix) {
-			cs = append(cs, Change{Key: k, Delete: true})
+	for _, family := range []string{"i/", "q/"} {
+		err = r.State.Scan(family, func(k string, _ []byte) error {
+			if !strings.HasPrefix(k, family+generation+"/") {
+				cs = append(cs, Change{Key: k, Delete: true})
+			}
+			if len(cs) >= 256 {
+				return flush()
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		if len(cs) == 256 {
-			return flush()
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 	return flush()
 }
 func (r *Root) RefreshStats(ctx context.Context, maxEntries int) (Stats, error) {
+	if r.execution != nil {
+		return Stats{}, ErrInvalid
+	}
 	if maxEntries < 1 || maxEntries > 10000000 {
 		return Stats{}, ErrInvalid
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	s := Stats{Source: "filesystem", Updated: r.now()}
-	e := r.walk(ctx, func(n Node) error {
-		if s.Files+s.Directories >= int64(maxEntries) {
-			return ErrLimit
-		}
-		if n.Directory {
-			s.Directories++
-		} else {
-			s.Files++
-			s.Bytes += n.Size
-		}
-		return nil
-	})
+	s, e := r.recursiveStats(ctx, ".", maxEntries)
 	if e != nil {
 		return Stats{}, e
+	}
+	if !s.Complete {
+		return Stats{}, ErrLimit
 	}
 	if e = r.State.Put("index/stats", s); e != nil {
 		return Stats{}, e
@@ -130,62 +130,54 @@ func (r *Root) RefreshStats(ctx context.Context, maxEntries int) (Stats, error) 
 	r.statusMu.Unlock()
 	return s, nil
 }
-func (r *Root) Search(ctx context.Context, query, base, after string, limit, maxEntries int) (Page, error) {
-	base, e := CleanPath(base)
-	if e != nil || limit < 1 || limit > 1000 || maxEntries < 1 || maxEntries > 10000000 {
-		return Page{}, ErrInvalid
+
+// RecursiveStats observes one subtree in one bounded filesystem traversal.
+// Complete means every encountered entry was visited during the scan interval;
+// it does not promise an atomic filesystem snapshot or a storage quota.
+func (r *Root) RecursiveStats(ctx context.Context, p string, maxEntries int) (Stats, error) {
+	if maxEntries < 1 || maxEntries > 100000 {
+		return Stats{}, ErrInvalid
+	}
+	p, err := CleanPath(p)
+	if err != nil {
+		return Stats{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := Page{Items: []Node{}}
-	matches := func(n Node) bool {
-		return n.Path > after && (base == "." || n.Path == base || strings.HasPrefix(n.Path, base+"/")) && strings.Contains(strings.ToLower(path.Base(n.Path)), strings.ToLower(query))
+	if err := r.guard(); err != nil {
+		return Stats{}, err
 	}
-	if r.Config.Index {
-		sentinel := errors.New("page complete")
-		e = r.State.Scan("i/"+r.generation+"/", func(_ string, b []byte) error {
-			var n Node
-			if e := json.Unmarshal(b, &n); e != nil {
-				return e
-			}
-			if matches(n) {
-				if len(out.Items) == limit {
-					out.Next = out.Items[len(out.Items)-1].Path
-					return sentinel
-				}
-				out.Items = append(out.Items, n)
-			}
-			return nil
-		})
-		if errors.Is(e, sentinel) {
-			e = nil
-		}
-		return out, e
-	}
-	count := 0
-	e = r.walkFrom(ctx, base, func(n Node) error {
-		count++
-		if count > maxEntries {
-			return ErrLimit
-		}
-		if matches(n) {
-			out.Items = append(out.Items, n)
-			sort.Slice(out.Items, func(i, j int) bool { return out.Items[i].Path < out.Items[j].Path })
-			if len(out.Items) > limit+1 {
-				out.Items = out.Items[:limit+1]
-			}
-		}
-		return nil
-	})
-	if e != nil {
-		return Page{}, e
-	}
-	if len(out.Items) > limit {
-		out.Items = out.Items[:limit]
-		out.Next = out.Items[limit-1].Path
-	}
-	return out, nil
+	return r.recursiveStats(ctx, p, maxEntries)
 }
+
+func (r *Root) recursiveStats(ctx context.Context, p string, maxEntries int) (Stats, error) {
+	if err := r.guard(); err != nil {
+		return Stats{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Stats{}, err
+	}
+	stats := Stats{Path: p, Source: "filesystem", Started: r.now(), Freshness: "observed"}
+	count := func(n Node) error { return addStatsNode(&stats, n) }
+	n, err := r.node(p, true)
+	if err != nil {
+		return stats, err
+	}
+	if err := count(n); err != nil {
+		return stats, err
+	}
+	if n.Directory {
+		err = r.scanDirectory(ctx, p, true, maxEntries-1, count)
+	}
+	stats.Completed = r.now()
+	stats.Updated = stats.Completed
+	stats.Complete = err == nil
+	if errors.Is(err, ErrLimit) {
+		return stats, nil
+	}
+	return stats, err
+}
+
 func (r *Root) Resolve(id string) (Node, error) {
 	if !r.Config.Index {
 		return Node{}, ErrDisabled
@@ -203,8 +195,11 @@ func (r *Root) Resolve(id string) (Node, error) {
 	return n, e
 }
 func (r *Root) Info() (RootInfo, error) {
+	if r.execution != nil {
+		return RootInfo{}, ErrInvalid
+	}
 	r.statusMu.RLock()
-	info := RootInfo{Name: r.Config.Name, Index: r.status, Versioning: r.Config.Versioning, Cooldown: r.Config.Versioning.Cooldown.String()}
+	info := RootInfo{Managed: r.Config.Managed, Execution: r.Config.Execution, Name: r.Config.Name, Index: r.status, Versioning: r.Config.Versioning, Cooldown: r.Config.Versioning.Cooldown.String()}
 	if r.stats != nil {
 		s := *r.stats
 		info.Stats = &s
@@ -239,4 +234,17 @@ func (r *Root) Info() (RootInfo, error) {
 		return nil
 	})
 	return info, e
+}
+
+func addStatsNode(stats *Stats, n Node) error {
+	if n.Directory {
+		stats.Directories++
+		return nil
+	}
+	if n.Size < 0 || n.Size > math.MaxInt64-stats.Bytes {
+		return ErrLimit
+	}
+	stats.Files++
+	stats.Bytes += n.Size
+	return nil
 }

@@ -26,6 +26,7 @@ roots:
   - name: documents
     path: /srv/filegate/documents
     index: true
+    managed: true
     versioning:
       enabled: true
       cooldown: 1m
@@ -48,10 +49,18 @@ roots:
 | `uploads.max_file_size` | Defaults to `10GiB`; integer bytes or `B`, `KiB`, `MiB`, `GiB`. Applies to every upload method. |
 | `roots[].name` | Unique name: letters, digits, `_` and `-`; first character alphanumeric; at most 64 characters. |
 | `roots[].path` | Existing absolute directory. Canonical root paths cannot overlap each other or state. |
+| `roots[].managed` | Defaults to false. All content and namespace writes must go through Filegate. Enables conditional publication and recoverable cross-root moves. Independent of indexing. |
+| `roots[].execution` | Defaults to false. Accept numeric Unix execution identities; requires the [root-service setup](/docs/en/operations#enable-unix-execution). Reported as `execution` in root information. |
 | `roots[].index` | Defaults to false. Enable metadata search and stable xattr IDs. |
 | `roots[].versioning.enabled` | Defaults to false. Requires index enabled. |
 | `roots[].versioning.cooldown` | Defaults to `1m`; zero captures each successful overwrite. |
 | `roots[].versioning.keep` | Defaults to `{last: 10, daily: 30, monthly: 12}` when the entire `keep` section is absent; see [versioning](/docs/en/versioning). |
+
+Enable `managed` only when Filegate is the exclusive writer. Keep it false for
+roots with external NFS or local writers. The setting is an operator promise,
+not a filesystem lock: Filegate cannot prevent other processes from changing
+files. [Conditional publication](/docs/en/uploads-downloads#publish-only-if-unchanged)
+provides its atomic conflict guarantee only between Filegate operations.
 
 Each root has independent maintenance and history. A rebuild pauses publication
 and other root mutations while it walks that root. Upload bodies can still be

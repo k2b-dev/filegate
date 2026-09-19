@@ -228,7 +228,7 @@ func TestDirectoryPublicationRecoversAfterStateFailure(t *testing.T) {
 			if err != nil || resolved.Path != "group" {
 				t.Fatalf("recovered identity: %+v %v", resolved, err)
 			}
-			page, err := x.r.Search(ctx, "group", ".", "", 10, 100)
+			page, err := x.r.Search(ctx, "group", ".", domain.ListingOptions{Limit: 10, MaxEntries: 100})
 			if err != nil || len(page.Items) != 1 || page.Items[0].ID != n.ID {
 				t.Fatalf("recovered index: %+v %v", page, err)
 			}

@@ -71,7 +71,7 @@ func TestVersionDownloadLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := time.Now().Unix()
-	lease, err := root.DirectVersionDownload(ctx, "notes/a.txt", v.ID, 0)
+	lease, err := root.DirectVersionDownload(ctx, "notes/a.txt", v.ID, api.DownloadOptions{ExpiresIn: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestVersionDownloadLease(t *testing.T) {
 	if res.StatusCode != 200 || string(b) != "historical" {
 		t.Fatalf("%s: %s", res.Status, b)
 	}
-	if res.Header.Get("Content-Type") != "application/octet-stream" || res.Header.Get("Content-Disposition") != "" || res.Header.Get("Access-Control-Allow-Origin") != "https://cloud.example" {
+	if res.Header.Get("Content-Type") != "application/octet-stream" || !strings.HasPrefix(res.Header.Get("Content-Disposition"), "attachment;") || res.Header.Get("Access-Control-Allow-Origin") != "https://cloud.example" {
 		t.Fatal(res.Header)
 	}
 	raw, err := root.VersionContentRaw(ctx, "notes/a.txt", v.ID)
@@ -121,7 +121,7 @@ func TestVersionDownloadLease(t *testing.T) {
 	put(t, x.r, "notes/a.txt", "replacement", domain.WriteOptions{})
 	leaseRequest(t, "GET", lease.URL, "", false, 404, nil)
 	// Mint a new lease at the new path, then delete the historical content.
-	moved, err := root.DirectVersionDownload(ctx, "moved.txt", v.ID, 30)
+	moved, err := root.DirectVersionDownload(ctx, "moved.txt", v.ID, api.DownloadOptions{ExpiresIn: 30})
 	if err != nil {
 		t.Fatal(err)
 	}

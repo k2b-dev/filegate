@@ -46,10 +46,14 @@ func (r *Root) Mkdir(p string, o DirectoryOptions) (Node, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e = r.guard(); e != nil {
+	return r.mkdir(p, o)
+}
+
+func (r *Root) mkdir(p string, o DirectoryOptions) (Node, error) {
+	if e := r.guard(); e != nil {
 		return Node{}, e
 	}
-	if _, e = r.Files.Stat(p); e == nil {
+	if _, e := r.Files.Stat(p); e == nil {
 		return Node{}, ErrConflict
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return Node{}, e
@@ -98,6 +102,9 @@ func (r *Root) Mkdir(p string, o DirectoryOptions) (Node, error) {
 	n := Node{Root: r.Config.Name, Path: p, ID: id, Directory: true,
 		Modified: st.ModTime().UTC(), Mode: fmt.Sprintf("%04o", UnixMode(st.Mode())), UID: uid, GID: gid}
 	rec := publication{Path: p, Temp: temp, Node: n, Claim: claim{Device: dev, Inode: ino, Path: p}}
+	if r.Config.Managed {
+		rec.WriteGeneration = newID()
+	}
 	key := "pending/" + newID()
 	if e = r.State.Put(key, rec); e != nil {
 		return Node{}, e
@@ -123,6 +130,9 @@ func (r *Root) prepareDirectory(f *os.File, parent os.FileInfo, inherited ACL, a
 		return e
 	}
 	_, _, uid, gid, _ := r.Files.Identity(st)
+	if r.execution != nil {
+		uid, gid = r.execution.UID, r.execution.GID
+	}
 	mode := os.FileMode(0755)
 	access := ACLFromMode(mode)
 	defaults := inherited
@@ -174,7 +184,7 @@ func (r *Root) prepareDirectory(f *os.File, parent os.FileInfo, inherited ACL, a
 	if e = allowUnsupported(e); e != nil {
 		return e
 	}
-	if e = chmod(f, mode); e != nil {
+	if e = r.chmod(f, mode); e != nil {
 		return e
 	}
 	if aclUnsupported {

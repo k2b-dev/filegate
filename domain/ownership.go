@@ -36,6 +36,10 @@ func chmod(f *os.File, mode os.FileMode) error {
 	if e := f.Chmod(mode); e != nil {
 		return e
 	}
+	return verifyMode(f, mode)
+}
+
+func verifyMode(f *os.File, mode os.FileMode) error {
 	st, e := f.Stat()
 	if e != nil {
 		return e
@@ -56,7 +60,14 @@ func (r *Root) chown(f *os.File, uid, gid uint32) error {
 	if oldUID == uid && oldGID == gid {
 		return nil
 	}
-	if e = f.Chown(int(uid), int(gid)); e != nil {
+	if fs, ok := r.Files.(interface {
+		Chown(*os.File, int, int) error
+	}); ok {
+		e = fs.Chown(f, int(uid), int(gid))
+	} else {
+		e = f.Chown(int(uid), int(gid))
+	}
+	if e != nil {
 		return e
 	}
 	st, e = f.Stat()
@@ -89,18 +100,18 @@ func (r *Root) applyOwner(f *os.File, o *Ownership) error {
 	}
 	if m != "" {
 		n, _ := strconv.ParseUint(m, 8, 32)
-		return chmod(f, FileMode(uint32(n)))
+		return r.chmod(f, FileMode(uint32(n)))
 	}
 	if st.IsDir() && o.UID != nil {
 		// Chown can clear special bits. An ownership-only update retains the
 		// directory's mode and its ACL mask, including an inherited setgid bit.
-		return chmod(f, st.Mode())
+		return r.chmod(f, st.Mode())
 	}
 	return nil
 }
 
 func (r *Root) parentPermissions(p string) (os.FileInfo, ACL, error) {
-	f, e := r.Files.Open(path.Dir(p), os.O_RDONLY, 0)
+	f, e := r.openMetadata(path.Dir(p))
 	if e != nil {
 		return nil, ACL{}, e
 	}
@@ -113,62 +124,19 @@ func (r *Root) parentPermissions(p string) (os.FileInfo, ACL, error) {
 	return st, a, e
 }
 
-// makeDirectory is shared by implicit parents and directory copies.
-// Kernel creation inherits the parent's default ACL and setgid group.
+// makeDirectory shares private preparation and publication with explicit Mkdir.
+// Callers already hold the root lock and have validated ownership options.
 func (r *Root) makeDirectory(p string, o *Ownership) error {
-	if e := r.guard(); e != nil {
-		return e
-	}
-	if _, e := r.Files.Stat(p); e == nil {
+	_, err := r.mkdir(p, DirectoryOptions{Ownership: o})
+	if errors.Is(err, ErrConflict) {
 		return os.ErrExist
-	} else if !errors.Is(e, os.ErrNotExist) {
-		return e
 	}
-	_, acl, e := r.parentPermissions(p)
-	if e != nil && !errors.Is(e, ErrACLUnsupported) {
-		return e
-	}
-	mode := os.FileMode(0755)
-	if len(acl.Entries) != 0 {
-		mode = 0777
-	}
-	if o != nil && o.DirMode != "" {
-		n, _ := strconv.ParseUint(o.DirMode, 8, 32)
-		// Apply the creation ceiling immediately, especially for private 0700
-		// provisioning. Ownership and final special bits follow on the inode.
-		mode = FileMode(uint32(n))
-	}
-	if e = r.Files.Mkdir(p, mode); e != nil {
-		return e
-	}
-	f, e := r.Files.Open(p, os.O_RDONLY, 0)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	if len(acl.Entries) == 0 && (o == nil || o.DirMode == "") {
-		st, e := f.Stat()
-		if e != nil {
-			return e
-		}
-		// Filegate's default directory mode is explicit, like its default file
-		// mode, independent of the daemon umask. Retain kernel-inherited setgid.
-		if e = chmod(f, 0755|st.Mode()&os.ModeSetgid); e != nil {
-			return e
-		}
-	}
-	if e = r.applyOwner(f, o); e != nil {
-		return e
-	}
-	if e = f.Sync(); e != nil {
-		return e
-	}
-	return r.Files.Sync(path.Dir(p))
+	return err
 }
 
 // preparePublication replaces staging metadata with destination metadata before
 // rename. Renaming an inode does not trigger directory ACL or group inheritance.
-func (r *Root) preparePublication(p string, f *os.File, exists bool, o *Ownership) error {
+func (r *Root) preparePublication(p string, f *os.File, exists bool, o *Ownership, explicitACL *ACL) error {
 	staged, e := f.Stat()
 	if e != nil {
 		return e
@@ -176,11 +144,14 @@ func (r *Root) preparePublication(p string, f *os.File, exists bool, o *Ownershi
 	// Keep the actual creating identity unless destination inheritance or an
 	// explicit override applies. Remote filesystems can map process identities.
 	_, _, uid, gid, _ := r.Files.Identity(staged)
+	if r.execution != nil {
+		uid, gid = r.execution.UID, r.execution.GID
+	}
 	mode := os.FileMode(0644)
 	acl := ACLFromMode(mode)
 	aclUnsupported := false
 	if exists {
-		old, e := r.Files.Open(p, os.O_RDONLY, 0)
+		old, e := r.openMetadata(p)
 		if e != nil {
 			return e
 		}
@@ -215,6 +186,15 @@ func (r *Root) preparePublication(p string, f *os.File, exists bool, o *Ownershi
 			mode = aclMode(acl)
 		}
 	}
+	if explicitACL != nil {
+		acl, e = NormalizeACL(*explicitACL)
+		if e != nil {
+			return e
+		}
+		mode = aclMode(acl)
+		// An explicit ACL may never be silently discarded on a mode-only target.
+		aclUnsupported = false
+	}
 	if o != nil && o.UID != nil {
 		uid, gid = uint32(*o.UID), uint32(*o.GID)
 	}
@@ -234,7 +214,7 @@ func (r *Root) preparePublication(p string, f *os.File, exists bool, o *Ownershi
 		n, _ := strconv.ParseUint(o.Mode, 8, 32)
 		mode = FileMode(uint32(n))
 	}
-	return chmod(f, mode)
+	return r.chmod(f, mode)
 }
 
 func inheritACL(a ACL, mode os.FileMode) ACL {
@@ -319,7 +299,7 @@ func (r *Root) SetOwnership(p string, o *Ownership) (Node, error) {
 	if e = r.guard(); e != nil {
 		return Node{}, e
 	}
-	f, e := r.Files.Open(p, os.O_RDONLY, 0)
+	f, e := r.openMetadata(p)
 	if e != nil {
 		return Node{}, e
 	}

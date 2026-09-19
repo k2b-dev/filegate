@@ -23,6 +23,11 @@ Use TLS at the reverse proxy. Restrict direct daemon access to trusted networks.
 CORS only controls browser access; it is not authorization. Configure exact
 allowed origins for cross-origin direct transfers.
 
+The TypeScript direct-fetch helpers use `credentials: "omit"`. Native form
+archive downloads cannot suppress the browser's cookies for their target. Use a
+dedicated Filegate origin outside the scope of application cookies; do not rely
+on a lease alone to prevent the browser from attaching ambient credentials.
+
 ## Controlled uploads and archive selections
 
 Session leases permit status queries and segment uploads, plus abort when the
@@ -43,10 +48,14 @@ cannot change a lease's signed root, path, version or thumbnail dimensions.
 ## Unix ownership
 
 The backend can provide numeric `uid`, `gid`, `mode` and `dirMode` for uploads and
-directory creation. Resolve user and group IDs in your application. The daemon
-performs filesystem operations under its service account. When ownership is
-omitted, new files use that account as owner and inherit the group of a setgid
-parent. Overwrites preserve existing ownership and access ACLs. Use `dirMode`
+directory creation. Resolve user and group IDs in your application. Without an
+execution identity, the daemon performs filesystem operations under its service
+account. On roots configured with `execution: true`, the backend can
+bind a numeric UID/GID and supplementary groups to file operations and leases.
+The kernel then enforces that identity's traversal, content and mutation rights.
+New files use the execution identity, or the daemon account when absent, and
+inherit the group of a setgid parent. Overwrites preserve existing ownership and
+access ACLs. Use `dirMode`
 for directory modes, including setgid (`"2770"`). See
 [permissions and ACLs](/docs/en/permissions) for inheritance and shared directories.
 
@@ -60,6 +69,13 @@ service identity before relying on ownership or ACL changes.
 
 The packaged service defaults to an unprivileged `filegate` account. Granting
 additional capabilities or changing it to root is an explicit operator decision.
+
+Execution identities are accepted only from the authenticated backend, through
+`X-Filegate-Execution`. Browsers cannot choose or replace them on direct URLs.
+The backend remains responsible for choosing the correct IDs and authorizing the
+operation. The header is not a substitute for application authorization. Read
+[Unix execution identity](/docs/en/permissions#unix-execution-identity) for
+replacement, recursive deletion, history and permission-change semantics.
 
 ## Filesystem boundaries
 

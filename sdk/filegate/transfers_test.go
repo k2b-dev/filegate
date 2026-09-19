@@ -41,7 +41,7 @@ func TestSessionBackendAndDirectoryContracts(t *testing.T) {
 	}
 	root := c.Root("cloud")
 	ctx := context.Background()
-	if _, err = root.CreateSession(ctx, "inbox/new", 0, WriteOptions{OnConflict: "error"}, SessionLeaseRequest{ExpiresIn: 30, AllowAbort: true}); err != nil {
+	if _, err = root.CreateSession(ctx, "inbox/new", 0, WriteOptions{OnConflict: "error"}, SessionCreateOptions{ExpiresIn: 30, AllowAbort: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = root.Session(ctx, "session-id"); err != nil {
@@ -106,7 +106,7 @@ func TestArchiveLeaseDownloadDoesNotSendBackendToken(t *testing.T) {
 		if len(body.Items) != 1 || body.Items[0].ArchivePath != "files/a & b" || body.ExpiresIn != 30 {
 			t.Errorf("bad mint body: %+v", body)
 		}
-		_ = json.NewEncoder(w).Encode(ArchiveLease{URL: download.URL, Method: "POST", Manifest: manifest})
+		_ = json.NewEncoder(w).Encode(ArchiveLease{URL: download.URL + "/v1/direct/archive.signature", Method: "POST", Manifest: manifest})
 	}))
 	defer backend.Close()
 	c, err := New(backend.URL, "backend")
@@ -223,7 +223,7 @@ func TestDerivedDownloadLeaseRequests(t *testing.T) {
 		if thumbnail {
 			lease, err = client.Root("cloud").DirectThumbnail(context.Background(), "a & b.png", 320, 180, 30)
 		} else {
-			lease, err = client.Root("cloud").DirectVersionDownload(context.Background(), "a & b.png", "version id", 30)
+			lease, err = client.Root("cloud").DirectVersionDownload(context.Background(), "a & b.png", "version id", DownloadOptions{ExpiresIn: 30})
 		}
 		server.Close()
 		if err != nil || lease.Method != "GET" || lease.URL != "https://files.example/v1/direct/scoped" {

@@ -14,11 +14,11 @@ func TestCreateSessionLifetimeStartsAfterRecovery(t *testing.T) {
 	clock.Store(start.UnixNano())
 	state := &sessionRecoveryGate{entered: make(chan struct{}), release: make(chan struct{})}
 	root := &Root{
-		Config:        RootConfig{Name: "test"},
-		State:         state,
-		MaxBytes:      1024,
-		needsRecovery: true,
-		now:           func() time.Time { return time.Unix(0, clock.Load()).UTC() },
+		Config:   RootConfig{Name: "test"},
+		State:    state,
+		MaxBytes: 1024,
+		rootShared: &rootShared{needsRecovery: true,
+			now: func() time.Time { return time.Unix(0, clock.Load()).UTC() }},
 	}
 	type outcome struct {
 		session Session
@@ -26,7 +26,7 @@ func TestCreateSessionLifetimeStartsAfterRecovery(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		session, err := root.CreateSession("file", 1, WriteOptions{})
+		session, err := root.CreateSession("file", 1, WriteOptions{}, "")
 		done <- outcome{session, err}
 	}()
 	<-state.entered
@@ -57,3 +57,5 @@ func (s *sessionRecoveryGate) Scan(prefix string, _ func(string, []byte) error) 
 }
 func (s *sessionRecoveryGate) Put(string, any) error { return nil }
 func (s *sessionRecoveryGate) Delete(string) error   { return nil }
+
+func (s *sessionRecoveryGate) Batch([]Change) error { return nil }

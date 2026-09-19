@@ -31,26 +31,56 @@ fmt.Println(node.Path, node.ID)
 `expiresIn` to 0 for the 60-second default, or choose 1–300 seconds. The byte count
 must match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
 
+## Run with Unix permissions
+
+`Client.WithExecution` and `Root.WithExecution` return independent scoped clients
+and an error for an invalid identity. The original client remains unchanged.
+
+```go
+actor, err := client.Root("shared").WithExecution(filegate.ExecutionIdentity{
+    UID: 10001, GID: 20001, Groups: []uint32{20002},
+})
+if err != nil { return err }
+lease, err := actor.DirectDownload(ctx, "teams/editors/report.pdf", filegate.DownloadOptions{ExpiresIn: 60})
+if err != nil { return err }
+fmt.Println(lease.URL)
+```
+
+The root must have `execution: true`. UID must be nonzero; every ID must be less
+than 4294967295. `Groups` accepts at most 64 supplementary GIDs. An execution
+client sends `X-Filegate-Execution` only to backend endpoints. Direct transfers
+use the identity bound in the lease without an additional header or bearer token.
+For a selection across roots, use `client.WithExecution(identity)` and call
+`ArchiveLease` on the returned client.
+
+Use the unscoped client for root information, search and administrative calls.
+Sessions retain their creation identity through renewal and commit. See
+[Unix execution identity](/docs/en/permissions#unix-execution-identity) for native
+permissions, ownership overrides and failure semantics.
+
 ## Resumable upload
 
 ```go
 created, err := root.CreateSession(ctx, "large.bin", size,
-    filegate.WriteOptions{}, filegate.SessionLeaseRequest{ExpiresIn: 60})
+    filegate.WriteOptions{}, filegate.SessionCreateOptions{ExpiresIn: 60})
 if err != nil { return err }
+if created.Lease == nil {
+    return fmt.Errorf("session is already %s; reconcile its result", created.Session.State)
+}
 session := filegate.DirectSession{URL: created.Lease.URL}
 // Send each 8 MiB segment; the last contains the remaining bytes.
 _, err = session.Put(ctx, 0, firstSegment)
 if err != nil { return err }
 status, err := session.Status(ctx)
 if err != nil { return err }
-_ = status.Segments
+_ = status.UploadedSegments
 // Backend, after all segments and a fresh access/budget check:
 node, err := root.CommitSession(ctx, created.Session.ID)
 if err != nil { return err }
 fmt.Println(node.Path, node.Size)
 ```
 
-`DirectSession` needs only its scoped lease URL. `Status`, `Put` and `Abort`
+`DirectSession` needs only its scoped lease URL. `Status`, `Segments`, `Put` and `Abort`
 all accept a context; there is no direct commit operation. Abort requires a lease
 issued with `AllowAbort: true`. `Status` and `Put` return `SessionStatus`, which
 omits backend options and the commit result. Use `root.Session(ctx, id)` for
@@ -63,9 +93,10 @@ arithmetic and checksums; `relay` provides streaming HTTP helpers.
 
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
 `SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
+`TransferStatus`, `ResumeTransfer`, `AbandonTransfer`, `CopyVersion`,
 `DirectUpload`, `DirectDownload`, `DirectVersionDownload`, `DirectThumbnail`,
-`CreateSession`, `Session`, `SessionLease`, `CommitSession`, `AbortSession`,
-`Rebuild`, `RefreshStats`, `Versions`, `Snapshot`,
+`CreateSession`, `Session`, `SessionSegments`, `SessionLease`, `CommitSession`, `AbortSession`,
+`Rebuild`, `Stats`, `RecursiveStats`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
 Each operation takes a `context.Context` first. Request structs shared with the
 wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
@@ -76,10 +107,27 @@ the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
 
+`List(ctx, path, ListingOptions)` and `Search(ctx, query, path, ListingOptions)`
+accept sorting, order, type filters and bounded opaque-cursor pagination. Use
+`SessionSegments(ctx, id, after, limit)` or `DirectSession.Segments` for chunk
+receipts; status itself contains only counts. See [browsing](/docs/en/browsing)
+and [sessions](/docs/en/uploads-downloads#recover-session-creation-and-segments).
+
+`Transfer(ctx, api.TransferRequest)` returns `TransferResult`, not a Node. Read
+its `State` before treating a cross-root move as complete. `CopyVersion(ctx,
+versionID, api.VersionCopyRequest)` returns the new destination Node. See
+[copy and move files](/docs/en/transfers) for recovery and conflict rules.
+
+For server-side transfers, `client.WithTransferBaseURL(origin)` returns an
+independent client and an error for an invalid origin. Its `DownloadRaw`,
+`ArchiveRaw`, `DirectSession` and `Root.Put` helpers use the internal origin;
+issued public URLs remain unchanged. `TransferURL(lease.URL)` maps a signed
+Filegate transfer URL explicitly. No backend credentials are sent to that origin.
+
 ## Direct versions and previews
 
 ```go
-version, err := root.DirectVersionDownload(ctx, "report.pdf", versionID, 60)
+version, err := root.DirectVersionDownload(ctx, "report.pdf", versionID, filegate.DownloadOptions{ExpiresIn: 60})
 if err != nil { return err }
 thumbnail, err := root.DirectThumbnail(ctx, "photo.png", 320, 180, 60)
 if err != nil { return err }
@@ -87,9 +135,10 @@ if err != nil { return err }
 fmt.Println(version.URL, thumbnail.URL)
 ```
 
-`DirectVersionDownload(ctx, path, versionID, expiresIn)` and
+`DirectVersionDownload(ctx, path, versionID, DownloadOptions)` and
 `DirectThumbnail(ctx, path, width, height, expiresIn)` return `(DirectURL, error)`.
-Set `expiresIn` to 0 for 60 seconds, or choose 1–300 seconds. Thumbnail dimensions
+For historical downloads, set `DownloadOptions.ExpiresIn` to 0 for 60 seconds
+and optionally set `FileName`. For thumbnail expiry, choose 0 or 1–300 seconds. Thumbnail dimensions
 are required in Go and must each be 1–2048; use 256, 256 for the default bounds.
 The URLs support GET and HEAD without the backend bearer token. Versions support
 Range; thumbnails return the complete JPEG. See

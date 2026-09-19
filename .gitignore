@@ -13,6 +13,8 @@ dist/
 *.prof
 *.coverprofile
 coverage.out
+/output/playwright/
+/.playwright-cli/
 
 # Bench artifacts
 *.bench.out

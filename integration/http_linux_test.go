@@ -61,7 +61,7 @@ func TestHTTPAndGoClientDirectOwnershipVersions(t *testing.T) {
 	if raw.StatusCode != 404 {
 		t.Fatal("raw response changed")
 	}
-	d, e := root.DirectDownload(ctx, "notes/a.txt", 60)
+	d, e := root.DirectDownload(ctx, "notes/a.txt", sdk.DownloadOptions{ExpiresIn: 60})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -134,7 +134,7 @@ func TestDirectCapabilitiesBindSizeOwnershipAndMetadata(t *testing.T) {
 func TestGoClientSessionRecoveryAndArchive(t *testing.T) {
 	_, _, c := server(t)
 	r := c.Root("test")
-	created, e := r.CreateSession(ctx, "empty-dir/a", 5, domain.WriteOptions{}, sdk.SessionLeaseRequest{})
+	created, e := r.CreateSession(ctx, "empty-dir/a", 5, domain.WriteOptions{}, sdk.SessionCreateOptions{})
 	if e != nil {
 		t.Fatal(e)
 	}

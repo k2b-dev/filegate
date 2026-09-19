@@ -66,6 +66,14 @@ through `versionContentRaw(path, versionId)`.
 See [downloads and previews](/docs/en/uploads-downloads#downloads-and-previews)
 for direct URLs and error behavior.
 
+## Copy a version without restoring the source
+
+`root.copyVersion(path, versionId, targetRoot, targetPath, options)` publishes the
+historical bytes at a distinct target. The source's current contents, modification
+time, identity and history remain unchanged. Destination ownership and access ACL
+can be supplied explicitly; the default conflict policy is `error`. See
+[historical copies](/docs/en/transfers#copy-historical-bytes-to-a-new-target).
+
 ## Prune calendar buckets
 
 ```yaml
@@ -95,7 +103,8 @@ additional allocated disk usage.
 ## Moves, copies and deletion
 
 An API rename within the same root preserves the ID and history. Copies receive
-new IDs and begin without history. A cross-root move copies the content and then
-permanently removes the source and its history. It does not transfer history.
+new IDs and begin without history. A completed cross-root move copies the content and then permanently removes the
+source and its history. It requires two managed roots and a recoverable transfer
+ID; pending moves can retain both copies. It does not transfer history.
 An application trash folder can use a same-root move to preserve history.
 Permanent recursive deletion also deletes histories below that directory.

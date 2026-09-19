@@ -122,7 +122,7 @@ func (r *Root) aclFile(p string, scope ACLScope) (*os.File, string, error) {
 	if e = r.guard(); e != nil {
 		return nil, "", e
 	}
-	f, e := r.Files.Open(p, os.O_RDONLY, 0)
+	f, e := r.openMetadata(p)
 	if e != nil {
 		return nil, "", e
 	}
@@ -140,6 +140,9 @@ func (r *Root) aclFile(p string, scope ACLScope) (*os.File, string, error) {
 }
 
 func (r *Root) GetACL(p string, scope ACLScope) (ACL, error) {
+	if scope != AccessACL && scope != DefaultACL {
+		return ACL{}, fmt.Errorf("%w: scope must be access or default", ErrInvalidACL)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	f, _, e := r.aclFile(p, scope)
@@ -178,7 +181,7 @@ func (r *Root) SetACL(p string, scope ACLScope, acl ACL) (ACL, error) {
 			if e != nil {
 				return ACL{}, e
 			}
-			if e = chmod(f, after.Mode().Perm()|special); e != nil {
+			if e = r.chmod(f, after.Mode().Perm()|special); e != nil {
 				return ACL{}, e
 			}
 		}

@@ -155,6 +155,26 @@ func (s *leaseBlockingState) Put(key string, value any) error {
 	return err
 }
 
+func (s *leaseBlockingState) Batch(changes []domain.Change) error {
+	if s.enabled && s.creation {
+		for _, change := range changes {
+			if strings.HasPrefix(change.Key, "session/") {
+				close(s.started)
+				<-s.release
+				break
+			}
+		}
+	}
+	for _, change := range changes {
+		if change.Delete {
+			delete(s.records, change.Key)
+		} else {
+			s.records[change.Key] = append([]byte{}, change.Value...)
+		}
+	}
+	return nil
+}
+
 func (s *leaseBlockingState) Get(key string, value any) error {
 	if s.enabled && !s.creation && strings.HasPrefix(key, "session/") {
 		close(s.started)
@@ -179,7 +199,7 @@ func TestSessionLeaseStartsAfterBlockingStateOperation(t *testing.T) {
 				endpoint := "/v1/roots/test/uploads/sessions"
 				body := `{"path":"file","size":0}`
 				if !creation {
-					s, err := x.r.CreateSession("file", 0, domain.WriteOptions{})
+					s, err := x.r.CreateSession("file", 0, domain.WriteOptions{}, "")
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -206,7 +226,10 @@ func TestSessionLeaseStartsAfterBlockingStateOperation(t *testing.T) {
 					if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 						t.Fatal(err)
 					}
-					lease = result.Lease
+					if result.Lease == nil {
+						t.Fatal("open session has no lease")
+					}
+					lease = *result.Lease
 				} else if err := json.Unmarshal(w.Body.Bytes(), &lease); err != nil {
 					t.Fatal(err)
 				}

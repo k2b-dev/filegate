@@ -18,7 +18,7 @@ import (
 
 func createFilledSession(t *testing.T, x *fixture, name, content string) domain.Session {
 	t.Helper()
-	s, e := x.r.CreateSession(name, int64(len(content)), domain.WriteOptions{})
+	s, e := x.r.CreateSession(name, int64(len(content)), domain.WriteOptions{}, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -60,7 +60,7 @@ func TestSessionReceiptSurvivesFileChangesAndOriginalExpiry(t *testing.T) {
 				t.Fatalf("frozen result changed: %+v %+v %v", result, again, e)
 			}
 			receipt, e = x.r.Session(s.ID)
-			if e != nil || receipt.State != domain.SessionCommitted || receipt.Received != 5 || len(receipt.Segments) != 0 {
+			if e != nil || receipt.State != domain.SessionCommitted || receipt.Received != 5 || receipt.UploadedSegments != 1 {
 				t.Fatalf("receipt %+v %v", receipt, e)
 			}
 			if receipt.TerminalAt == nil || receipt.RetainUntil == nil || receipt.RetainUntil.Sub(*receipt.TerminalAt) != domain.SessionRetention {
@@ -289,7 +289,7 @@ func TestInFlightSegmentCannotReopenTerminalSession(t *testing.T) {
 	for _, expire := range []bool{true, false} {
 		t.Run(map[bool]string{true: "expiry", false: "abort"}[expire], func(t *testing.T) {
 			x := setup(t, false, false)
-			s, e := x.r.CreateSession("file", 3, domain.WriteOptions{})
+			s, e := x.r.CreateSession("file", 3, domain.WriteOptions{}, "")
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -317,7 +317,7 @@ func TestInFlightSegmentCannotReopenTerminalSession(t *testing.T) {
 				t.Fatal("accepted segment after terminal state", e)
 			}
 			got, e := x.r.Session(s.ID)
-			if e != nil || got.Received != 0 || len(got.Segments) != 0 {
+			if e != nil || got.Received != 0 || got.UploadedSegments != 0 {
 				t.Fatal(got, e)
 			}
 			if _, e = os.Stat(filepath.Join(x.data, ".filegate/staging", s.ID+"-0")); !errors.Is(e, os.ErrNotExist) {

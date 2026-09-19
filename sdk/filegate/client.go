@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	api "github.com/k2b-dev/filegate/v5/api/v1"
+	"github.com/k2b-dev/filegate/v5/domain"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -19,7 +21,11 @@ type Node = api.Node
 type Page = api.Page
 type RootInfo = api.RootInfo
 type WriteOptions = api.WriteOptions
+type Precondition = api.Precondition
+type ListingOptions = api.ListingOptions
+type DownloadOptions = api.DownloadOptions
 type Ownership = api.Ownership
+type ExecutionIdentity = api.ExecutionIdentity
 type ACLScope = api.ACLScope
 type ACLPermissions = api.ACLPermissions
 type ACLTag = api.ACLTag
@@ -46,6 +52,9 @@ type Metadata = api.Metadata
 type Version = api.Version
 type Session = api.Session
 type SessionStatus = api.SessionStatus
+type SessionSegment = api.SessionSegment
+type SessionSegmentPage = api.SessionSegmentPage
+type SessionCreateOptions = api.SessionCreateOptions
 type SessionState = api.SessionState
 type SessionLease = api.SessionLease
 type SessionLeaseRequest = api.SessionLeaseRequest
@@ -54,6 +63,9 @@ type DirectoryACLs = api.DirectoryACLs
 type ArchiveItem = api.ArchiveItem
 type ArchiveLease = api.ArchiveLease
 type DirectURL = api.DirectURL
+type TransferResult = api.TransferResult
+type TransferRequest = api.TransferRequest
+type VersionCopyRequest = api.VersionCopyRequest
 type SessionCreated = api.SessionCreated
 type APIError struct {
 	Status  int
@@ -66,9 +78,11 @@ func (e *APIError) Error() string {
 }
 
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	base         string
+	token        string
+	http         *http.Client
+	execution    string
+	transferBase string
 }
 type Root struct {
 	client *Client
@@ -80,8 +94,35 @@ func New(base, token string) (*Client, error) {
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" || token == "" {
 		return nil, fmt.Errorf("HTTP(S) origin and token required")
 	}
-	return &Client{strings.TrimRight(base, "/"), token, &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
+
+// WithExecution returns an independent backend client bound to numeric Unix
+// credentials. It never attaches the execution header to direct transfer URLs.
+// Administrative operations do not accept an execution identity.
+func (c *Client) WithExecution(identity ExecutionIdentity) (*Client, error) {
+	normalized, err := domain.NormalizeExecution(&identity)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	scoped := *c
+	scoped.execution = string(encoded)
+	return &scoped, nil
+}
+
+// WithExecution returns an independent root client bound to this identity.
+func (r *Root) WithExecution(identity ExecutionIdentity) (*Root, error) {
+	client, err := r.client.WithExecution(identity)
+	if err != nil {
+		return nil, err
+	}
+	return client.Root(r.name), nil
+}
+
 func (c *Client) Root(name string) *Root { return &Root{c, name} }
 func (c *Client) Raw(ctx context.Context, method, path string, q url.Values, body any) (*http.Response, error) {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
@@ -108,6 +149,9 @@ func (c *Client) Raw(ctx context.Context, method, path string, q url.Values, bod
 		return nil, e
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.execution != "" {
+		req.Header.Set("X-Filegate-Execution", c.execution)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -160,30 +204,41 @@ func (r *Root) Resolve(ctx context.Context, id string) (Node, error) {
 	e := r.client.call(ctx, "GET", r.endpoint("/resolve"), url.Values{"id": {id}}, nil, &v)
 	return v, e
 }
-func (r *Root) List(ctx context.Context, p, after string, limit int) (Page, error) {
+func listingQuery(p string, o ListingOptions) url.Values {
 	q := query(p)
-	q.Set("after", after)
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
+	if o.After != "" {
+		q.Set("after", o.After)
 	}
-	var v Page
-	e := r.client.call(ctx, "GET", r.endpoint("/entries"), q, nil, &v)
-	return v, e
+	if o.Limit != 0 {
+		q.Set("limit", strconv.Itoa(o.Limit))
+	}
+	if o.MaxEntries != 0 {
+		q.Set("maxEntries", strconv.Itoa(o.MaxEntries))
+	}
+	if o.Sort != "" {
+		q.Set("sort", o.Sort)
+	}
+	if o.Order != "" {
+		q.Set("order", o.Order)
+	}
+	if o.Type != "" {
+		q.Set("type", o.Type)
+	}
+	return q
 }
-func (r *Root) Search(ctx context.Context, text, p, after string, limit, maxEntries int) (Page, error) {
-	q := query(p)
+func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, error) {
+	var page Page
+	err := r.client.call(ctx, "GET", r.endpoint("/entries"), listingQuery(p, o), nil, &page)
+	return page, err
+}
+func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
+	var page Page
+	q := listingQuery(p, o)
 	q.Set("q", text)
-	q.Set("after", after)
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	if maxEntries > 0 {
-		q.Set("maxEntries", strconv.Itoa(maxEntries))
-	}
-	var v Page
-	e := r.client.call(ctx, "GET", r.endpoint("/search"), q, nil, &v)
-	return v, e
+	err := r.client.call(ctx, "GET", r.endpoint("/search"), q, nil, &page)
+	return page, err
 }
+
 func (r *Root) ContentRaw(ctx context.Context, p string) (*http.Response, error) {
 	return r.client.Raw(ctx, "GET", r.endpoint("/content"), query(p), nil)
 }
@@ -197,8 +252,8 @@ func (r *Root) Remove(ctx context.Context, p string, recursive bool) error {
 	q.Set("recursive", strconv.FormatBool(recursive))
 	return r.client.call(ctx, "DELETE", r.endpoint("/files"), q, nil, nil)
 }
-func (r *Root) Transfer(ctx context.Context, req api.TransferRequest) (Node, error) {
-	var v Node
+func (r *Root) Transfer(ctx context.Context, req TransferRequest) (TransferResult, error) {
+	var v TransferResult
 	e := r.client.call(ctx, "POST", r.endpoint("/transfers"), nil, req, &v)
 	return v, e
 }
@@ -207,23 +262,23 @@ func (r *Root) DirectUpload(ctx context.Context, p string, size int64, o WriteOp
 	e := r.client.call(ctx, "POST", r.endpoint("/uploads/direct"), nil, api.DirectRequest{Path: p, Size: size, WriteOptions: o, ExpiresIn: expiresIn}, &v)
 	return v, e
 }
-func (r *Root) DirectDownload(ctx context.Context, p string, expiresIn int) (DirectURL, error) {
+func (r *Root) DirectDownload(ctx context.Context, p string, options DownloadOptions) (DirectURL, error) {
 	var v DirectURL
-	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, api.DownloadRequest{Path: p, DownloadOptions: options}, &v)
 	return v, e
 }
 
 // DirectVersionDownload issues a GET/HEAD lease for exactly one historical version.
-func (r *Root) DirectVersionDownload(ctx context.Context, p, id string, expiresIn int) (DirectURL, error) {
+func (r *Root) DirectVersionDownload(ctx context.Context, p, id string, options DownloadOptions) (DirectURL, error) {
 	var v DirectURL
-	e := r.client.call(ctx, "POST", r.endpoint("/versions/"+url.PathEscape(id)+"/downloads/direct"), nil, api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/versions/"+url.PathEscape(id)+"/downloads/direct"), nil, api.DownloadRequest{Path: p, DownloadOptions: options}, &v)
 	return v, e
 }
 
 // DirectThumbnail issues a GET/HEAD lease with fixed dimensions (1–2048 each).
 func (r *Root) DirectThumbnail(ctx context.Context, p string, width, height, expiresIn int) (DirectURL, error) {
 	var v DirectURL
-	e := r.client.call(ctx, "POST", r.endpoint("/thumbnail/direct"), nil, api.ThumbnailRequest{DownloadRequest: api.DownloadRequest{Path: p, ExpiresIn: expiresIn}, Width: &width, Height: &height}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/thumbnail/direct"), nil, api.ThumbnailRequest{Path: p, ExpiresIn: expiresIn, Width: &width, Height: &height}, &v)
 	return v, e
 }
 func (r *Root) Put(ctx context.Context, p string, body io.Reader, size int64, o WriteOptions) (Node, error) {
@@ -231,7 +286,11 @@ func (r *Root) Put(ctx context.Context, p string, body io.Reader, size int64, o 
 	if e != nil {
 		return Node{}, e
 	}
-	return PutDirect(ctx, u.URL, body, size)
+	transferURL, e := r.client.TransferURL(u.URL)
+	if e != nil {
+		return Node{}, e
+	}
+	return PutDirect(ctx, transferURL, body, size)
 }
 func PutDirect(ctx context.Context, u string, body io.Reader, size int64) (Node, error) {
 	var v Node
@@ -250,9 +309,9 @@ func PutDirect(ctx context.Context, u string, body io.Reader, size int64) (Node,
 
 var directHTTP = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-func (r *Root) CreateSession(ctx context.Context, p string, size int64, o WriteOptions, lease SessionLeaseRequest) (SessionCreated, error) {
+func (r *Root) CreateSession(ctx context.Context, p string, size int64, o WriteOptions, options SessionCreateOptions) (SessionCreated, error) {
 	var v SessionCreated
-	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions"), nil, api.SessionRequest{Path: p, Size: size, WriteOptions: o, SessionLeaseRequest: lease}, &v)
+	e := r.client.call(ctx, "POST", r.endpoint("/uploads/sessions"), nil, api.SessionRequest{Path: p, Size: size, WriteOptions: o, SessionCreateOptions: options}, &v)
 	return v, e
 }
 
@@ -399,10 +458,121 @@ func (c *Client) ArchiveLease(ctx context.Context, items []ArchiveItem, expiresI
 // ArchiveRaw streams the signed archive response without attaching backend credentials.
 // Non-success responses are returned unchanged; the caller closes the response body.
 func (c *Client) ArchiveRaw(ctx context.Context, lease ArchiveLease) (*http.Response, error) {
-	req, e := http.NewRequestWithContext(ctx, "POST", lease.URL, strings.NewReader(url.Values{"manifest": {lease.Manifest}}.Encode()))
+	transferURL, e := c.TransferURL(lease.URL)
+	if e != nil {
+		return nil, e
+	}
+	req, e := http.NewRequestWithContext(ctx, "POST", transferURL, strings.NewReader(url.Values{"manifest": {lease.Manifest}}.Encode()))
 	if e != nil {
 		return nil, e
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return directHTTP.Do(req)
+}
+
+// SessionSegments returns acknowledged chunks after an exclusive numeric index.
+func (r *Root) SessionSegments(ctx context.Context, id string, after, limit int) (SessionSegmentPage, error) {
+	var page SessionSegmentPage
+	err := r.client.call(ctx, "GET", r.endpoint("/uploads/sessions/"+url.PathEscape(id)+"/segments"), url.Values{"after": {strconv.Itoa(after)}, "limit": {strconv.Itoa(limit)}}, nil, &page)
+	return page, err
+}
+func (s DirectSession) Segments(ctx context.Context, after, limit int) (SessionSegmentPage, error) {
+	var page SessionSegmentPage
+	parsed, err := url.Parse(s.URL)
+	if err != nil {
+		return page, err
+	}
+	query := parsed.Query()
+	query.Set("segments", "1")
+	query.Set("after", strconv.Itoa(after))
+	query.Set("limit", strconv.Itoa(limit))
+	parsed.RawQuery = query.Encode()
+	scoped := DirectSession{URL: parsed.String()}
+	err = scoped.call(ctx, "GET", -1, nil, &page)
+	return page, err
+}
+
+// RecursiveStats observes one bounded subtree; it does not update the root cache.
+func (r *Root) RecursiveStats(ctx context.Context, p string, maxEntries int) (api.Stats, error) {
+	var stats api.Stats
+	q := query(p)
+	q.Set("maxEntries", strconv.Itoa(maxEntries))
+	err := r.client.call(ctx, "POST", r.endpoint("/stats/refresh"), q, nil, &stats)
+	return stats, err
+}
+
+// WithTransferBaseURL selects an explicitly trusted internal transfer origin.
+// Backend requests and public lease URLs remain unchanged.
+func (c *Client) WithTransferBaseURL(origin string) (*Client, error) {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return nil, fmt.Errorf("transfer base URL must be an HTTP(S) origin")
+	}
+	scoped := *c
+	scoped.transferBase = strings.TrimRight(origin, "/")
+	return &scoped, nil
+}
+
+var scopedTransferPath = regexp.MustCompile(`^/v1/direct/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
+
+// TransferURL maps a Filegate-issued signed lease to the configured origin.
+// It is not an endpoint for importing arbitrary remote URLs.
+func (c *Client) TransferURL(leaseURL string) (string, error) {
+	u, err := url.Parse(leaseURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || !scopedTransferPath.MatchString(u.EscapedPath()) {
+		return "", fmt.Errorf("expected a signed Filegate transfer URL")
+	}
+	if c.transferBase == "" {
+		return leaseURL, nil
+	}
+	destination, _ := url.Parse(c.transferBase)
+	u.Scheme, u.Host = destination.Scheme, destination.Host
+	return u.String(), nil
+}
+
+// DownloadRaw sends no backend credentials and preserves non-success responses.
+func (c *Client) DownloadRaw(ctx context.Context, lease DirectURL) (*http.Response, error) {
+	target, err := c.TransferURL(lease.URL)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return nil, err
+	}
+	return directHTTP.Do(request)
+}
+
+// DirectSession uses the configured internal transfer origin for server uploads.
+func (c *Client) DirectSession(lease SessionLease) (DirectSession, error) {
+	target, err := c.TransferURL(lease.URL)
+	return DirectSession{URL: target}, err
+}
+
+// Stats returns nil when no cached root observation is available.
+func (r *Root) Stats(ctx context.Context) (*api.Stats, error) {
+	var stats *api.Stats
+	err := r.client.call(ctx, "GET", r.endpoint("/stats"), nil, nil, &stats)
+	return stats, err
+}
+
+func (r *Root) TransferStatus(ctx context.Context, id string) (TransferResult, error) {
+	var result TransferResult
+	err := r.client.call(ctx, "GET", r.endpoint("/transfers/"+url.PathEscape(id)), nil, nil, &result)
+	return result, err
+}
+func (r *Root) ResumeTransfer(ctx context.Context, id string) (TransferResult, error) {
+	var result TransferResult
+	err := r.client.call(ctx, "POST", r.endpoint("/transfers/"+url.PathEscape(id)+"/resume"), nil, nil, &result)
+	return result, err
+}
+func (r *Root) AbandonTransfer(ctx context.Context, id string) (TransferResult, error) {
+	var result TransferResult
+	err := r.client.call(ctx, "POST", r.endpoint("/transfers/"+url.PathEscape(id)+"/abandon"), nil, nil, &result)
+	return result, err
+}
+func (r *Root) CopyVersion(ctx context.Context, id string, request VersionCopyRequest) (Node, error) {
+	var node Node
+	err := r.client.call(ctx, "POST", r.endpoint("/versions/"+url.PathEscape(id)+"/copy"), nil, request, &node)
+	return node, err
 }

@@ -12,7 +12,12 @@ its TypeScript or Go client from your application backend.
   backend-controlled publication and durable completion receipts.
 - Directory creation with Unix ownership, setgid and POSIX access/default ACLs
   in one request.
-- Directory browsing, bounded search, thumbnails, ZIP selection downloads and transfers.
+- Optional backend-bound Unix execution identities for file operations and direct
+  transfers; requires explicit root-service configuration.
+- Sorted, filtered cursor browsing and directory observations with completeness.
+- Conditional publication on roots written exclusively through Filegate.
+- Historical copies, atomic directory-copy publication and recoverable cross-root moves.
+- Bounded thumbnails and ZIP selection downloads.
 - Dashboard metadata through the API.
 
 The application authenticates users and authorizes their file access. Filegate

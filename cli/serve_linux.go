@@ -22,6 +22,11 @@ import (
 )
 
 func serve(parent context.Context, c Config) error {
+	for _, r := range c.Roots {
+		if r.Execution && os.Geteuid() != 0 {
+			return fmt.Errorf("root %s: execution requires an explicitly configured root service; the default filegate service cannot switch Unix identities", r.Name)
+		}
+	}
 	token, e := c.token()
 	if e != nil {
 		return e
@@ -64,7 +69,7 @@ func serve(parent context.Context, c Config) error {
 			return e
 		}
 		duration, _ := time.ParseDuration(r.Versioning.Cooldown)
-		root, e := domain.NewRoot(domain.RootConfig{Name: r.Name, Path: r.Path, Index: r.Index, Versioning: domain.Versioning{Enabled: r.Versioning.Enabled, Cooldown: duration, Keep: *r.Versioning.Keep}}, f, s, c.maxBytes)
+		root, e := domain.NewRoot(domain.RootConfig{Managed: r.Managed, Execution: r.Execution, Name: r.Name, Path: r.Path, Index: r.Index, Versioning: domain.Versioning{Enabled: r.Versioning.Enabled, Cooldown: duration, Keep: *r.Versioning.Keep}}, f, s, c.maxBytes)
 		if e != nil {
 			s.Close()
 			f.Close()

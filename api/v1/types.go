@@ -12,22 +12,27 @@ type RootInfo = domain.RootInfo
 type Version = domain.Version
 type Session = domain.Session
 type SessionStatus struct {
-	ID          string         `json:"id"`
-	Root        string         `json:"root"`
-	Size        int64          `json:"size"`
-	ChunkSize   int64          `json:"chunkSize"`
-	Expires     time.Time      `json:"expires"`
-	State       SessionState   `json:"state"`
-	Segments    map[int]string `json:"segments"`
-	Received    int64          `json:"received"`
-	TerminalAt  *time.Time     `json:"terminalAt,omitempty"`
-	RetainUntil *time.Time     `json:"retainUntil,omitempty"`
+	ID               string       `json:"id"`
+	Root             string       `json:"root"`
+	Size             int64        `json:"size"`
+	ChunkSize        int64        `json:"chunkSize"`
+	Expires          time.Time    `json:"expires"`
+	State            SessionState `json:"state"`
+	UploadedSegments int          `json:"uploadedSegments"`
+	Received         int64        `json:"received"`
+	TerminalAt       *time.Time   `json:"terminalAt,omitempty"`
+	RetainUntil      *time.Time   `json:"retainUntil,omitempty"`
 }
+type SessionSegment = domain.SessionSegment
+type SessionSegmentPage = domain.SessionSegmentPage
 type SessionState = domain.SessionState
 type DirectoryOptions = domain.DirectoryOptions
 type DirectoryACLs = domain.DirectoryACLs
 type WriteOptions = domain.WriteOptions
+type Precondition = domain.Precondition
+type ListingOptions = domain.ListingOptions
 type Ownership = domain.Ownership
+type ExecutionIdentity = domain.ExecutionIdentity
 type ACLScope = domain.ACLScope
 type ACLPermissions = domain.ACLPermissions
 type ACLTag = domain.ACLTag
@@ -62,16 +67,21 @@ type DirectRequest struct {
 	ExpiresIn int    `json:"expiresIn,omitempty"`
 	WriteOptions
 }
-type DownloadRequest struct {
-	Path      string `json:"path"`
+type DownloadOptions struct {
 	ExpiresIn int    `json:"expiresIn,omitempty"`
+	FileName  string `json:"fileName,omitempty"`
+}
+type DownloadRequest struct {
+	Path string `json:"path"`
+	DownloadOptions
 }
 
 // ThumbnailRequest uses 256 for omitted dimensions; explicit zero is invalid.
 type ThumbnailRequest struct {
-	DownloadRequest
-	Width  *int `json:"width,omitempty"`
-	Height *int `json:"height,omitempty"`
+	Path      string `json:"path"`
+	ExpiresIn int    `json:"expiresIn,omitempty"`
+	Width     *int   `json:"width,omitempty"`
+	Height    *int   `json:"height,omitempty"`
 }
 type DirectURL struct {
 	URL     string    `json:"url"`
@@ -87,21 +97,34 @@ type SessionLease struct {
 	Expires    time.Time `json:"expires"`
 	Operations []string  `json:"operations"`
 }
+type SessionCreateOptions struct {
+	ExpiresIn      int    `json:"expiresIn,omitempty"`
+	AllowAbort     bool   `json:"allowAbort,omitempty"`
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+}
 type SessionRequest struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
 	WriteOptions
-	SessionLeaseRequest
+	SessionCreateOptions
 }
 type SessionCreated struct {
-	Session Session      `json:"session"`
-	Lease   SessionLease `json:"lease"`
+	Session Session       `json:"session"`
+	Lease   *SessionLease `json:"lease,omitempty"`
 }
 type MkdirRequest struct {
 	Path string `json:"path"`
 	DirectoryOptions
 }
+type TransferResult = domain.TransferResult
+type VersionCopyRequest struct {
+	Path       string `json:"path"`
+	TargetRoot string `json:"targetRoot"`
+	TargetPath string `json:"targetPath"`
+	WriteOptions
+}
 type TransferRequest struct {
+	ID         string `json:"id,omitempty"`
 	Path       string `json:"path"`
 	TargetRoot string `json:"targetRoot"`
 	TargetPath string `json:"targetPath"`
