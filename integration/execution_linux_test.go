@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v5/domain"
-	"github.com/k2b-dev/filegate/v5/infra/filesystem"
+	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v6/infra/filesystem"
 )
 
 func TestMain(m *testing.M) {

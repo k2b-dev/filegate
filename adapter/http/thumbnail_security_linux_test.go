@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v5/domain"
-	"github.com/k2b-dev/filegate/v5/infra/filesystem"
-	"github.com/k2b-dev/filegate/v5/infra/pebble"
+	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v6/infra/filesystem"
+	"github.com/k2b-dev/filegate/v6/infra/pebble"
 )
 
 type deniedThumbnailFiles struct{ domain.Files }

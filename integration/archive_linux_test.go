@@ -18,9 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	httpadapter "github.com/k2b-dev/filegate/v5/adapter/http"
-	api "github.com/k2b-dev/filegate/v5/api/v1"
-	"github.com/k2b-dev/filegate/v5/domain"
+	httpadapter "github.com/k2b-dev/filegate/v6/adapter/http"
+	api "github.com/k2b-dev/filegate/v6/api/v1"
+	"github.com/k2b-dev/filegate/v6/domain"
 )
 
 func archiveServer(t *testing.T, roots ...*domain.Root) *httptest.Server {

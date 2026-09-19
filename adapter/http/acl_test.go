@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	api "github.com/k2b-dev/filegate/v5/api/v1"
-	"github.com/k2b-dev/filegate/v5/domain"
+	api "github.com/k2b-dev/filegate/v6/api/v1"
+	"github.com/k2b-dev/filegate/v6/domain"
 )
 
 func TestACLErrorsAreDistinctAndDoNotExposeHostPaths(t *testing.T) {

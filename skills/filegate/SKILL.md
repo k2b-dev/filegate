@@ -91,7 +91,7 @@ header. This is not an arbitrary URL import facility.
 
 ## Go API
 
-Import `github.com/k2b-dev/filegate/v5/sdk/filegate`; the SDK is portable, the
+Import `github.com/k2b-dev/filegate/v6/sdk/filegate`; the SDK is portable, the
 daemon Linux-only. HTTP request envelopes also live in `api/v1`.
 
 ```go

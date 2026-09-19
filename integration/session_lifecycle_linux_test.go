@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k2b-dev/filegate/v5/domain"
+	"github.com/k2b-dev/filegate/v6/domain"
 )
 
 func createFilledSession(t *testing.T, x *fixture, name, content string) domain.Session {

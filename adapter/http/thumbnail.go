@@ -14,7 +14,7 @@ import (
 	"sync"
 
 	"github.com/disintegration/imaging"
-	"github.com/k2b-dev/filegate/v5/domain"
+	"github.com/k2b-dev/filegate/v6/domain"
 )
 
 var thumbnailSlots = make(chan struct{}, 4)

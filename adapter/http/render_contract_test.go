@@ -15,7 +15,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/k2b-dev/filegate/v5/domain"
+	"github.com/k2b-dev/filegate/v6/domain"
 )
 
 func TestDownloadDispositionRoundTripAndInjection(t *testing.T) {
