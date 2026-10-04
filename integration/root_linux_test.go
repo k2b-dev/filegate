@@ -5,9 +5,9 @@ package integration_test
 import (
 	"context"
 	"errors"
-	"github.com/k2b-dev/filegate/v6/domain"
-	"github.com/k2b-dev/filegate/v6/infra/filesystem"
-	"github.com/k2b-dev/filegate/v6/infra/pebble"
+	"github.com/k2b-dev/filegate/v7/domain"
+	"github.com/k2b-dev/filegate/v7/infra/filesystem"
+	"github.com/k2b-dev/filegate/v7/infra/pebble"
 	"io"
 	"os"
 	"path/filepath"
@@ -93,6 +93,7 @@ func reopen(t *testing.T, x *fixture) {
 }
 func TestVersionsMetadataCooldownRestoreAndRebuild(t *testing.T) {
 	x := setup(t, true, true)
+	x.r.Config.Managed = true
 	a := put(t, x.r, "a", "A", domain.WriteOptions{Metadata: domain.Metadata{"message": "A"}})
 	vs, e := x.r.Versions("a")
 	if e != nil || len(vs) != 0 {

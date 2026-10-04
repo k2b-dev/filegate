@@ -13,8 +13,9 @@ All `/v1/*` routes require `Authorization: Bearer TOKEN`, except signed
 uses snake_case. Unknown JSON fields are rejected.
 
 Root operations have prefix `/v1/roots/{root}`. A `path` query parameter is a
-relative path; `.` addresses the root where supported. Indexed roots also
-provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
+relative path; `.` addresses the root where supported. Roots advertise
+`stableIds: true` only when both indexing and managed writers are enabled.
+Use `GET /resolve?id=ID` to find a file or directory's current path on those roots.
 
 | Method and suffix | Input | Result |
 | --- | --- | --- |
@@ -22,10 +23,10 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `GET /v1/roots` | — | Root information array. |
 | `GET /v1/roots/{root}` | — | Root information. |
 | `GET /stat` | `path` | Node. |
-| `GET /resolve` | `id` | Node, indexed roots only. |
+| `GET /resolve` | `id` | Current Node; requires `stableIds`. |
 | `GET /entries` | `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | `{items,next?}`. |
 | `GET /search` | `q`, `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | Filename substring matches. |
-| `GET /content` | `path`, optional `fileName` | File bytes, Range/HEAD supported. |
+| `GET /content` | Exactly one of `path` or `fileId`; optional `fileName` | File bytes, Range/HEAD supported. ID reads require `stableIds`. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
 | `PATCH /ownership` | `path`; body `{uid?,gid?,mode?,dirMode?}` | Updated Node. |
@@ -35,7 +36,7 @@ provide file IDs. Use `GET /resolve?id=ID` to find a file's current path.
 | `DELETE /files` | `path`, `recursive` | 204. |
 | `POST /transfers` | `{path,targetRoot,targetPath,move?,id?,targetExecution?,...WriteOptions}` | `TransferResult`; 202 when pending. |
 | `POST /uploads/direct` | `{path,size,expiresIn?,...WriteOptions}` | `{url,method,expires}`. |
-| `POST /downloads/direct` | `{path,expiresIn?,fileName?}` | `{url,method,expires}`. |
+| `POST /downloads/direct` | `{path?,fileId?,expiresIn?,fileName?}`; exactly one selector | `{url,method,expires}`. ID selector requires `stableIds`. |
 | `POST /versions/{id}/downloads/direct` | `{path,expiresIn?,fileName?}` | Version lease: `{url,method:"GET",expires}`. |
 | `POST /thumbnail/direct` | `{path,width?,height?,expiresIn?}` | Thumbnail lease: `{url,method:"GET",expires}`. |
 | `POST /uploads/sessions` | `{path,size,expiresIn?,allowAbort?,idempotencyKey?,...WriteOptions}` | `{session,lease?}`. |
@@ -65,6 +66,11 @@ describes cursor validity, sorting/filtering and completeness.
 Listing revisions may be absent or stale; use current stat or current-content
 ETag when selecting an `ifMatch` condition.
 
+`Node.id` and `Version.fileId` are present only on roots with `stableIds: true`.
+Versioning can still operate on indexed unmanaged roots; their version IDs
+(`Version.id`) remain present. `stableIds` is a computed root capability, not a
+configuration setting. See [stable IDs and migration](/docs/en/stable-ids).
+
 `WriteOptions` contains optional `onConflict`, `ownership`, `accessACL`, `metadata`
 and `precondition`. An explicit `accessACL` replaces the destination file's access
 ACL; a requested mode is applied afterward and can change its effective mask.
@@ -86,6 +92,35 @@ Additional transfer and segment routes use the same root prefix:
 `TransferResult` has `state`, optional `node`, `id` and `sourceRoot`. Cross-root
 moves require an application-generated UUID `id` and two managed roots. Copies
 and same-root moves reject `id`. See [transfer recovery](/docs/en/transfers).
+
+## Stable ID selectors
+
+`GET` or `HEAD /v1/roots/{root}/content` accepts exactly one nonempty `path` or
+`fileId` query parameter. `POST /v1/roots/{root}/downloads/direct` accepts exactly
+one nonempty selector in its JSON body:
+
+```json
+{"fileId":"019b72cf-5200-7000-8000-000000000001","expiresIn":60}
+```
+
+Both selectors identify a regular file. The ID selector requires
+`stableIds: true`; resolution, file open and identity verification happen under
+one root lock. Passing both selectors, neither selector or a malformed UUID
+returns `400 invalid_argument`. UUIDs must use canonical lowercase hyphenated form;
+existing IDs remain valid regardless of UUID version. Repeated selector query
+parameters and supplying both query keys even when one is empty also return 400.
+An ID operation on a root without stable IDs returns
+`409 feature_disabled`; an unknown or deleted identity returns `404 not_found`.
+The existing `GET /resolve?id=ID` also supports directory IDs.
+
+A download lease issued by ID signs the resolved path and file ID. Each GET/HEAD
+checks the identity of the file opened at that signed path. A moved file or a
+replacement with a different identity returns `404 not_found`; issue another
+lease by ID to use the current path. Content changes that retain the identity
+remain available through the lease. Path-issued leases continue to serve the
+contents found at their signed path when requested. Query parameters cannot
+override a signed selector. All selectors retain the usual backend
+authentication, application authorization and Unix execution checks.
 
 ## Unix execution header
 

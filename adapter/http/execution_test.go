@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 func TestExecutionHeaderStrictAndNormalized(t *testing.T) {

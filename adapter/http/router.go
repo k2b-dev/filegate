@@ -1,4 +1,3 @@
-// Package httpadapter exposes authenticated root-scoped REST and signed transfers.
 package httpadapter
 
 import (
@@ -11,8 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
 	"io"
 	"net/http"
 	"os"
@@ -43,6 +42,7 @@ type Handler struct {
 }
 type capability struct {
 	FileName     string                    `json:"fileName,omitempty"`
+	FileID       string                    `json:"fileId,omitempty"`
 	Root         string                    `json:"root"`
 	Path         string                    `json:"path"`
 	Purpose      string                    `json:"purpose"`
@@ -265,21 +265,21 @@ func (h *Handler) routes() {
 	h.route("GET /v1/roots/{root}", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Info()
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/index", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Info()
 		if e == nil {
-			send(w, 200, v.Index)
+			h.sendRoot(w, root, 200, v.Index)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/stats", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Info()
 		if e == nil {
-			send(w, 200, v.Stats)
+			h.sendRoot(w, root, 200, v.Stats)
 		}
 		return e
 	})
@@ -290,7 +290,7 @@ func (h *Handler) routes() {
 		}
 		n, e := root.SetOwnership(r.URL.Query().Get("path"), &o)
 		if e == nil {
-			send(w, 200, n)
+			h.sendRoot(w, root, 200, n)
 		}
 		return e
 	})
@@ -300,7 +300,7 @@ func (h *Handler) routes() {
 		}
 		v, e := root.GetACL(r.URL.Query().Get("path"), domain.ACLScope(r.URL.Query().Get("scope")))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
@@ -314,7 +314,7 @@ func (h *Handler) routes() {
 		}
 		v, e := root.SetACL(r.URL.Query().Get("path"), domain.ACLScope(r.URL.Query().Get("scope")), acl)
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
@@ -335,33 +335,37 @@ func (h *Handler) routes() {
 		v, e := root.Stat(r.URL.Query().Get("path"))
 		if e == nil {
 			setETag(w, v)
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/resolve", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Resolve(r.URL.Query().Get("id"))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/entries", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.List(r.Context(), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/search", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/content", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		return content(w, r, root, r.URL.Query().Get("path"), r.URL.Query().Get("fileName"))
+		query := r.URL.Query()
+		if len(query["path"]) > 1 || len(query["fileId"]) > 1 || query.Has("path") && query.Has("fileId") {
+			return domain.ErrInvalid
+		}
+		return referencedContent(w, r, root, query.Get("path"), query.Get("fileId"), query.Get("fileName"), false)
 	})
 	h.route("POST /v1/roots/{root}/directories", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		var q api.MkdirRequest
@@ -370,7 +374,7 @@ func (h *Handler) routes() {
 		}
 		v, e := root.Mkdir(q.Path, q.DirectoryOptions)
 		if e == nil {
-			send(w, 201, v)
+			h.sendRoot(w, root, 201, v)
 		}
 		return e
 	})
@@ -398,7 +402,7 @@ func (h *Handler) routes() {
 		if q.Move && root.Config.Name != dst.Config.Name {
 			result, err := domain.TransferMove(r.Context(), root, q.Path, dst, q.TargetPath, q.WriteOptions, q.ID)
 			if err == nil {
-				sendTransferResult(w, result)
+				h.sendTransferResult(w, result)
 			}
 			return err
 		}
@@ -407,14 +411,14 @@ func (h *Handler) routes() {
 		}
 		n, err := domain.Transfer(r.Context(), root, q.Path, dst, q.TargetPath, q.Move, q.WriteOptions)
 		if err == nil {
-			sendTransferResult(w, domain.TransferResult{Node: &n, State: domain.TransferCompleted})
+			h.sendTransferResult(w, domain.TransferResult{Node: &n, State: domain.TransferCompleted})
 		}
 		return err
 	})
 	h.route("GET /v1/roots/{root}/transfers/{transfer}", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		result, err := root.TransferStatus(r.PathValue("transfer"))
 		if err == nil {
-			sendTransferResult(w, result)
+			h.sendTransferResult(w, result)
 		}
 		return err
 	})
@@ -429,14 +433,14 @@ func (h *Handler) routes() {
 		}
 		result, err := domain.ResumeTransfer(r.Context(), source, root, status.ID)
 		if err == nil {
-			sendTransferResult(w, result)
+			h.sendTransferResult(w, result)
 		}
 		return err
 	})
 	h.route("POST /v1/roots/{root}/transfers/{transfer}/abandon", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		result, err := root.AbandonTransfer(r.PathValue("transfer"))
 		if err == nil {
-			sendTransferResult(w, result)
+			h.sendTransferResult(w, result)
 		}
 		return err
 	})
@@ -448,7 +452,7 @@ func (h *Handler) routes() {
 			if ie != nil {
 				return ie
 			}
-			send(w, 200, v.Index)
+			h.sendRoot(w, root, 200, v.Index)
 		}
 		return e
 	})
@@ -461,21 +465,21 @@ func (h *Handler) routes() {
 			v, e = root.RefreshStats(r.Context(), paramInt(r, "maxEntries", 100000))
 		}
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
 	h.route("POST /v1/roots/{root}/versions/prune", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		n, e := root.Prune(r.Context())
 		if e == nil {
-			send(w, 200, map[string]int{"deleted": n})
+			h.sendRoot(w, root, 200, map[string]int{"deleted": n})
 		}
 		return e
 	})
 	h.route("GET /v1/roots/{root}/versions", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Versions(r.URL.Query().Get("path"))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
@@ -486,7 +490,7 @@ func (h *Handler) routes() {
 		}
 		v, e := root.Snapshot(r.URL.Query().Get("path"), q.Pinned, q.Metadata)
 		if e == nil {
-			send(w, 201, v)
+			h.sendRoot(w, root, 201, v)
 		}
 		return e
 	})
@@ -497,7 +501,7 @@ func (h *Handler) routes() {
 		}
 		v, e := root.UpdateVersion(r.URL.Query().Get("path"), r.PathValue("version"), q.Pinned, q.Metadata)
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
@@ -525,14 +529,14 @@ func (h *Handler) routes() {
 		node, err := domain.CopyVersion(r.Context(), root, q.Path, r.PathValue("version"), destination, q.TargetPath, q.WriteOptions)
 		if err == nil {
 			setETag(w, node)
-			send(w, http.StatusCreated, node)
+			h.sendRoot(w, root, http.StatusCreated, node)
 		}
 		return err
 	})
 	h.route("POST /v1/roots/{root}/versions/{version}/restore", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.Restore(r.URL.Query().Get("path"), r.PathValue("version"))
 		if e == nil {
-			send(w, 200, v)
+			h.sendRoot(w, root, 200, v)
 		}
 		return e
 	})
@@ -553,24 +557,39 @@ func (h *Handler) routes() {
 	h.archiveRoutes()
 	h.route("GET /v1/roots/{root}/thumbnail", thumbnail)
 }
-func content(w http.ResponseWriter, r *http.Request, root *domain.Root, p, fileName string) error {
-	if fileName == "" {
-		fileName = defaultDownloadName(p)
+func referencedContent(w http.ResponseWriter, r *http.Request, root *domain.Root, p, fileID, fileName string, bound bool) error {
+	if !bound && (p == "") == (fileID == "") {
+		return domain.ErrInvalid
 	}
-	if err := ValidateDownloadName(fileName); err != nil {
-		return err
+	if fileName != "" {
+		if err := ValidateDownloadName(fileName); err != nil {
+			return err
+		}
 	}
-	f, node, err := root.OpenWithNode(p)
+	var f *os.File
+	var node domain.Node
+	var err error
+	switch {
+	case fileID != "" && bound:
+		f, node, err = root.OpenWithID(p, fileID)
+	case fileID != "":
+		f, node, err = root.OpenByID(fileID)
+	default:
+		f, node, err = root.OpenWithNode(p)
+	}
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if fileName == "" {
+		fileName = defaultDownloadName(node.Path)
+	}
 	if err := setDownloadDisposition(w, fileName); err != nil {
 		return err
 	}
 	setETag(w, node)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeContent(w, r, path.Base(p), node.Modified, f)
+	http.ServeContent(w, r, path.Base(node.Path), node.Modified, f)
 	return nil
 }
 func setETag(w http.ResponseWriter, node domain.Node) {
@@ -766,11 +785,20 @@ func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *dom
 			return e
 		}
 	}
-	p, e := domain.CleanPath(q.Path)
-	if e != nil {
-		return e
+	if (q.Path == "") == (q.FileID == "") {
+		return domain.ErrInvalid
 	}
-	f, e := root.Open(p)
+	var f *os.File
+	var node domain.Node
+	var e error
+	if q.FileID != "" {
+		f, node, e = root.OpenByID(q.FileID)
+	} else {
+		node.Path, e = domain.CleanPath(q.Path)
+		if e == nil {
+			f, e = root.Open(node.Path)
+		}
+	}
 	if e != nil {
 		return e
 	}
@@ -782,7 +810,7 @@ func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *dom
 	if !st.Mode().IsRegular() {
 		return domain.ErrInvalid
 	}
-	return h.issueDownload(w, capability{Execution: root.Execution(), Root: root.Config.Name, Path: p, Purpose: "download", FileName: q.FileName}, q.ExpiresIn)
+	return h.issueDownload(w, capability{Execution: root.Execution(), Root: root.Config.Name, Path: node.Path, FileID: q.FileID, Purpose: "download", FileName: q.FileName}, q.ExpiresIn)
 }
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	var q api.SessionRequest
@@ -805,7 +833,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, root *do
 		}
 		lease = &minted
 	}
-	send(w, 201, api.SessionCreated{Session: s, Lease: lease})
+	h.sendRoot(w, root, 201, api.SessionCreated{Session: s, Lease: lease})
 	return nil
 }
 
@@ -831,7 +859,7 @@ func (h *Handler) sessionLease(s domain.Session, seconds int, allowAbort bool) (
 func (h *Handler) sessionStatus(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	s, e := root.Session(r.PathValue("session"))
 	if e == nil {
-		send(w, 200, s)
+		h.sendRoot(w, root, 200, s)
 	}
 	return e
 }
@@ -864,7 +892,7 @@ func (h *Handler) renewSessionLease(w http.ResponseWriter, r *http.Request, root
 	if e != nil {
 		return e
 	}
-	send(w, 201, lease)
+	h.sendRoot(w, root, 201, lease)
 	return nil
 }
 
@@ -881,7 +909,7 @@ func (h *Handler) commitSession(w http.ResponseWriter, r *http.Request, root *do
 	n, e := root.CommitSession(r.Context(), r.PathValue("session"))
 	if e == nil {
 		setETag(w, n)
-		send(w, 200, n)
+		h.sendRoot(w, root, 200, n)
 	}
 	return e
 }
@@ -960,14 +988,14 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 		n, e = root.Put(r.Context(), c.Path, &exactReader{r: http.MaxBytesReader(w, r.Body, c.Size), remaining: c.Size}, c.Options)
 		if e == nil {
 			setETag(w, n)
-			send(w, 201, n)
+			h.sendRoot(w, root, 201, n)
 		}
 	case "download":
 		if r.Method != "GET" && r.Method != "HEAD" {
 			e = errHTTP{405, "method_not_allowed"}
 			break
 		}
-		e = content(w, r, root, c.Path, c.FileName)
+		e = referencedContent(w, r, root, c.Path, c.FileID, c.FileName, true)
 	case "version":
 		e = versionContent(w, r, root, c.Path, c.Version, c.FileName)
 	case "thumbnail":
@@ -986,13 +1014,13 @@ func (h *Handler) direct(w http.ResponseWriter, r *http.Request) {
 			var s domain.Session
 			s, e = root.Session(c.Session)
 			if e == nil {
-				send(w, 200, publicSession(s))
+				h.sendRoot(w, root, 200, publicSession(s))
 			}
 		case "PUT":
 			var s domain.Session
 			s, e = root.PutSegment(r.Context(), c.Session, paramInt(r, "segment", -1), r.Body)
 			if e == nil {
-				send(w, 200, publicSession(s))
+				h.sendRoot(w, root, 200, publicSession(s))
 			}
 		case "DELETE":
 			e = root.AbortSession(c.Session)
@@ -1075,7 +1103,7 @@ func (h *Handler) sendSessionSegments(w http.ResponseWriter, r *http.Request, ro
 	return err
 }
 
-func sendTransferResult(w http.ResponseWriter, result domain.TransferResult) {
+func (h *Handler) sendTransferResult(w http.ResponseWriter, result domain.TransferResult) {
 	status := http.StatusOK
 	if result.State == domain.TransferPrepared || result.State == domain.TransferSourcePending {
 		status = http.StatusAccepted
@@ -1083,5 +1111,5 @@ func sendTransferResult(w http.ResponseWriter, result domain.TransferResult) {
 	if result.Node != nil {
 		setETag(w, *result.Node)
 	}
-	send(w, status, result)
+	send(w, status, h.publicResult(nil, result))
 }

@@ -45,6 +45,13 @@ leases additionally bind a concrete version belonging to that file. They cannot
 select another version or follow the file after a move. Browser query parameters
 cannot change a lease's signed root, path, version or thumbnail dimensions.
 
+Stable-ID download leases bind the current path and the concrete file ID. The
+server verifies the opened file's identity on every request, so a different file
+at a reused path cannot be served. The lease does not follow moves; mint another
+by ID after a rename. Stable IDs identify files and directories, but grant no
+access by themselves: authorize the referenced object in your application and
+bind the intended Unix execution scope as for path-based operations.
+
 ## Unix ownership
 
 The backend can provide numeric `uid`, `gid`, `mode` and `dirMode` for uploads and

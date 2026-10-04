@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/k2b-dev/filegate/v6/cli"
-	"github.com/k2b-dev/filegate/v6/infra/filesystem"
+	"github.com/k2b-dev/filegate/v7/cli"
+	"github.com/k2b-dev/filegate/v7/infra/filesystem"
 )
 
 func main() {

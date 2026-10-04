@@ -21,9 +21,18 @@ make filesystem publication and its later state update restartable.
 
 The filesystem adapter rejects symlink components and uses descriptor-relative
 Linux operations. Indexed files carry UUIDs in `user.filegate.id`; durable inode
-claims prevent copied attributes from transferring history. Per-root locks
+claims prevent copied attributes from transferring history. Public `Node.id`,
+`Version.fileId`, resolution and ID-based reads require `index && managed`;
+internal identities remain available for indexed unmanaged versioning.
+`RootInfo.stableIds` reports that computed capability. Per-root locks
 serialize publication and maintenance. Network bodies are staged before taking
 that lock. Cross-root transfers acquire both root locks in deterministic order.
+
+ID reads recover pending root changes before looking up the durable claim, then
+resolve, open and verify the descriptor under the same root lock. ID-issued
+download leases bind the resolved path and ID and recheck the opened descriptor;
+they never follow a move. Keep HTTP projections out of durable receipts and
+identity/history records.
 
 ```sh
 make test
@@ -34,5 +43,5 @@ make docs
 
 Integration tests cover real Linux xattrs, copied identities, confined paths,
 rebuilds, version failure, metadata revision mapping, durable sessions and
-publication recovery. Test API changes through both SDKs. Keep the installed
+publication recovery. Test API changes through both SDKs. Keep the portable
 skill at `skills/filegate` identical to `docs-site/agent-skills/filegate`.

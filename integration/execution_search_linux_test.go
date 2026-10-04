@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 type countedSearchFiles struct {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 func TestSessionIdempotentOpenAndTerminalReplay(t *testing.T) {

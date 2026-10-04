@@ -49,9 +49,9 @@ roots:
 | `uploads.max_file_size` | Defaults to `10GiB`; integer bytes or `B`, `KiB`, `MiB`, `GiB`. Applies to every upload method. |
 | `roots[].name` | Unique name: letters, digits, `_` and `-`; first character alphanumeric; at most 64 characters. |
 | `roots[].path` | Existing absolute directory. Canonical root paths cannot overlap each other or state. |
-| `roots[].managed` | Defaults to false. All content and namespace writes must go through Filegate. Enables conditional publication and recoverable cross-root moves. Independent of indexing. |
+| `roots[].managed` | Defaults to false. All content and namespace writes must go through Filegate. Enables conditional publication and recoverable cross-root moves; with indexing, also enables stable IDs. |
 | `roots[].execution` | Defaults to false. Accept numeric Unix execution identities; requires the [root-service setup](/docs/en/operations#enable-unix-execution). Reported as `execution` in root information. |
-| `roots[].index` | Defaults to false. Enable metadata search and stable xattr IDs. |
+| `roots[].index` | Defaults to false. Enable metadata search; requires readable and writable `user.filegate.id` xattrs. Public stable IDs also require `managed: true`. |
 | `roots[].versioning.enabled` | Defaults to false. Requires index enabled. |
 | `roots[].versioning.cooldown` | Defaults to `1m`; zero captures each successful overwrite. |
 | `roots[].versioning.keep` | Defaults to `{last: 10, daily: 30, monthly: 12}` when the entire `keep` section is absent; see [versioning](/docs/en/versioning). |
@@ -61,6 +61,13 @@ roots with external NFS or local writers. The setting is an operator promise,
 not a filesystem lock: Filegate cannot prevent other processes from changing
 files. [Conditional publication](/docs/en/uploads-downloads#publish-only-if-unchanged)
 provides its atomic conflict guarantee only between Filegate operations.
+
+Root information reports `stableIds: true` only when both `index` and `managed`
+are enabled. This capability is computed; there is no `stableIds` configuration
+setting. Ext4, XFS and Btrfs normally support the required user xattrs. Verify
+support and permissions on the actual mount, especially with NFS or SMB. A root
+without an index requires no xattrs. See [stable IDs](/docs/en/stable-ids) for
+identity lifetime, reads and migration.
 
 Each root has independent maintenance and history. A rebuild pauses publication
 and other root mutations while it walks that root. Upload bodies can still be

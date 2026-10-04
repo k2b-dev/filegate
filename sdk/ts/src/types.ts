@@ -20,9 +20,9 @@ export interface Page { items: Node[]; next?: string }
 export interface Stats { path: string; started: string; completed: string; complete: boolean; freshness: "observed" | "unknown"; indexBuilt?: string; files: number; directories: number; bytes: number; updated: string; source: "filesystem" | "index" }
 export interface Keep { last: number; hourly: number; daily: number; weekly: number; monthly: number }
 export interface IndexStatus { enabled: boolean; rebuilding: boolean; scanned: number; lastBuilt: string | null; durationMs: number; error?: string }
-export interface RootInfo { name: string; managed: boolean; execution: boolean; index: IndexStatus; stats: Stats | null; versioning: { enabled: boolean; keep: Keep }; cooldown: string; versions: number; versionBytes: number; filesystem: string; capacity: number; available: number; activeUploads: number; stagingBytes: number }
+export interface RootInfo { name: string; stableIds: boolean; managed: boolean; execution: boolean; index: IndexStatus; stats: Stats | null; versioning: { enabled: boolean; keep: Keep }; cooldown: string; versions: number; versionBytes: number; filesystem: string; capacity: number; available: number; activeUploads: number; stagingBytes: number }
 export interface System { version: string; started: string; uptimeSeconds: number; ready: boolean; maintenanceError?: string }
-export interface Version { id: string; fileId: string; created: string; size: number; pinned: boolean; metadata?: Metadata; copyMode: "copy" | "reflink" }
+export interface Version { id: string; fileId?: string; created: string; size: number; pinned: boolean; metadata?: Metadata; copyMode: "copy" | "reflink" }
 export interface VersionOptions { pinned?: boolean; metadata?: Metadata }
 /** Omitted dimensions default to 256; dimensions must be integers from 1 to 2048. */
 export interface ThumbnailLeaseOptions { width?: number; height?: number; expiresIn?: number }

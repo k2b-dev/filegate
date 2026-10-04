@@ -61,6 +61,8 @@ export class RootClient {
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
   search(q: string, options: ListingOptions & { path?: string; signal?: AbortSignal } = {}): Promise<Page> { const { signal, ...query } = options; return this.client.json("GET", `${this.prefix}/search`, { q, ...query }, undefined, signal); }
   contentRaw(path: string, signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/content`, { path }, undefined, signal); }
+  /** Read the current file on a stable-ID root; HTTP errors remain raw responses. */
+  contentByIDRaw(fileId: string, signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/content`, { fileId }, undefined, signal); }
   thumbnailRaw(path: string, width = 256, height = 256): Promise<Response> { return this.client.raw("GET", `${this.prefix}/thumbnail`, { path, width, height }); }
   setOwnership(path: string, ownership: Ownership): Promise<Node> { return this.client.json("PATCH", `${this.prefix}/ownership`, { path }, ownership); }
   /** Read an access or default ACL; absent default ACLs have empty entries. */
@@ -78,6 +80,8 @@ export class RootClient {
   copyVersion(path: string, id: string, targetRoot: string, targetPath: string, options: VersionCopyOptions = {}): Promise<Node> { return this.client.json("POST", `${this.prefix}/versions/${encodeURIComponent(id)}/copy`, undefined, { path, targetRoot, targetPath, ...options }); }
   directUpload(path: string, size: number, options: WriteOptions & { expiresIn?: number } = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/uploads/direct`, undefined, { path, size, ...options }); }
   directDownload(path: string, options: DownloadOptions = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { path, ...options }); }
+  /** Bind a lease to this ID at its current path; reissue after a move. */
+  directDownloadByID(fileId: string, options: DownloadOptions = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/downloads/direct`, undefined, { fileId, ...options }); }
   /** Issue a GET/HEAD lease for exactly this historical version. */
   directVersionDownload(path: string, id: string, options: DownloadOptions = {}): Promise<DirectURL> { return this.client.json("POST", `${this.prefix}/versions/${encodeURIComponent(id)}/downloads/direct`, undefined, { path, ...options }); }
   /** Issue a GET/HEAD lease with a fixed thumbnail size. */

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v6/domain"
-	sdk "github.com/k2b-dev/filegate/v6/sdk/filegate"
+	"github.com/k2b-dev/filegate/v7/domain"
+	sdk "github.com/k2b-dev/filegate/v7/sdk/filegate"
 )
 
 func requireConflictCode(t *testing.T, err error, code string) {

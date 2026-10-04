@@ -178,12 +178,26 @@ func (r *Root) recursiveStats(ctx context.Context, p string, maxEntries int) (St
 	return stats, err
 }
 
+// StableIDs requires indexing and exclusive Filegate namespace/content writers.
+func (r *Root) StableIDs() bool { return r.Config.Index && r.Config.Managed }
+
 func (r *Root) Resolve(id string) (Node, error) {
-	if !r.Config.Index {
+	if !r.StableIDs() {
 		return Node{}, ErrDisabled
+	}
+	if err := validateFileID(id); err != nil {
+		return Node{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.resolve(id)
+}
+
+// resolve runs under the root lock, after recovery has reconciled claim paths.
+func (r *Root) resolve(id string) (Node, error) {
+	if err := r.guard(); err != nil {
+		return Node{}, err
+	}
 	var c claim
 	if e := r.State.Get("identity/"+id, &c); e != nil {
 		return Node{}, e
@@ -199,7 +213,7 @@ func (r *Root) Info() (RootInfo, error) {
 		return RootInfo{}, ErrInvalid
 	}
 	r.statusMu.RLock()
-	info := RootInfo{Managed: r.Config.Managed, Execution: r.Config.Execution, Name: r.Config.Name, Index: r.status, Versioning: r.Config.Versioning, Cooldown: r.Config.Versioning.Cooldown.String()}
+	info := RootInfo{Managed: r.Config.Managed, StableIDs: r.StableIDs(), Execution: r.Config.Execution, Name: r.Config.Name, Index: r.status, Versioning: r.Config.Versioning, Cooldown: r.Config.Versioning.Cooldown.String()}
 	if r.stats != nil {
 		s := *r.stats
 		info.Stats = &s

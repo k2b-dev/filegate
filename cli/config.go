@@ -3,7 +3,7 @@ package cli
 
 import (
 	"fmt"
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 	"gopkg.in/yaml.v3"
 	"io"
 	"net/url"

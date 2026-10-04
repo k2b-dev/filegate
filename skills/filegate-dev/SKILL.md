@@ -20,10 +20,27 @@ Do not reintroduce these through abstractions or fallbacks.
 
 ## Invariants
 
-All operations address a named root and relative path. Index-free roots must not
-need an xattr or hidden metadata index to work. Index rebuild replaces only
-search rows; identity claims, current revision metadata, versions and sessions
+Operations address a named root and relative path, or a stable ID for supported
+reads. Public IDs, resolution and ID reads require `index && managed` per root;
+report this as computed `RootInfo.stableIds`. Hide `Node.id` and `Version.fileId`
+at HTTP response boundaries on other roots, including nested receipts and
+transfer results; retain internal identities and histories unchanged. Index-free
+roots must not need an xattr or hidden metadata index to work. Index rebuild
+replaces only search rows; identity claims, current revision metadata, versions and sessions
 are durable. Never delete the whole state directory to recover an index.
+
+Stable IDs apply to files and directories. Newly assigned IDs use UUIDv7 in
+`user.filegate.id`; existing IDs survive rebuild/restart. Same-root moves retain
+descendant IDs, and overwrite/restore retain destination identity. New copies or
+cross-root targets get new identities; explicit overwrite retains the existing
+destination identity. Native move-overwrite retains source identity and removes
+the replaced target's identity/history. Delete/recreate never reuses a deleted ID.
+
+Recover root transitions before resolving an identity claim. ID content reads
+and download issuance must resolve, open and verify under one root lock. Verify
+identity on the opened descriptor. ID-issued leases sign current path and ID and
+recheck the descriptor on use; never follow moves or serve a replacement identity.
+Keep path-issued lease semantics and execution authorization unchanged.
 
 All writes share atomic publication. A required old-content snapshot must succeed
 before replacement. Metadata follows its content revision. Manual snapshots and

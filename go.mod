@@ -1,4 +1,4 @@
-module github.com/k2b-dev/filegate/v6
+module github.com/k2b-dev/filegate/v7
 
 go 1.25.0
 

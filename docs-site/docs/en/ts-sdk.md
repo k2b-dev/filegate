@@ -80,8 +80,9 @@ The exported `ExecutionContext` type is either `{mode:"service"}` or
 | Method | Result or action |
 | --- | --- |
 | `info()` | Root configuration, capabilities and dashboard metadata. |
-| `stat(path)` | Current filesystem metadata; optional indexed identity. |
-| `resolve(id)` | Current path for an indexed file ID. |
+| `stat(path)` | Current filesystem metadata; `id` present when `stableIds` is enabled. |
+| `resolve(id)` | Current Node for a file or directory ID; requires `stableIds`. |
+| `contentByIDRaw(fileId, signal?)` | Current file bytes by ID; raw HTTP response, requires `stableIds`. |
 | `list(path, options?)` | Globally sorted/filtered page of immediate children. |
 | `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
 | `mkdir(path, { ownership, acl })` | Create one configured directory; parent must exist. |
@@ -94,6 +95,7 @@ The exported `ExecutionContext` type is either `{mode:"service"}` or
 | `transferStatus(id)`, `resumeTransfer(id)`, `abandonTransfer(id)` | Inspect or reconcile a destination-root move receipt. |
 | `copyVersion(path, id, targetRoot, targetPath, options?)` | Copy historical bytes to a distinct target; returns Node. |
 | `directDownload(path, options?)` | GET/HEAD lease for the current file. |
+| `directDownloadByID(fileId, options?)` | GET/HEAD lease bound to the current path and file ID; requires `stableIds`. |
 | `directVersionDownload(path, id, options?)` | GET/HEAD lease for one historical version. |
 | `directThumbnail(path, options?)` | GET/HEAD lease for a JPEG preview. |
 | `createSession(path, size, options?)` | Create a session and its first lease. |
@@ -114,19 +116,27 @@ The exported `ExecutionContext` type is either `{mode:"service"}` or
 | `prune()` | Run retention now. |
 
 Use `files.roots()` and `files.system()` for dashboards. Unknown recursive totals
-are `null`; do not display them as zero. Indexed IDs persist through same-root
-API moves. Use the root name and relative path for file operations. Indexed
-roots also support resolving a file ID to its current path with `resolve(id)`.
+are `null`; do not display them as zero. Check `(await root.info()).stableIds` before
+using IDs: it requires both indexing and managed writers. Store the root name
+with `Node.id`, which is present for files and directories on those roots.
+`Version.fileId` is also optional; unmanaged roots retain path-based version
+history. See [stable IDs and migration](/docs/en/stable-ids).
 
 List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
 `limit` and `maxEntries`. Keep every option unchanged while following `next`,
 including through empty indexed pages. Restart on `409 cursor_invalid`. See
 [browsing](/docs/en/browsing) for sorting, query budgets and cursor lifetime.
 
-Root streaming methods `contentRaw`, `thumbnailRaw` and
+Root streaming methods `contentRaw`, `contentByIDRaw`, `thumbnailRaw` and
 `versionContentRaw` do not throw on HTTP error responses. Typed JSON methods
 throw `FilegateError` with `status`, `code` and `message`. Supply an optional
 `fetch` in the constructor for testing or transport customization.
+
+`contentByIDRaw(fileId, signal?)` resolves and opens the same file under one root
+lock. `directDownloadByID(fileId, DownloadOptions)` issues a lease bound to its
+current path and ID. The lease does not follow a rename; request another by ID
+after a move. It returns 404 if a different identity occupies that path. Both
+methods retain the client's Unix execution scope and backend authentication.
 
 ## Direct versions and previews
 

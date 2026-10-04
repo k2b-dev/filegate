@@ -1,4 +1,3 @@
-// Package domain implements root-scoped file operations and version history.
 package domain
 
 import (
@@ -88,7 +87,7 @@ type RootConfig struct {
 }
 type Version struct {
 	ID       string    `json:"id"`
-	FileID   string    `json:"fileId"`
+	FileID   string    `json:"fileId,omitempty"`
 	Created  time.Time `json:"created"`
 	Size     int64     `json:"size"`
 	Pinned   bool      `json:"pinned"`
@@ -118,6 +117,7 @@ type IndexStatus struct {
 }
 type RootInfo struct {
 	Managed       bool        `json:"managed"`
+	StableIDs     bool        `json:"stableIds"`
 	Execution     bool        `json:"execution"`
 	Name          string      `json:"name"`
 	Index         IndexStatus `json:"index"`
