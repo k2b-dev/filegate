@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	httpadapter "github.com/k2b-dev/filegate/v6/adapter/http"
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
-	sdk "github.com/k2b-dev/filegate/v6/sdk/filegate"
+	httpadapter "github.com/k2b-dev/filegate/v7/adapter/http"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
+	sdk "github.com/k2b-dev/filegate/v7/sdk/filegate"
 )
 
 func TestHTTPManagedPublicationETagAndBoundConditions(t *testing.T) {

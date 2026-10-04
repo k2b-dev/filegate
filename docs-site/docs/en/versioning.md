@@ -13,6 +13,11 @@ snapshot fails, the overwrite fails and the old file remains current. Uploading
 a new file does not create an automatic version. Rename, ownership and ACL changes
 do not create versions either.
 
+Versioning does not require managed writers. On indexed unmanaged roots,
+path-based history and version IDs remain available, while `Node.id` and
+`Version.fileId` are omitted. Public stable references require the root's
+`stableIds` capability; see [stable IDs](/docs/en/stable-ids).
+
 ## Choose capture frequency
 
 The default cooldown is one minute, measured from the last successful snapshot.

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	httpadapter "github.com/k2b-dev/filegate/v6/adapter/http"
-	"github.com/k2b-dev/filegate/v6/domain"
-	sdk "github.com/k2b-dev/filegate/v6/sdk/filegate"
+	httpadapter "github.com/k2b-dev/filegate/v7/adapter/http"
+	"github.com/k2b-dev/filegate/v7/domain"
+	sdk "github.com/k2b-dev/filegate/v7/sdk/filegate"
 )
 
 func targetExecutionRoots(t *testing.T, history bool) (*fixture, *fixture, *sdk.Client) {

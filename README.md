@@ -6,6 +6,8 @@ its TypeScript or Go client from your application backend.
 
 - Independent named roots; no overlapping directory trees.
 - Optional metadata index, updated by API writes and an explicit rebuild.
+- Stable identities for files and directories on indexed, managed roots,
+  with current-path resolution and content/download access by ID.
 - Optional version history on indexed roots: cooldown, manual snapshots,
   pinned versions, bounded JSON metadata, calendar retention.
 - Short-lived direct transfer leases and resumable upload sessions with
@@ -22,9 +24,13 @@ its TypeScript or Go client from your application backend.
 - Dashboard metadata through the API.
 
 The application authenticates users and authorizes their file access. Filegate
-addresses files by root name and relative path, with optional numeric ownership.
+addresses files by root name and relative path, or by root name and stable ID for
+supported reads, with optional numeric ownership.
 A root without an index reads the filesystem directly and requires no xattrs.
-Indexed roots use `user.filegate.id` to keep file identities across API renames.
+Indexed roots require readable and writable `user.filegate.id` xattrs. Public IDs
+are available only when the root also has `managed: true`; check its `stableIds`
+capability. IDs survive same-root API moves, content replacement, index rebuilds
+and restarts. Newly assigned IDs use UUIDv7. Store the root name with the ID.
 Version snapshots use reflinks when available and byte copies otherwise.
 
 ## Install a Linux package
@@ -35,6 +41,8 @@ and install it with your system's package manager. Packages include the CLI,
 `/etc/filegate/conf.yaml`.
 
 The commands below install **v6.1.0**.
+These packages predate the `stableIds` capability and ID-based reads described
+here, which belong to the next major release.
 For ARM64 systems, replace `amd64` with `arm64` in both the URL and filename.
 
 ### Debian
@@ -87,6 +95,12 @@ const upload = await files.root("documents").directUpload("homes/alex/notes.txt"
 
 See [documentation](https://filegate.dev/docs/en/), [Go client](sdk/filegate),
 and the portable [Filegate skill](skills/filegate/SKILL.md).
+
+Clients upgrading from indexed-only IDs must check `RootInfo.stableIds`.
+Unmanaged roots omit `Node.id` and `Version.fileId` and reject ID resolution and
+reads; path-based access and version history remain available. Enable `managed`
+only for roots written exclusively through Filegate. Existing stored identities
+are retained. See [stable IDs and migration](https://filegate.dev/docs/en/stable-ids).
 
 ## Develop
 

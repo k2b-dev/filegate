@@ -67,7 +67,7 @@ accepted before lease expiry can finish only while its session remains open.
 
 Terminal records remain queryable for seven days after completion, or after the
 session deadline for expired sessions. Commit retries return the original result,
-including its actual size, final path and optional indexed ID, even if the file
+including its actual size, final path and optional stable ID, even if the file
 has since moved or been deleted. This remains true after daemon restart or index
 rebuild. Aborting a committed session returns `409 session_committed`; it does not
 remove the published file or receipt. Repeated aborts are safe. Concurrent commit
@@ -208,6 +208,15 @@ and obsolete receipts every five minutes.
 authorizes the contents found at that path when used; it is not an immutable
 revision link.
 
+On roots with `stableIds: true`, `directDownloadByID(fileId, options?)` resolves
+the current path and binds the lease to that path and file ID. Each request checks
+the identity of the opened file. A rename or replacement with another identity
+returns 404; issue a new lease by ID after a move. An overwrite that preserves
+the ID can change the served contents. ID-based lease issuance and
+`contentByIDRaw(fileId, signal?)` resolve, open and verify under one root lock;
+there is no separate path-resolution race. See [stable IDs](/docs/en/stable-ids)
+for capability checks, authorization and identity lifetime.
+
 For historical contents, use `directVersionDownload(path, versionId, options?)`.
 It binds that version to its root and file path. A deleted version or a file that
 has moved is no longer available through the URL.
@@ -239,7 +248,7 @@ version or image parameters to the URL cannot change its scope. The usual
 against deletion or pruning. See the [HTTP contract](/docs/en/http-api#version-and-thumbnail-download-leases)
 for response headers and errors.
 
-Backend clients can stream `contentRaw`, `versionContentRaw` and `thumbnailRaw`.
+Backend clients can stream `contentRaw`, `contentByIDRaw`, `versionContentRaw` and `thumbnailRaw`.
 Raw methods return HTTP responses unchanged, including error statuses; check the
 status and close/drain response bodies in Go. Thumbnails accept JPEG, PNG and GIF,
 up to 64 MiB and 40 million decoded pixels; requested bounds are at most 2048 × 2048.

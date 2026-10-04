@@ -16,7 +16,10 @@ A **root** is a directory made available under a configured name. Requests
 identify files by root name and relative path, for example root `documents`
 and path `reports/annual.pdf`. Each root has its own index and version settings.
 
-The optional metadata index supports filename search and stable file IDs.
+The optional metadata index supports filename search. Roots with both indexing
+and exclusive Filegate writers (`managed: true`) also expose stable IDs for files
+and directories. Store the root name and ID to keep a reference across same-root
+moves; [resolve its current path or read by ID](/docs/en/stable-ids).
 Filegate updates the index after API writes. Run a rebuild to include changes
 made outside Filegate. With indexing disabled, search reads the filesystem.
 Indexed browsing uses the index; roots without an index and listings with Unix
@@ -28,6 +31,7 @@ supports manual snapshots, restore and configurable retention.
 - [Configure and start a daemon](/docs/en/getting-started)
 - [Choose roots and index settings](/docs/en/configuration)
 - [Integrate TypeScript](/docs/en/ts-sdk) or [Go](/docs/en/go-sdk)
+- [Keep file and directory references by ID](/docs/en/stable-ids)
 - [Browse and measure directories](/docs/en/browsing)
 - [Copy and move files](/docs/en/transfers)
 - [Use direct uploads](/docs/en/uploads-downloads)

@@ -1,6 +1,6 @@
 ---
 name: filegate
-description: Integrate or operate Filegate, the Linux filesystem gateway. Use for @k2b/filegate, the Go SDK, root-scoped HTTP API, Unix execution identities and ACLs, direct leases, resumable sessions, managed revisions, browsing, historical copies, recoverable transfers, systemd configuration or backups. The application owns identities and authorization.
+description: Integrate or operate Filegate, the Linux filesystem gateway. Use for @k2b/filegate, the Go SDK, root-scoped HTTP API, stable file and directory IDs, Unix execution identities and ACLs, direct leases, resumable sessions, managed revisions, browsing, historical copies, recoverable transfers, systemd configuration or backups. The application owns identities and authorization.
 ---
 
 # Filegate
@@ -8,6 +8,8 @@ description: Integrate or operate Filegate, the Linux filesystem gateway. Use fo
 Use Filegate from a trusted backend or operate its Linux daemon. Address files by
 **root name + relative path**. Root trees cannot overlap. The application owns
 users, groups, shares, revocation, expiry, quotas and authorization.
+Roots with stable IDs also support **root name + ID** for resolution, current
+content and file-download issuance.
 
 Keep the bearer token on the backend. Authorize each operation before issuing a
 short-lived lease. Browsers transfer bytes directly with that lease and never
@@ -18,20 +20,36 @@ receive the token. Filegate has no Cloud identity lookup or public-share model.
 Read `root.info()` / `Root.Info(ctx)` with the unscoped client. Capabilities are
 per root and independent except where noted:
 
-- `index`: filename search and stable xattr file IDs, updated by API writes or
-  explicit rebuild. External changes require a rebuild. Without an index, no
-  xattr support is required.
+- `index`: filename search, updated by API writes or explicit rebuild. Requires
+  readable/writable `user.filegate.id` xattrs. External changes require a rebuild.
+  Without an index, no xattr support is required.
 - `versioning.enabled`: requires indexing; captures previous contents before
   overwrite. Versions are not an immutable audit log.
 - `managed`: the operator promises exclusive Filegate content/namespace writers.
   Enables conditional publication and recoverable cross-root moves. Keep false
   for external NFS/local writers; it does not lock those writers out.
+- `stableIds`: computed as `index && managed`; no separate configuration flag.
+  Exposes file/directory `Node.id`, `Version.fileId`, resolution and reads by ID.
+  Indexed unmanaged roots retain internal identity/history but omit those public
+  fields and reject ID operations. `Version.fileId` is optional.
 - `execution`: accepts backend-bound numeric Unix credentials. Requires explicit
   Linux root-service configuration; default false.
 
 Do not infer that indexed data is current, missing totals are zero, or a file ID
-is an authorization grant. Same-root moves preserve ID/history; new copies and
-cross-root moves start a new destination identity/history.
+is an authorization grant. Store root name with ID. Newly assigned IDs use
+UUIDv7 and persist in each file/directory's `user.filegate.id` xattr. Same-root
+moves retain IDs, including directory descendants; overwrite, restore, rebuild
+and restart also retain them. New copies and cross-root moves to new targets
+start new destination identities/history. Explicit overwrite retains the
+destination identity; native same-root move-overwrite retains the source ID and
+removes the target's identity/history. Delete/recreate gets a new ID; cross-root
+moves never carry source ID/history across.
+
+`resolve(id)` / `Resolve(ctx,id)` returns the current Node through a direct
+Pebble key lookup plus live identity verification; no directory scan. A returned
+path can move before a later path operation. For regular-file reads, use the
+methods below that resolve/open/verify under one root lock. Recovery runs before
+looking up the current identity claim.
 
 ## TypeScript API
 
@@ -64,6 +82,8 @@ const upload = await root.directUpload("notes.txt", 5, { onConflict: "error" });
 | `transferStatus(id)`, `resumeTransfer(id)`, `abandonTransfer(id)` | Destination-root move receipts. |
 | `copyVersion(path,id,targetRoot,targetPath,VersionCopyOptions?)` | Historical bytes at a distinct target; returns Node. |
 | `directDownload(path, DownloadOptions?)` | GET/HEAD lease; Range supported. |
+| `contentByIDRaw(fileId, signal?)` | Current bytes by ID, unchanged HTTP response; requires `stableIds`. |
+| `directDownloadByID(fileId, DownloadOptions?)` | Lease binds resolved current path and ID; requires `stableIds`. |
 | `directVersionDownload(path,id,DownloadOptions?)` | One concrete version, current path/file identity. |
 | `directThumbnail(path,{width?,height?,expiresIn?})` | Bound JPEG preview lease. |
 | `createSession(path,size,SessionCreateOptions?)` | `{session,lease?}`; lease absent on terminal replay. |
@@ -75,8 +95,8 @@ const upload = await root.directUpload("notes.txt", 5, { onConflict: "error" });
 | `versions`, `snapshot`, `updateVersion`, `restore`, `deleteVersion` | File version history. |
 
 `DownloadOptions` has `expiresIn?` and `fileName?`; expiry is not a positional
-number. Raw `contentRaw`, `thumbnailRaw` and `versionContentRaw` preserve HTTP
-error responses: inspect status. `files.roots()` and `files.system()` are
+number. Raw `contentRaw`, `contentByIDRaw`, `thumbnailRaw` and `versionContentRaw`
+preserve HTTP error responses: inspect status. `files.roots()` and `files.system()` are
 administrative dashboard methods.
 
 `files.as(identity)` and `root.as(identity)` create independent execution scopes;
@@ -91,7 +111,7 @@ header. This is not an arbitrary URL import facility.
 
 ## Go API
 
-Import `github.com/k2b-dev/filegate/v6/sdk/filegate`; the SDK is portable, the
+Import `github.com/k2b-dev/filegate/v7/sdk/filegate`; the SDK is portable, the
 daemon Linux-only. HTTP request envelopes also live in `api/v1`.
 
 ```go
@@ -121,6 +141,10 @@ caller deadlines.
 - `DirectUpload(ctx,path,size,WriteOptions,expiresIn)` and `Put` issue direct PUTs.
 - `DirectDownload(ctx,path,DownloadOptions)` and
   `DirectVersionDownload(ctx,path,versionID,DownloadOptions)` use typed options.
+- `ContentByIDRaw(ctx,fileID)` and
+  `DirectDownloadByID(ctx,fileID,DownloadOptions)` require `StableIDs` in root
+  information and retain the client's authentication/execution scope. Raw
+  content preserves HTTP errors; check status and close the body.
 - `DirectThumbnail(ctx,path,width,height,expiresIn)` requires dimensions; use
   256,256 for default bounds.
 - `CreateSession(ctx,path,size,WriteOptions,SessionCreateOptions)` returns an
@@ -375,6 +399,17 @@ They are reusable and have no individual revoke list or callbacks. Token rotatio
 plus restart invalidates all. Historical leases bind path/file identity/version;
 thumbnail leases bind path/dimensions. Query parameters cannot broaden scope.
 
+Current content GET/HEAD and direct download issuance POST accept exactly one
+nonempty `path` or `fileId`; all other path-based APIs retain their selectors.
+Both/neither, repeated query selectors or a noncanonical UUID return
+400 invalid_argument, disabled stable IDs 409 feature_disabled, missing identity
+404 not_found. ID reads and issuance resolve/open/verify under one root lock.
+ID-issued leases sign current path + ID and verify the opened descriptor each
+request. They do not follow moves or serve another identity at a reused path;
+reissue by ID after rename. Overwrite retaining ID can change the contents; use
+versions for concrete historical bytes. Backend authorization and bound Unix
+rights still apply; directory IDs only resolve.
+
 Current/historical downloads use attachment headers with ASCII filename fallback
 and RFC 5987 UTF-8 filename*. DownloadOptions.fileName is UTF-8 at most 255 bytes, no controls
 or slash/backslash, not dot/dotdot. Defaults sanitize the path basename. Range and
@@ -457,8 +492,9 @@ existing files and concurrent uploads. Application owns aggregate budgets.
 
 Back up stopped/coordinated roots including `.filegate`, state, config and token.
 Preserve inode identity, ownership, ACLs and xattrs for full history rollback.
-Ordinary copied files on new inodes do not reconnect old histories; import current
-contents into a new root/state and retain the original backup. Protect root-level
+Ordinary copied files on new inodes do not retain old IDs or reconnect old
+histories; import current contents into a new root/state and retain the original
+backup. Protect root-level
 `.filegate` and `LOCK` from external replacement. Startup recovers local intents;
 cross-root source deletion requires explicit resume.
 
@@ -472,6 +508,7 @@ examples and operator procedures:
 - [Sessions and downloads](https://filegate.dev/docs/en/uploads-downloads)
 - [Copy/move recovery](https://filegate.dev/docs/en/transfers)
 - [Browsing and totals](https://filegate.dev/docs/en/browsing)
+- [Stable IDs and migration](https://filegate.dev/docs/en/stable-ids)
 - [Permissions](https://filegate.dev/docs/en/permissions)
 - [Versions](https://filegate.dev/docs/en/versioning)
 - [Configuration](https://filegate.dev/docs/en/configuration) and [operations](https://filegate.dev/docs/en/operations)

@@ -145,6 +145,15 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 	return r, nil
 }
 func newID() string { return uuid.Must(uuid.NewV7()).String() }
+
+func validateFileID(id string) error {
+	u, err := uuid.Parse(id)
+	if err != nil || u.String() != id {
+		return fmt.Errorf("%w: file ID must be a canonical UUID", ErrInvalid)
+	}
+	return nil
+}
+
 func CleanPath(p string) (string, error) {
 	if p == "" || p == "." {
 		return ".", nil
@@ -288,14 +297,80 @@ func (r *Root) OpenWithNode(p string) (*os.File, Node, error) {
 	if err := r.guard(); err != nil {
 		return nil, Node{}, err
 	}
+	return r.openWithNode(p, "")
+}
+
+// OpenByID resolves and opens the current file under one root lock. An already
+// opened descriptor retains its content even if a later API operation moves it.
+func (r *Root) OpenByID(id string) (*os.File, Node, error) {
+	if !r.StableIDs() {
+		return nil, Node{}, ErrDisabled
+	}
+	if err := validateFileID(id); err != nil {
+		return nil, Node{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, err := r.resolve(id)
+	if err != nil {
+		return nil, Node{}, err
+	}
+	return r.openWithNode(n.Path, id)
+}
+
+// OpenWithID opens only the given path and identity. Signed leases remain bound
+// to their issued path and cannot read a replacement or follow a moved file.
+func (r *Root) OpenWithID(p, id string) (*os.File, Node, error) {
+	if !r.StableIDs() {
+		return nil, Node{}, ErrDisabled
+	}
+	if err := validateFileID(id); err != nil {
+		return nil, Node{}, err
+	}
+	p, err := validWrite(p)
+	if err != nil {
+		return nil, Node{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.guard(); err != nil {
+		return nil, Node{}, err
+	}
+	return r.openWithNode(p, id)
+}
+
+// openWithNode requires the root lock and completed recovery. A nonempty id
+// verifies durable ownership and the opened inode without assigning an identity.
+func (r *Root) openWithNode(p, id string) (*os.File, Node, error) {
+	if id != "" {
+		var c claim
+		if err := r.State.Get("identity/"+id, &c); err != nil {
+			return nil, Node{}, err
+		}
+		if c.Path != p {
+			return nil, Node{}, os.ErrNotExist
+		}
+	}
 	f, err := r.Files.Open(p, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, Node{}, err
 	}
-	n, err := r.nodeFile(p, f, true)
+	n, err := r.nodeFile(p, f, id == "")
 	if err != nil {
 		f.Close()
 		return nil, Node{}, err
+	}
+	if id != "" {
+		if n.ID != id {
+			f.Close()
+			return nil, Node{}, os.ErrNotExist
+		}
+		// ID validation must not assign an identity, but an authorized read still
+		// initializes or refreshes the managed revision for this opened inode.
+		if n, err = r.withRevision(n, f, true); err != nil {
+			f.Close()
+			return nil, Node{}, err
+		}
 	}
 	if n.Directory {
 		f.Close()

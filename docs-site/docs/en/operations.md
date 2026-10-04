@@ -78,6 +78,8 @@ maintenance error. `GET /v1/roots` or `GET /v1/roots/{root}` returns:
 
 - Whether Unix execution identities (`execution`) and exclusive-writer
   conditional publication (`managed`) are enabled.
+- Whether stable file and directory IDs (`stableIds`) are available. This
+  requires both indexing and managed writers; see [stable IDs](/docs/en/stable-ids).
 - Index enabled/running status, scanned count, last successful rebuild, duration
   and error.
 - Optional recursive file count, directory count and current logical bytes,
@@ -137,6 +139,8 @@ startup stops with an error. Preserve the state and logs for diagnosis.
 | ACL request returns 501 | The actual filesystem or mount does not expose POSIX ACLs. NFSv4 ACLs are not translated. |
 | Group cannot write a new file | Check the parent default ACL, child access ACL and mask, and the writer's requested mode; see [permissions](/docs/en/permissions). |
 | External files missing from search | Indexed roots need `filegate rebuild ROOT`. Index-free listings read the filesystem directly. |
+| ID resolution/read returns 409 `feature_disabled` | Check `stableIds` in root information. Both index and managed writers are required; keep managed false with external writers. |
+| ID-issued download returns 404 after a move | Issue another lease by ID to bind the current path; the old lease does not follow a rename. |
 | Listing/search/root-stats refresh returns 413 | Narrow the query or raise `maxEntries` within its documented limit. No globally sorted partial page is returned. |
 | Browse returns 409 `cursor_invalid` | Discard accumulated pages and restart with the same query. |
 | Upload returns 412 | Read the current managed revision and reconcile the edit; the upload condition failed without publication. |

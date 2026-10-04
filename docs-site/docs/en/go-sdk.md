@@ -7,7 +7,7 @@ description: Use root operations and direct transfers from Go.
 
 # Go client
 
-Import `github.com/k2b-dev/filegate/v6/sdk/filegate`. The SDK works on platforms
+Import `github.com/k2b-dev/filegate/v7/sdk/filegate`. The SDK works on platforms
 other than Linux; only the daemon requires Linux.
 
 ```go
@@ -71,7 +71,7 @@ if err != nil { return err }
 fmt.Println(result.State)
 ```
 
-Import `apiv1` from `github.com/k2b-dev/filegate/v6/api/v1`. For destination Unix
+Import `apiv1` from `github.com/k2b-dev/filegate/v7/api/v1`. For destination Unix
 execution, use `Mode: "unix"` and `Identity: &filegate.ExecutionIdentity{...}`.
 Omitting `TargetExecution` inherits the source context. Service mode must omit
 `Identity`; it explicitly selects service execution and never retries a denied
@@ -113,18 +113,32 @@ arithmetic and checksums; `relay` provides streaming HTTP helpers.
 The Go `Root` exposes `Info`, `Stat`, `Resolve`, `List`, `Search`, `Mkdir`,
 `SetOwnership`, `GetACL`, `SetACL`, `ClearDefaultACL`, `Remove`, `Transfer`,
 `TransferStatus`, `ResumeTransfer`, `AbandonTransfer`, `CopyVersion`,
-`DirectUpload`, `DirectDownload`, `DirectVersionDownload`, `DirectThumbnail`,
+`DirectUpload`, `DirectDownload`, `DirectDownloadByID`, `DirectVersionDownload`, `DirectThumbnail`,
 `CreateSession`, `Session`, `SessionSegments`, `SessionLease`, `CommitSession`, `AbortSession`,
 `Rebuild`, `Stats`, `RecursiveStats`, `RefreshStats`, `Versions`, `Snapshot`,
 `UpdateVersion`, `DeleteVersion`, `Restore` and `Prune`.
 Each operation takes a `context.Context` first. Request structs shared with the
 wire API live in `api/v1`, including `TransferRequest` and `VersionRequest`.
 
-Root methods `ContentRaw`, `ThumbnailRaw` and `VersionContentRaw` return
+Root methods `ContentRaw`, `ContentByIDRaw`, `ThumbnailRaw` and `VersionContentRaw` return
 `*http.Response` unchanged on HTTP errors. Always check `StatusCode` and close
 the body. Typed operations return `*filegate.APIError` with `Status`, `Code` and
 `Message`. Set caller deadlines through contexts; administrative rebuilds and
 large transfers can take longer than a normal request.
+
+Check `StableIDs` in the result of `Root.Info(ctx)` before storing or using
+`Node.ID`. Stable IDs require both indexing and managed writers and apply to
+files and directories.
+Store the root name with the ID. `Version.FileID` is empty on unmanaged roots,
+whose path-based version history remains available.
+
+`Resolve(ctx, id)` returns the current Node. For regular-file reads,
+`ContentByIDRaw(ctx, fileID)` resolves and opens the same file under one root lock.
+`DirectDownloadByID(ctx, fileID, DownloadOptions)` returns a lease bound to the
+resolved path and ID. It does not follow renames and returns 404 if a different
+identity occupies the signed path; issue another lease by ID after a move.
+Both methods retain the client's execution scope and authentication. See
+[stable IDs and migration](/docs/en/stable-ids).
 
 `List(ctx, path, ListingOptions)` and `Search(ctx, query, path, ListingOptions)`
 accept sorting, order, type filters and bounded opaque-cursor pagination. Use

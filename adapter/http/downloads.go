@@ -9,8 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 func versionContent(w http.ResponseWriter, r *http.Request, root *domain.Root, p, version, fileName string) error {
@@ -39,6 +39,9 @@ func (h *Handler) mintVersionDownload(w http.ResponseWriter, r *http.Request, ro
 	var q api.DownloadRequest
 	if err := decode(w, r, &q); err != nil {
 		return err
+	}
+	if q.FileID != "" {
+		return domain.ErrInvalid
 	}
 	if _, err := leaseSeconds(q.ExpiresIn); err != nil {
 		return err

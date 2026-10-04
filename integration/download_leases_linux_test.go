@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	httpadapter "github.com/k2b-dev/filegate/v6/adapter/http"
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
+	httpadapter "github.com/k2b-dev/filegate/v7/adapter/http"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 func downloadResponse(t *testing.T, method, target, byteRange string) (*http.Response, []byte) {

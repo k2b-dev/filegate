@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 type directoryFiles struct {
@@ -44,6 +44,7 @@ func TestDirectoryPublicationInstallsMetadataBeforeVisibility(t *testing.T) {
 	for _, index := range []bool{false, true} {
 		t.Run(fmt.Sprintf("index=%v", index), func(t *testing.T) {
 			x := setup(t, index, false)
+			x.r.Config.Managed = index
 			uid, gid := os.Getuid(), os.Getgid()
 			if uid == 0 {
 				uid, gid = 12101, 12102
@@ -209,6 +210,7 @@ func TestDirectoryPublicationRecoversAfterStateFailure(t *testing.T) {
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprintf("restart=%v", restart), func(t *testing.T) {
 			x := setup(t, true, false)
+			x.r.Config.Managed = true
 			state := &failingState{State: x.state, fail: true}
 			x.r.State = state
 			acl := sharedACL()

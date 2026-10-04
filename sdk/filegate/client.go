@@ -1,5 +1,3 @@
-// Package filegate provides the trusted-backend Go client for Filegate.
-// Browser clients receive scoped direct URLs, never the daemon bearer token.
 package filegate
 
 import (
@@ -7,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	api "github.com/k2b-dev/filegate/v6/api/v1"
-	"github.com/k2b-dev/filegate/v6/domain"
+	api "github.com/k2b-dev/filegate/v7/api/v1"
+	"github.com/k2b-dev/filegate/v7/domain"
 	"io"
 	"net/http"
 	"net/url"
@@ -243,6 +241,13 @@ func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Pa
 func (r *Root) ContentRaw(ctx context.Context, p string) (*http.Response, error) {
 	return r.client.Raw(ctx, "GET", r.endpoint("/content"), query(p), nil)
 }
+
+// ContentByIDRaw reads the current file identified by fileID on a stable-ID root.
+// Non-success HTTP responses remain available to the caller, who must close Body.
+func (r *Root) ContentByIDRaw(ctx context.Context, fileID string) (*http.Response, error) {
+	return r.client.Raw(ctx, "GET", r.endpoint("/content"), url.Values{"fileId": {fileID}}, nil)
+}
+
 func (r *Root) Mkdir(ctx context.Context, p string, o DirectoryOptions) (Node, error) {
 	var v Node
 	e := r.client.call(ctx, "POST", r.endpoint("/directories"), nil, api.MkdirRequest{Path: p, DirectoryOptions: o}, &v)
@@ -266,6 +271,14 @@ func (r *Root) DirectUpload(ctx context.Context, p string, size int64, o WriteOp
 func (r *Root) DirectDownload(ctx context.Context, p string, options DownloadOptions) (DirectURL, error) {
 	var v DirectURL
 	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, api.DownloadRequest{Path: p, DownloadOptions: options}, &v)
+	return v, e
+}
+
+// DirectDownloadByID issues a GET/HEAD lease for fileID at its current path.
+// The lease fails after a move or path reuse. After a move, reissue it by fileID.
+func (r *Root) DirectDownloadByID(ctx context.Context, fileID string, options DownloadOptions) (DirectURL, error) {
+	var v DirectURL
+	e := r.client.call(ctx, "POST", r.endpoint("/downloads/direct"), nil, api.DownloadRequest{FileID: fileID, DownloadOptions: options}, &v)
 	return v, e
 }
 

@@ -1,8 +1,7 @@
-// Package apiv1 defines the root-scoped Filegate wire contract.
 package apiv1
 
 import (
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 	"time"
 )
 
@@ -72,7 +71,8 @@ type DownloadOptions struct {
 	FileName  string `json:"fileName,omitempty"`
 }
 type DownloadRequest struct {
-	Path string `json:"path"`
+	Path   string `json:"path,omitempty"`
+	FileID string `json:"fileId,omitempty"`
 	DownloadOptions
 }
 

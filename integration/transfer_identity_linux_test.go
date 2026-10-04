@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/k2b-dev/filegate/v6/domain"
+	"github.com/k2b-dev/filegate/v7/domain"
 )
 
 func transferActor(t *testing.T, r *domain.Root, actor *domain.ExecutionIdentity) (*domain.Root, func()) {
