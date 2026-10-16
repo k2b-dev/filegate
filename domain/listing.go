@@ -111,8 +111,8 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 }
 
 // Search selects descendants of base, matching the case-insensitive basename.
-// Unscoped indexed scans seek to their cursor. Execution views always scan the
-// live filesystem once and bind the resulting snapshot to their Unix identity.
+// Indexed subtree searches with non-path ordering sort a bounded snapshot.
+// Execution views scan the live filesystem and bind snapshots to their identity.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {
 	return r.queryListing(ctx, base, strings.ToLower(query), true, o)
 }
@@ -190,6 +190,25 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
 func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) bool) (Page, error) {
+	if recursive && p != "." && o.Sort != "path" {
+		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
+			scanned := 0
+			return r.State.ScanAfter("i/"+r.generation+"/"+p+"/", "", func(_ string, b []byte) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				scanned++
+				if scanned > o.MaxEntries {
+					return ErrLimit
+				}
+				var n Node
+				if err := json.Unmarshal(b, &n); err != nil {
+					return err
+				}
+				return visit(n)
+			})
+		})
+	}
 	prefix := "i/" + r.generation + "/"
 	primary := recursive && o.Sort == "path"
 	if !recursive {
@@ -248,6 +267,12 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 }
 
 func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) bool) (Page, error) {
+	return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
+		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, visit)
+	})
+}
+
+func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) bool, scan func(func(Node) error) error) (Page, error) {
 	now := r.now()
 	for id, s := range r.listings {
 		if !now.Before(s.created.Add(listingLifetime)) {
@@ -266,7 +291,7 @@ func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o List
 			return Page{}, ErrCursorInvalid
 		}
 		snapshot = &listingSnapshot{query: c.Query, entries: []Node{}}
-		err := r.scanDirectory(ctx, p, recursive, o.MaxEntries, func(n Node) error {
+		err := scan(func(n Node) error {
 			if !matches(n) {
 				return nil
 			}

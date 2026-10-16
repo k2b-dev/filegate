@@ -42,14 +42,17 @@ find no matches yet still have more entries to examine.
 
 ## Handle changing directories
 
-Indexed queries seek to the next position instead of rescanning earlier pages.
-They reflect the configured index, including its freshness limits for external
-writers. Run a rebuild to include external changes.
+Indexed queries reflect the configured index, including its freshness limits for
+external writers. Run a rebuild to include external changes. Searches below a
+non-root path with `sort: "name"`, `"size"` or `"modified"` collect and sort the
+selected subtree once. Their scan budget applies only to that subtree. Other
+indexed queries seek to the next position instead of rescanning earlier pages.
 
-Filesystem queries scan and sort once into a bounded temporary observation.
-The observation lasts 60 seconds. Each root retains at most 16 observations and
-32 MiB of listing data; each scan accepts at most 100000 entries. If the scan
-budget is exceeded, the request returns 413 instead of a partially sorted result.
+Filesystem queries and these sorted indexed subtree searches use a bounded
+temporary observation. The observation lasts 60 seconds. Each root retains at
+most 16 observations and 32 MiB of listing data; each scan accepts at most
+`maxEntries` entries (default and maximum: 100000). If the scan budget is exceeded,
+the request returns 413 instead of a partially sorted result.
 
 Filegate mutations, an index rebuild, restart, changed query options, observation
 expiry or capacity eviction can invalidate a cursor. On `409 cursor_invalid`,
