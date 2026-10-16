@@ -81,8 +81,10 @@ contract change. Raw SDK methods preserve non-success HTTP responses.
 
 ## Verification
 
-Use `make test` locally, `make test-linux` for the actual Linux filesystem and
-HTTP integration seam, `make test-race` on Linux, and `make docs`. Test durability
+Locally, run focused `go test -run` for the touched packages. The CI `gate`
+runs `make test-linux` for the actual Linux filesystem and HTTP integration
+seam, the race suite, the SDK tests and `make docs`; run them locally only as
+`AGENTS.md` allows on shared machines. Test durability
 with injected failures and concurrency with channels, not arbitrary sleeps.
 Keep `skills/filegate` and `docs-site/agent-skills/filegate` identical.
 Use independent reviews for substantial persistence or security changes.

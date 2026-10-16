@@ -41,8 +41,9 @@ push to `main`, never create or move tags, and never trigger a release.
 
 - Commit as you go; commits need no approval. Pushing, opening the pull
   request, and enabling auto-merge are one block that needs one approval:
-  `gh pr create --fill`, then `gh pr merge --auto --squash`. The queue re-runs
-  the gate on the merge result and merges. After the merge,
+  `gh pr create --fill`, then `gh pr merge --auto`, which places the green
+  pull request in the merge queue. The queue applies the squash, re-runs the
+  gate on the merge result and merges. After the merge,
   `git worktree remove` the worktree; merged branches are deleted
   automatically.
 
