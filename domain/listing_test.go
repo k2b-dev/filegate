@@ -147,6 +147,126 @@ func TestIndexedOrderingFilteringAndContinuation(t *testing.T) {
 		t.Fatalf("sparse result=%v visits=%d", got, state.visits)
 	}
 }
+
+func TestIndexedSubtreeSearchFindsFirstPage(t *testing.T) {
+	nodes := []Node{{Path: "fresh", Directory: true}, {Path: "fresh/needle.txt"}}
+	for i := 0; i < 129; i++ {
+		nodes = append(nodes, Node{Path: fmt.Sprintf("outside/a-%03d", i)})
+	}
+	r := indexedListingRoot(t, nodes)
+	page, err := r.Search(context.Background(), "needle", "fresh", ListingOptions{Sort: "name", MaxEntries: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Path != "fresh/needle.txt" || page.Next != "" {
+		t.Fatalf("subtree match missing from first page: %+v", page)
+	}
+	if state := r.State.(*listingState); state.visits != 1 {
+		t.Fatalf("scanned outside the subtree: %d visits", state.visits)
+	}
+}
+
+func TestIndexedSubtreeSearchSortsOnce(t *testing.T) {
+	now := time.Unix(100000, 0)
+	nodes := []Node{
+		{Path: "fresh/a", Size: 2, Modified: now},
+		{Path: "fresh/sub/a", Size: 2, Modified: now},
+		{Path: "fresh/z", Size: 1, Modified: now.Add(-time.Second)},
+		{Path: "fresh/sub", Directory: true, Modified: now},
+		{Path: "fresh-other/a"},
+	}
+	for _, tc := range []struct {
+		sort, order string
+		want        string
+	}{
+		{"name", "asc", "fresh/a|fresh/sub/a|fresh/z"},
+		{"name", "desc", "fresh/z|fresh/sub/a|fresh/a"},
+		{"size", "asc", "fresh/z|fresh/a|fresh/sub/a"},
+		{"size", "desc", "fresh/sub/a|fresh/a|fresh/z"},
+		{"modified", "asc", "fresh/z|fresh/a|fresh/sub/a"},
+		{"modified", "desc", "fresh/sub/a|fresh/a|fresh/z"},
+	} {
+		t.Run(tc.sort+"/"+tc.order, func(t *testing.T) {
+			r := indexedListingRoot(t, nodes)
+			opts := ListingOptions{Sort: tc.sort, Order: tc.order, Type: "files", Limit: 1, MaxEntries: 4}
+			var paths []string
+			for i := 0; i < 3; i++ {
+				page, err := r.Search(context.Background(), "", "fresh", opts)
+				if err != nil || len(page.Items) != 1 {
+					t.Fatalf("page %d: %+v %v", i, page, err)
+				}
+				paths = append(paths, page.Items[0].Path)
+				if (page.Next != "") != (i < 2) {
+					t.Fatalf("page %d continuation: %+v", i, page)
+				}
+				opts.After = page.Next
+			}
+			if strings.Join(paths, "|") != tc.want {
+				t.Fatalf("got %v, want %s", paths, tc.want)
+			}
+			if state := r.State.(*listingState); state.scans != 1 || state.visits != 4 {
+				t.Fatalf("rescanned or left subtree: scans=%d visits=%d", state.scans, state.visits)
+			}
+		})
+	}
+}
+
+func TestIndexedSubtreeSearchRespectsScanBudget(t *testing.T) {
+	r := indexedListingRoot(t, []Node{
+		{Path: "fresh/a", Directory: true},
+		{Path: "fresh/needle"},
+		{Path: "fresh/z"},
+	})
+	opts := ListingOptions{Sort: "name", Type: "files", Limit: 1, MaxEntries: 2}
+	page, err := r.Search(context.Background(), "needle", "fresh", opts)
+	if !errors.Is(err, ErrLimit) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 {
+		t.Fatalf("partial sorted result returned: %+v %v", page, err)
+	}
+	opts.MaxEntries = 3
+	page, err = r.Search(context.Background(), "needle", "fresh", opts)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "fresh/needle" || page.Next != "" {
+		t.Fatalf("exact scan budget rejected: %+v %v", page, err)
+	}
+	page, err = r.Search(context.Background(), "missing", "fresh", opts)
+	if err != nil || len(page.Items) != 0 || page.Next != "" {
+		t.Fatalf("empty selection has continuation: %+v %v", page, err)
+	}
+}
+
+func TestIndexedSubtreeSearchCursorInvalidation(t *testing.T) {
+	for _, change := range []string{"query", "options", "generation", "mutation", "expiry", "eviction"} {
+		t.Run(change, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "fresh/a"}, {Path: "fresh/b"}})
+			now := time.Unix(100000, 0)
+			r.now = func() time.Time { return now }
+			opts := ListingOptions{Sort: "name", Limit: 1, MaxEntries: 2}
+			page, err := r.Search(context.Background(), "", "fresh", opts)
+			if err != nil || page.Next == "" {
+				t.Fatalf("first page: %+v %v", page, err)
+			}
+			opts.After = page.Next
+			query := ""
+			switch change {
+			case "query":
+				query = "b"
+			case "options":
+				opts.Order = "desc"
+			case "generation":
+				r.generation = "rebuilt"
+			case "mutation":
+				r.invalidateListings()
+			case "expiry":
+				now = now.Add(listingLifetime)
+			case "eviction":
+				r.evictListing()
+			}
+			if _, err := r.Search(context.Background(), query, "fresh", opts); !errors.Is(err, ErrCursorInvalid) {
+				t.Fatalf("cursor accepted %s: %v", change, err)
+			}
+		})
+	}
+}
+
 func TestIndexSortReferencesReplacedAtomically(t *testing.T) {
 	old := Node{Path: "a", Size: 99, Modified: time.Unix(0, 0)}
 	r := indexedListingRoot(t, []Node{old, {Path: "b", Size: 10, Modified: time.Unix(1, 0)}})
