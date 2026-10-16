@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in Filegate behaves incorrectly.
+labels: [bug, needs-triage]
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find this problem.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Daemon and HTTP API
+        - CLI and configuration
+        - TypeScript SDK
+        - Go SDK
+        - Packages and systemd
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `filegate version`, or the `version` from `GET /v1/system`.
+      placeholder: 7.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The request, CLI command or SDK call, and the relevant root configuration.
+      placeholder: |
+        1. Configure a root with …
+        2. Call …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the response or log line. Remove tokens, secrets and personal data.
+    validations:
+      required: true

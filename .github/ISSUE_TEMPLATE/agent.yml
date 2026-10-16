@@ -1,0 +1,38 @@
+name: Agent report
+description: Filed by a coding agent that investigated the repository. People use the bug report form.
+labels: [via-agent, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One problem per issue, four short sections, no analysis or plan (that belongs in Dex).
+        Redact secrets, tokens and machine-specific paths.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong
+      description: Observed behavior and the expected one, in two or three sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The exact command or request, with the Filegate version.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: cause
+    attributes:
+      label: Suspected cause
+      description: File and line, plus one sentence on why.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The smallest change that fixes it, or the question a maintainer must answer first.
+    validations:
+      required: true

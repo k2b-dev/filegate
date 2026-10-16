@@ -1,10 +1,19 @@
 name: CI
+
+# `gate` is the only required status check. It needs every other job and
+# passes only when each one succeeded. Pull requests run it on the branch; the
+# merge queue runs it again on the exact merge result and merges only when it
+# passed, so main itself is not re-verified here.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -47,3 +56,14 @@ jobs:
           go-version: "1.25"
       - run: GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
+  gate:
+    if: always()
+    needs: [verify, packages, vulnerability-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done
