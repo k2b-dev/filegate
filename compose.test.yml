@@ -1,6 +1,6 @@
 services:
   tests:
-    image: golang:1.25
+    image: golang:1.27
     working_dir: /src
     volumes:
       - .:/src

@@ -1,0 +1,3 @@
+# Filegate repository
+
+@AGENTS.md

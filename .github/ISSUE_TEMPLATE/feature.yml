@@ -1,0 +1,25 @@
+name: Specified feature
+description: A concrete improvement with a clear outcome and scope, ready for someone to pick up.
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What an application author or operator can do afterwards, in two or three sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: The affected API, SDK or CLI surface, and what stays out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable checks that show the feature is done.
+    validations:
+      required: true
