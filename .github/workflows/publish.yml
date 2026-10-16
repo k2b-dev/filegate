@@ -14,7 +14,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -120,7 +120,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v6
         with:
           args: release --clean

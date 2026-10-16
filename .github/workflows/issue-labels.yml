@@ -1,0 +1,39 @@
+name: Issue labels
+
+# The labels this repository uses, declared once. Runs when the issue forms
+# change and on demand; existing labels are updated in place.
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/ISSUE_TEMPLATE/**", ".github/workflows/issue-labels.yml"]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const labels = [
+              { name: "bug", color: "d73a4a", description: "Something is broken or behaves incorrectly." },
+              { name: "enhancement", color: "a2eeef", description: "A concrete, specified improvement." },
+              { name: "needs-triage", color: "fbca04", description: "Waiting for a maintainer to confirm and categorize." },
+              { name: "via-agent", color: "1d76db", description: "Filed by a coding agent through the agent report form." },
+              { name: "dependencies", color: "0366d6", description: "Dependency updates." },
+            ];
+            const { owner, repo } = context.repo;
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+                await github.rest.issues.updateLabel({ owner, repo, name: label.name, color: label.color, description: label.description });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ owner, repo, ...label });
+              }
+            }
