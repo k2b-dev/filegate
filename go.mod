@@ -2,7 +2,7 @@ module github.com/k2b-dev/filegate/v7
 
 go 1.25.0
 
-toolchain go1.25.7
+toolchain go1.27.2
 
 require (
 	github.com/cockroachdb/pebble v1.1.5
