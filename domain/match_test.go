@@ -68,6 +68,10 @@ func TestNameQueryMatch(t *testing.T) {
 		{label: "empty query", name: "anything", tier: 1},
 		{label: "empty name", query: "abcd", fuzzy: true},
 		{label: "long typo", query: strings.Repeat("ä", 64) + "b", name: strings.Repeat("Ä", 64) + "c", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "repeated prefix typo", query: strings.Repeat("a", 128) + "b", name: strings.Repeat("a", 255), fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "compact improves typo distance", query: "abcdefgh", name: "abcd_efgx", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "accent improves typo distance", query: "abcdefgx", name: "äbcdefgh", fuzzy: true, tier: 2, distance: 1, word: true, accent: true},
+		{label: "compact accent improves typo distance", query: "abcdefgx", name: "äbcd_efgh", fuzzy: true, tier: 2, distance: 1, word: true, accent: true},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			q, err := compileNameQuery(tc.query)
@@ -158,11 +162,17 @@ func TestNameQueryAgainstOSA(t *testing.T) {
 					}
 				}
 				for _, budget := range []int{1, 2} {
-					score := typoNameToken(runes, token, budget, nil)
+					score := typoNameToken(runes, token, budget, 0, nil)
 					// An empty fragment is irrelevant for real tokens (length >= 4, budget <= 2).
 					want := best <= budget && len(runes) > 0
 					if (score.tier != 0) != want || want && score.distance != best {
 						t.Fatalf("budget=%d query=%q name=%q: %+v; want hit=%v distance=%d", budget, string(token), name, score, want, best)
+					}
+					if best > 0 {
+						bounded := typoNameToken(runes, token, budget, 1, nil)
+						if bounded != score {
+							t.Fatalf("minimum distance changed score: query=%q name=%q: %+v; want %+v", string(token), name, bounded, score)
+						}
 					}
 				}
 			}
@@ -207,6 +217,8 @@ func BenchmarkNameQueryTiers(b *testing.B) {
 		{"loose", "tata", "t1a2t3a.ods", 3},
 		{"loose-short", "tst", "testtest.ods", 3},
 		{"miss", "inventarliste", "Quartalsbericht_0123_2026.pdf", 0},
+		{"typo-repeated-prefix", strings.Repeat("a", 128) + "b", strings.Repeat("a", 255), 2},
+		{"typo-eight-tokens", strings.TrimSpace(strings.Repeat(strings.Repeat("a", 128)+"b ", 8)), strings.Repeat("a", 255), 2},
 	} {
 		b.Run(tc.label, func(b *testing.B) {
 			q, _ := compileNameQuery(tc.query)

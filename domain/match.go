@@ -171,12 +171,14 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 		}
 		if best.tier == 0 && q.fuzzy {
 			best = q.fuzzyToken(q.plain, token.runes, nil)
-			if len(q.compact) != len(q.plain) || token.compact != token.text {
+			// Exact matching failed for every form. A distance-one typo
+			// without accent folding cannot be improved by another form.
+			if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || token.compact != token.text) {
 				best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
 			}
-			if accent {
+			if accent && (best.tier != nameTypo || best.distance > 1) {
 				folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
-				if len(q.foldedCompact) != len(q.folded) || token.foldedCompact != token.folded {
+				if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || token.foldedCompact != token.folded) {
 					folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
 				}
 				folded.accentFolded = true
@@ -299,7 +301,7 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTok
 		}
 	}
 	if budget > 0 {
-		if score := typoNameToken(q.runes, token, budget, starts); score.tier != 0 {
+		if score := typoNameToken(q.runes, token, budget, 1, starts); score.tier != 0 {
 			return score
 		}
 	}
@@ -312,7 +314,8 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTok
 // Each start explores at most four edit choices at each of at most two edits.
 // Matching prefixes are consumed without branching. O(n*m*4^k), k <= 2, constant
 // stack space, no matrix or per-name allocations. Long tokens are not truncated.
-func typoNameToken(name, token []rune, budget int, starts []bool) nameTokenMatch {
+// minimumDistance is one after all exact forms miss, or zero for a general scan.
+func typoNameToken(name, token []rune, budget, minimumDistance int, starts []bool) nameTokenMatch {
 	best := nameTokenMatch{}
 	for start := 0; start < len(name); start++ {
 		if len(name)-start < len(token)-budget {
@@ -322,7 +325,7 @@ func typoNameToken(name, token []rune, budget int, starts []bool) nameTokenMatch
 		if distance <= budget {
 			candidate := nameTokenMatch{tier: nameTypo, distance: distance, wordStart: nameRuneStart(name, starts, start)}
 			best = betterNameMatch(best, candidate)
-			if distance == 0 {
+			if distance == minimumDistance {
 				break
 			}
 		}
