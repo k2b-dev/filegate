@@ -74,7 +74,7 @@ const upload = await root.directUpload("notes.txt", 5, { onConflict: "error" });
 | --- | --- |
 | `info()`, `stat(path)`, `resolve(id)` | Root capabilities or current Node. |
 | `list(path?, ListingOptions?)` | Immediate children, sorted/filtered before paging. |
-| `search(q, ListingOptions & {path?,signal?})` | Descendant filename matches. |
+| `search(q, ListingOptions & {path?,signal?})` | Descendant filename matches; `{match:"fuzzy"}` allows typos and loose hits. |
 | `mkdir(path, {ownership?,acl?:{access?,default?}})` | Prepare permissions, then publish one directory; parent must exist. |
 | `setOwnership`, `getACL`, `setACL`, `clearDefaultACL` | Explicit live metadata changes; no recursive correction or versions. |
 | `remove(path, recursive?)` | Permanent removal, including histories. |
@@ -137,7 +137,7 @@ return `*http.Response` unchanged; check status and close the body. Contexts set
 caller deadlines.
 
 - `List(ctx,path,ListingOptions)` and `Search(ctx,q,path,ListingOptions)` use the
-  same options/cursors as TypeScript.
+  same options/cursors as TypeScript, including `ListingOptions{Match:"fuzzy"}`.
 - `DirectUpload(ctx,path,size,WriteOptions,expiresIn)` and `Put` issue direct PUTs.
 - `DirectDownload(ctx,path,DownloadOptions)` and
   `DirectVersionDownload(ctx,path,versionID,DownloadOptions)` use typed options.
@@ -324,12 +324,27 @@ existing versions; it does not schedule snapshots.
 
 ListingOptions: sort=`path|name|size|modified` (default path), order=`asc|desc`
 (default asc), type=`all|files|directories` (default all), limit 1–1000 (default 100),
-maxEntries 1–100000 (default 100000), opaque after. Stable path ties follow the same
-order. Filter/sort precedes pagination. List returns immediate children; search walks
+match=`exact|fuzzy` (default exact), maxEntries 1–100000 (default 100000), opaque
+after. Stable path ties follow the same order. Filter/sort precedes pagination. List returns immediate children; search walks
 descendants, excluding its base.
 
-Indexed scans seek forward; an empty page can still have next. Filesystem scans
-sort one bounded observation: 60-second lifetime, 16 snapshots / 32 MiB per root,
+Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
+(`muller` finds `Müller.docx`). `_ - .` and whitespace are word gaps; tokens also
+match with gaps removed (`quartalsbericht` finds `Quartals_Bericht.xlsx`). At most
+8 whitespace tokens, AND in any order (`2026 bericht`). Raw `q` is limited to
+8 KiB (8192 UTF-8 bytes) before normalization. Exceeding either query limit or
+using an unknown match returns 400 (`invalid_argument`).
+Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
+adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for 8–32;
+tokens outside 4–32 runes use exact and loose matching only.
+Tier 3: subsequence, token >=2 runes, span <=3x
+length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
+A node's tier is its worst token. For every supported sort, tier 3 appears only
+if the complete path/type-filtered selection has no tier 1/2 hit. Fuzzy always
+collects/sorts one snapshot, preserving sort/order. Exact keeps ordinary paging.
+
+Indexed exact scans can seek forward; an empty page can still have next.
+Filesystem and fuzzy scans sort one bounded observation: 60-second lifetime, 16 snapshots / 32 MiB per root,
 100000 entries max. Exceeded budget returns 413, not a globally sorted partial
 result. Scoped Unix listing and search use live filesystem observations even on
 indexed roots. A new query sees external NFS changes without an index rebuild;

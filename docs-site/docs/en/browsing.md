@@ -8,8 +8,8 @@ description: Sort and filter before paging, handle invalid cursors and interpret
 # Browse and measure directories
 
 Use `list` for immediate children of one directory, such as a folder tree or a
-destination picker. Use `search` for case-insensitive filename matching below a
-path. Search includes descendants and excludes the base directory itself.
+destination picker. Use `search` to match filenames below a path. Search includes
+descendants and excludes the base directory itself.
 
 ```ts
 const options = { sort: "name", order: "asc", type: "directories", limit: 100 } as const;
@@ -32,6 +32,7 @@ the current-content response. Do not use listing metadata as a fresh revision.
 | `sort` | `path` (default), `name`, `size`, `modified`. |
 | `order` | `asc` (default), `desc`. |
 | `type` | `all` (default), `files`, `directories`. |
+| `match` | `exact` (default), `fuzzy`. |
 | `limit` | 1–1000; default 100. |
 | `maxEntries` | 1–100000; default 100000. |
 | `after` | The previous response's opaque `next` cursor. |
@@ -40,17 +41,58 @@ Keep every option unchanged when following a cursor. Continue until `next` is
 absent, including when an indexed page contains no items: a bounded scan may
 find no matches yet still have more entries to examine.
 
+## Find filenames
+
+Search normalizes Unicode forms, ignores case with full case folding (`ß` = `ss`),
+and folds accents (`muller` finds `Müller.docx`). These rules apply with the default
+`match: "exact"` too. Underscores, hyphens, dots and whitespace are word gaps;
+`quartalsbericht` finds `Quartals_Bericht.xlsx` with the gaps removed.
+
+The raw `q` value is limited to 8 KiB (8192 UTF-8 bytes) before normalization
+and has at most eight whitespace-separated tokens. Every token must match,
+in any order: `2026 bericht` finds `Quartalsbericht 2026.pdf`. Exceeding either
+query limit or using an unknown `match` value returns 400 (`invalid_argument`).
+
+Use `match: "fuzzy"` to include typos and loose abbreviations:
+
+```ts
+const page = await root.search("tsettest", { match: "fuzzy", path: "reports" });
+```
+
+The HTTP equivalent is `GET /v1/roots/{root}/search?q=tsettest&match=fuzzy`.
+In Go, pass `filegate.ListingOptions{Match: "fuzzy"}` to `Search`.
+
+Each token uses the strongest matching tier:
+
+1. **Exact:** normalized equality, prefix, word start or substring, including a
+   match with word gaps removed.
+2. **Typo:** an approximate substring with optimal string alignment distance:
+   one insertion, deletion, substitution or adjacent transposition for tokens of
+   4–7 runes; up to two edits for tokens of 8–32 runes. Tokens outside the 4–32
+   rune range use exact and loose matching only. `tsettest` and `tete` both find
+   `testtest.ods`.
+3. **Loose:** the token's runes occur in order. Tokens need at least two runes,
+   and the span from the first to the last matched rune must be at most three
+   times the token length. `tst` finds `testtest.ods` this way.
+
+A filename's tier is its weakest token's tier. With every supported sort, loose
+hits appear only when the complete selection has no exact or typo hit. This
+rule applies after the path and type filters, before pagination. Fuzzy searches
+collect the complete selection once; they keep your requested sort and order.
+`match: "exact"` includes only the first tier.
+
 ## Handle changing directories
 
 Indexed queries reflect the configured index, including its freshness limits for
 external writers. Run a rebuild to include external changes. Searches below a
 non-root path with `sort: "name"`, `"size"` or `"modified"` collect and sort the
-selected subtree once. Their scan budget applies only to that subtree. Other
-indexed queries seek to the next position instead of rescanning earlier pages.
+selected subtree once. Fuzzy searches collect and sort once for every path and
+sort. These scan budgets apply only to the selected subtree. Other indexed
+queries seek to the next position instead of rescanning earlier pages.
 
-Filesystem queries and these sorted indexed subtree searches use a bounded
-temporary observation. The observation lasts 60 seconds. Each root retains at
-most 16 observations and 32 MiB of listing data; each scan accepts at most
+Filesystem queries, sorted indexed subtree searches and all fuzzy searches use
+a bounded temporary observation. The observation lasts 60 seconds. Each root
+retains at most 16 observations and 32 MiB of listing data; each scan accepts at most
 `maxEntries` entries (default and maximum: 100000). If the scan budget is exceeded,
 the request returns 413 instead of a partially sorted result.
 

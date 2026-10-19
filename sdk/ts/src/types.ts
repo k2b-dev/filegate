@@ -12,7 +12,7 @@ export interface ACL { entries: ACLEntry[] }
 export interface DirectoryACLs { access?: ACL; default?: ACL }
 export interface DirectoryOptions { ownership?: Ownership; acl?: DirectoryACLs }
 export interface Precondition { ifMatch?: string; ifNoneMatch?: boolean }
-export interface ListingOptions { after?: string; limit?: number; maxEntries?: number; sort?: "path" | "name" | "size" | "modified"; order?: "asc" | "desc"; type?: "all" | "files" | "directories" }
+export interface ListingOptions { match?: "exact" | "fuzzy"; after?: string; limit?: number; maxEntries?: number; sort?: "path" | "name" | "size" | "modified"; order?: "asc" | "desc"; type?: "all" | "files" | "directories" }
 export interface DownloadOptions { expiresIn?: number; fileName?: string }
 export interface WriteOptions { precondition?: Precondition; accessACL?: ACL; onConflict?: "error" | "overwrite" | "rename"; ownership?: Ownership; metadata?: Metadata }
 export interface Node { revision?: string; root: string; path: string; id?: string; directory: boolean; size: number; modified: string; mode: string; uid: number; gid: number }

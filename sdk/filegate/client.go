@@ -223,6 +223,9 @@ func listingQuery(p string, o ListingOptions) url.Values {
 	if o.Type != "" {
 		q.Set("type", o.Type)
 	}
+	if o.Match != "" {
+		q.Set("match", o.Match)
+	}
 	return q
 }
 
@@ -234,9 +237,11 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 	return page, err
 }
 
-// Search returns matching descendants. APIError preserves 429 search_busy;
-// retry after a delay. Indexed first pages retain their captured observation
-// during concurrent writes; their cursors remain bound to that observation.
+// Search matches descendant basenames using o.Match (exact by default, or fuzzy).
+// The server rejects raw queries over 8 KiB or more than eight whitespace-separated
+// tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
+// retry after the Retry-After: 1 delay. Indexed first pages retain their captured
+// observation during concurrent writes; their cursors remain bound to it.
 // On 409 cursor_invalid, discard previous pages and restart the query.
 func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
 	var page Page

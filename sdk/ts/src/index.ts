@@ -60,10 +60,12 @@ export class RootClient {
   resolve(id: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/resolve`, { id }); }
   /** List immediate children without consuming search capacity. */
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
-  /** Search does not retry automatically. On 429 search_busy, callers retry after
-   * the Retry-After: 1 delay. Indexed first pages retain their captured observation
-   * during concurrent writes; cursors remain bound to that observation. Discard
-   * previous pages and restart on 409 cursor_invalid. */
+  /** Match descendant basenames using options.match (exact by default, or fuzzy).
+   * The server rejects raw queries over 8 KiB (UTF-8) or more than eight whitespace
+   * tokens with 400 invalid_argument. Search does not retry automatically. On 429
+   * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages
+   * retain their captured observation during concurrent writes; cursors remain
+   * bound to that observation. Discard previous pages and restart on 409 cursor_invalid. */
   search(q: string, options: ListingOptions & { path?: string; signal?: AbortSignal } = {}): Promise<Page> { const { signal, ...query } = options; return this.client.json("GET", `${this.prefix}/search`, { q, ...query }, undefined, signal); }
   contentRaw(path: string, signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/content`, { path }, undefined, signal); }
   /** Read the current file on a stable-ID root; HTTP errors remain raw responses. */

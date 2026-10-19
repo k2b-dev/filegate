@@ -210,6 +210,48 @@ func TestSearchScanAllowsWrites(t *testing.T) {
 	}
 }
 
+func TestSearchFuzzyScanAllowsWrites(t *testing.T) {
+	r, state := newSearchRoot(t)
+	for _, p := range []string{"folder/0-t1a2t3a", "folder/tata", "folder/taxa"} {
+		if _, err := r.Mkdir(p, domain.DirectoryOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked, release := make(chan struct{}), make(chan struct{})
+	state.block = func() { close(blocked); <-release }
+	unblock := sync.OnceFunc(func() { close(release) })
+	opts := domain.ListingOptions{Match: "fuzzy", Limit: 1}
+	done := make(chan searchResult, 1)
+	go func() {
+		defer close(done)
+		page, err := r.Search(context.Background(), "tata", ".", opts)
+		done <- searchResult{page, err}
+	}()
+	t.Cleanup(func() { unblock(); awaitSearchValue(t, done) })
+	awaitSearchValue(t, blocked)
+	written := make(chan error, 1)
+	go func() {
+		defer close(written)
+		written <- r.Remove("folder/tata", false)
+	}()
+	t.Cleanup(func() { unblock(); awaitSearchValue(t, written) })
+	if err := awaitSearchValue(t, written); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	result := awaitSearchValue(t, done)
+	// The captured exact hit suppresses the earlier loose hit, even though the
+	// write removed it before collection resumed. The typo hit needs a cursor.
+	if result.err != nil || len(result.page.Items) != 1 || result.page.Items[0].Path != "folder/tata" || result.page.Next == "" || state.closed.Load() != 1 {
+		t.Fatalf("fuzzy snapshot page failed or leaked: %+v closed=%d", result, state.closed.Load())
+	}
+	opts.After = result.page.Next
+	if _, err := r.Search(context.Background(), "tata", ".", opts); !errors.Is(err, domain.ErrCursorInvalid) {
+		t.Fatalf("fuzzy cursor survived a concurrent write: %v", err)
+	}
+	assertSearchSlotsReusable(t, r, state)
+}
+
 func TestSearchScanCancellation(t *testing.T) {
 	for _, tc := range []struct{ base, sort, order string }{
 		{".", "path", "asc"},
