@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"fmt"
+	"path"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,6 +16,9 @@ import (
 const nameQueryTokenLimit = 8
 const nameQueryByteLimit = 8 << 10
 const nameTypoRuneLimit = 32
+
+// Bound both typo recursion and loose subsequence work on path candidates.
+const pathFuzzyRuneLimit = 256
 const (
 	nameExact = 1
 	nameTypo  = 2
@@ -33,8 +37,10 @@ type nameToken struct {
 }
 
 // nameQuery is compiled once per selection. Its scratch buffers are reused per
-// basename; a query must not be shared by concurrent scans.
+// candidate; a query must not be shared by concurrent scans.
 type nameQuery struct {
+	pathSearch                            bool
+	base                                  string
 	tokens                                []nameToken
 	fuzzy                                 bool
 	folder                                cases.Caser
@@ -55,15 +61,20 @@ type nameTokenMatch struct {
 	wordStart, accentFolded         bool
 }
 type nameMatch struct {
-	tier   int
-	tokens [nameQueryTokenLimit]nameTokenMatch
+	tier       int
+	parentOnly int
+	tokens     [nameQueryTokenLimit]nameTokenMatch
 }
 
 func compileNameQuery(query string) (*nameQuery, error) {
+	return compileSearchQuery(query, false)
+}
+
+func compileSearchQuery(query string, pathSearch bool) (*nameQuery, error) {
 	if len(query) > nameQueryByteLimit {
 		return nil, fmt.Errorf("%w: name query must be at most %d bytes", ErrInvalid, nameQueryByteLimit)
 	}
-	q := &nameQuery{folder: cases.Fold()}
+	q := &nameQuery{folder: cases.Fold(), pathSearch: pathSearch}
 	for field := range strings.FieldsSeq(query) {
 		if len(q.tokens) == nameQueryTokenLimit {
 			return nil, fmt.Errorf("%w: name query must have at most %d tokens", ErrInvalid, nameQueryTokenLimit)
@@ -81,6 +92,23 @@ func compileNameQuery(query string) (*nameQuery, error) {
 
 func nameBoundary(r rune) bool {
 	return unicode.IsSpace(r) || r == '-' || r == '_' || r == '.'
+}
+
+func (q *nameQuery) boundary(r rune) bool {
+	return nameBoundary(r) || q.pathSearch && r == '/'
+}
+
+// subject uses the normalized search base, without a leading slash. Node paths
+// remain root-relative on the wire; only matching and highlight offsets change.
+func (q *nameQuery) subject(p string) string {
+	if !q.pathSearch {
+		return path.Base(p)
+	}
+	if q.base != "." {
+		// Callers have already checked that p is inside this base.
+		return p[len(q.base)+1:]
+	}
+	return p
 }
 
 func (q *nameQuery) normalize(name string) {
@@ -101,7 +129,7 @@ func (q *nameQuery) normalize(name string) {
 			if c >= 'A' && c <= 'Z' {
 				c += 'a' - 'A'
 			}
-			if nameBoundary(rune(c)) {
+			if q.boundary(rune(c)) {
 				q.plain = append(q.plain, ' ')
 				wordStart = true
 			} else {
@@ -131,7 +159,7 @@ func (q *nameQuery) normalize(name string) {
 	for remaining := q.nfc; len(remaining) > 0; {
 		r, size := utf8.DecodeRune(remaining)
 		remaining = remaining[size:]
-		if nameBoundary(r) {
+		if q.boundary(r) {
 			q.plain = append(q.plain, ' ')
 			wordStart = true
 		} else {
@@ -169,37 +197,52 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 	}
 	q.normalize(name)
 	for i, token := range q.tokens {
-		best := exactNameToken(q.plain, token.text, nil)
-		best = betterNameMatch(best, exactNameToken(q.compact, token.compact, q.compactStarts))
-		accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
-		if accent {
-			folded := betterNameMatch(exactNameToken(q.folded, token.folded, nil), exactNameToken(q.foldedCompact, token.foldedCompact, q.foldedCompactStarts))
-			folded.accentFolded = true
-			best = betterNameMatch(best, folded)
-		}
-		if best.tier == 0 && q.fuzzy {
-			best = q.fuzzyToken(q.plain, token.runes, nil)
-			// Exact matching failed for every form. A distance-one typo
-			// without accent folding cannot be improved by another form.
-			if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || !bytes.Equal(token.compact, token.text)) {
-				best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
-			}
-			if accent && (best.tier != nameTypo || best.distance > 1) {
-				folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
-				if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || !bytes.Equal(token.foldedCompact, token.folded)) {
-					folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
-				}
-				folded.accentFolded = true
-				best = betterNameMatch(best, folded)
-			}
-		}
+		best := q.matchToken(token)
 		if best.tier == 0 {
 			return false, nameMatch{}
 		}
 		score.tokens[i] = best
 		score.tier = max(score.tier, best.tier)
 	}
+	if q.pathSearch {
+		q.normalize(path.Base(name))
+		for i, token := range q.tokens {
+			// A weaker basename tier cannot promote a stronger parent hit.
+			basename := q.matchToken(token)
+			if basename.tier == 0 || basename.tier > score.tokens[i].tier {
+				score.parentOnly++
+			}
+		}
+	}
 	return true, score
+}
+
+func (q *nameQuery) matchToken(token nameToken) nameTokenMatch {
+	best := exactNameToken(q.plain, token.text, nil)
+	best = betterNameMatch(best, exactNameToken(q.compact, token.compact, q.compactStarts))
+	accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
+	if accent {
+		folded := betterNameMatch(exactNameToken(q.folded, token.folded, nil), exactNameToken(q.foldedCompact, token.foldedCompact, q.foldedCompactStarts))
+		folded.accentFolded = true
+		best = betterNameMatch(best, folded)
+	}
+	if best.tier == 0 && q.fuzzy {
+		best = q.fuzzyToken(q.plain, token.runes, nil)
+		// Exact matching failed for every form. A distance-one typo
+		// without accent folding cannot be improved by another form.
+		if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || !bytes.Equal(token.compact, token.text)) {
+			best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
+		}
+		if accent && (best.tier != nameTypo || best.distance > 1) {
+			folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
+			if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || !bytes.Equal(token.foldedCompact, token.folded)) {
+				folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
+			}
+			folded.accentFolded = true
+			best = betterNameMatch(best, folded)
+		}
+	}
+	return best
 }
 
 func betterNameMatch(a, b nameTokenMatch) nameTokenMatch {
@@ -250,6 +293,18 @@ func betterNameMatch(a, b nameTokenMatch) nameTokenMatch {
 	return a
 }
 
+// Count directly: utf8.RuneCount's byte-to-string slow path allocates on
+// long non-ASCII inputs with the supported Go toolchain.
+func nameRuneCount(text []byte) int {
+	count := 0
+	for len(text) > 0 {
+		_, size := utf8.DecodeRune(text)
+		text = text[size:]
+		count++
+	}
+	return count
+}
+
 func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 	if len(token) == 0 {
 		return nameTokenMatch{}
@@ -270,7 +325,7 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 		previous, _ := utf8.DecodeLastRune(name[:i])
 		wordStart := nameBoundary(previous)
 		if starts != nil {
-			wordStart = starts[utf8.RuneCount(name[:i])]
+			wordStart = starts[nameRuneCount(name[:i])]
 		}
 		if wordStart {
 			return nameTokenMatch{tier: nameExact, exactRank: exactWord, wordStart: true}
@@ -282,6 +337,11 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 }
 
 func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
+	// Exact matching still scans the entire path. Each normalized form exceeding
+	// this limit skips fuzzy matching before growing scratch or edit recursion.
+	if q.pathSearch && nameRuneCount(name) > pathFuzzyRuneLimit {
+		return nameTokenMatch{}
+	}
 	q.runes = q.runes[:0]
 	var present uint64
 	for len(name) > 0 {

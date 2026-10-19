@@ -25,7 +25,7 @@ Use `GET /resolve?id=ID` to find a file or directory's current path on those roo
 | `GET /stat` | `path` | Node. |
 | `GET /resolve` | `id` | Current Node; requires `stableIds`. |
 | `GET /entries` | `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | `{items,next?}`. |
-| `GET /search` | `q`, `path`, `match`, `sort`, `order`, `type`, `ext`, `minSize`, `maxSize`, `modifiedAfter`, `modifiedBefore`, `after`, `limit`, `maxEntries` | Filtered filename matches: `{items,next?,total?,truncated?,matches?}`; `q` may be omitted. |
+| `GET /search` | `q`, `path`, `match`, `in`, `sort`, `order`, `type`, `ext`, `minSize`, `maxSize`, `modifiedAfter`, `modifiedBefore`, `after`, `limit`, `maxEntries` | Filtered name/path matches: `{items,next?,total?,truncated?,matches?}`; `q` may be omitted. |
 | `GET /content` | Exactly one of `path` or `fileId`; optional `fileName` | File bytes, Range/HEAD supported. ID reads require `stableIds`. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
@@ -70,7 +70,24 @@ includes all matching tiers and retains the best `search.topK` hits (default 100
 `total` and `truncated` appear only for complete snapshot selections, before the
 cap; keyset exact pages omit them. With non-empty `q`, `matches` is always an
 array aligned with `items`: each entry contains `[start,end)` rune ranges into
-the original basename, merged when adjacent or overlapping. `Node` is unchanged.
+the original basename by default, merged when adjacent or overlapping.
+With `in=path`, ranges instead address `Node.path` relative to the normalized
+search base (`path`), without a leading slash. For `path=docs` and
+`Node.path=docs/Müller/2026/scan.pdf`, use `Müller/2026/scan.pdf`.
+`Node.path` remains root-relative; `Node` is unchanged.
+
+Search `in` accepts `name` (default) or `path`; unknown values return 400
+(`invalid_argument`). Path matching uses the path relative to the search base,
+excludes the base prefix and treats `/` as a word gap. All tokens must match,
+but may hit different segments. With relevance, after tier sub-ranks and before
+accent folding, fewer tokens without a basename hit at their selected tier or
+better ranks first (counting all tokens). Exact equality/prefix refer to the
+whole relative path, so a first-folder prefix can outrank a basename word start.
+Typo and loose matching skip normalized
+path forms longer than 256 runes; exact matching remains available throughout
+the path. This cap applies per form, including forms without word gaps or accents.
+Consequently, path mode can find fewer fuzzy hits than name mode for deep paths.
+The 32-rune typo token and 8 KiB query caps still apply. `in` is cursor-bound.
 
 Listing revisions may be absent or stale; use current stat or current-content
 ETag when selecting an `ifMatch` condition.

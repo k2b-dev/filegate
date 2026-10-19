@@ -58,3 +58,26 @@ func TestSearchRelevanceHTTPParsing(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchPathHTTPParsing(t *testing.T) {
+	for _, value := range []string{"", "name", "path", "unknown"} {
+		req := httptest.NewRequest("GET", "/v1/roots/files/search?in="+value, nil)
+		if got := listingOptions(req).In; got != value {
+			t.Fatalf("in=%q parsed %q", value, got)
+		}
+	}
+	h := New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, Options{Token: "secret"})
+	for _, value := range []string{"unknown", "PATH"} {
+		req := httptest.NewRequest("GET", "/v1/roots/files/search?in="+value, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var body api.Error
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 400 || body.Error != "invalid_argument" || body.Message == "" {
+			t.Fatalf("%d %+v", w.Code, body)
+		}
+	}
+}

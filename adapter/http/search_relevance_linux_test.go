@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	api "github.com/k2b-dev/filegate/v7/api/v1"
@@ -76,5 +77,43 @@ func TestSearchRelevanceHTTPPage(t *testing.T) {
 	}
 	if w.Code != 409 || body.Error != "cursor_invalid" || body.Message == "" {
 		t.Fatalf("missing hit: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestSearchPathHTTPPage(t *testing.T) {
+	data := t.TempDir()
+	files, err := filesystem.Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { files.Close() })
+	state, err := pebble.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { state.Close() })
+	root, err := domain.NewRoot(domain.RootConfig{Name: "files", Path: data}, files, state, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(data, "docs/Müller/2026"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "docs/Müller/2026/scan.pdf"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	handler := New([]*domain.Root{root}, Options{Token: "secret"})
+	for _, sortBy := range []string{"path", "relevance"} {
+		req := httptest.NewRequest("GET", "/v1/roots/files/search?q=muller+2026&in=path&path=docs&type=files&sort="+sortBy, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		var page api.Page
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || len(page.Items) != 1 || page.Items[0].Path != "docs/Müller/2026/scan.pdf" || page.Matches == nil || !reflect.DeepEqual(*page.Matches, [][]api.MatchRange{{{0, 6}, {7, 11}}}) {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
 	}
 }

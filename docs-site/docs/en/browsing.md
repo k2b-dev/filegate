@@ -33,6 +33,7 @@ the current-content response. Do not use listing metadata as a fresh revision.
 | `order` | `asc` (default), `desc`. |
 | `type` | `all` (default), `files`, `directories`. |
 | `match` | `exact` (default), `fuzzy`. |
+| `in` | Search basename with `name` (default), or scope-relative `path`. |
 | `limit` | 1–1000; default 100. |
 | `maxEntries` | 1–100000; default 100000. |
 | `after` | The previous response's opaque `next` cursor. |
@@ -51,7 +52,22 @@ and folds accents (`muller` finds `Müller.docx`). These rules apply with the de
 The raw `q` value is limited to 8 KiB (8192 UTF-8 bytes) before normalization
 and has at most eight whitespace-separated tokens. Every token must match,
 in any order: `2026 bericht` finds `Quartalsbericht 2026.pdf`. Exceeding either
-query limit or using an unknown `match` value returns 400 (`invalid_argument`).
+query limit or using an unknown `match` or `in` value returns 400 (`invalid_argument`).
+
+Use `in: "path"` to include folder names:
+
+```ts
+const page = await root.search("rechnung 2026", { in: "path", path: "docs" });
+// Finds docs/Rechnungen/2026/scan01.pdf.
+```
+
+The HTTP equivalent is
+`GET /v1/roots/{root}/search?q=rechnung%202026&in=path&path=docs`.
+In Go, pass `filegate.ListingOptions{In: "path"}` to `Search`.
+Every token can match any segment of the path relative to the search base.
+The base itself is excluded: searching below `docs` does not match `docs`
+against its own prefix. `/` is a word gap, including for matching with gaps
+removed. The default `in: "name"` searches only the basename.
 
 Use `match: "fuzzy"` to include typos and loose abbreviations:
 
@@ -75,7 +91,14 @@ Each token uses the strongest matching tier:
    and the span from the first to the last matched rune must be at most three
    times the token length. `tst` finds `testtest.ods` this way.
 
-A filename's tier is its weakest token's tier. With `sort: "relevance"`, loose
+With `in: "path"`, typo and loose matching run only on normalized path forms
+of at most 256 runes. Longer forms use exact matching only, including hits near
+the end of the path. The cap applies separately to each form (with or without
+accents and word gaps); the 32-rune typo token cap and 8 KiB query cap still apply.
+This means `in: "path"` can find fewer fuzzy hits than `in: "name"` for deep
+paths. Use `in: "name"` when only basename typo or abbreviation matching matters.
+
+A result's tier is its weakest token's tier. With `sort: "relevance"`, loose
 hits always appear after exact and typo hits. With other sorts, loose hits appear
 only when the complete selection has no exact or typo hit. This rule applies
 after all filters, before pagination. `match: "exact"` includes
@@ -86,12 +109,19 @@ only the first tier.
 Use `sort: "relevance"` with a non-empty `q`. Filegate orders results by:
 
 1. Tier: exact, then typo, then loose.
-2. Sub-rank, summed across tokens in the filename's weakest tier. Exact uses
+2. Sub-rank, summed across tokens in the result's weakest tier. Exact uses
    equality (0), prefix (1), word start (2), substring (3); typo sums edit
    distances. Loose first prefers fewer tokens that start inside a word, then
    the smaller sum of matched spans.
-3. No accent folding needed, then accent folding needed.
-4. Shorter basename in runes, fewer path segments, then path in byte order.
+3. With `in: "path"`, fewer tokens without a basename hit at their selected
+   tier or better. Count all tokens, including those in stronger tiers. A weaker
+   basename hit does not promote a stronger parent hit.
+4. No accent folding needed, then accent folding needed.
+5. Shorter basename in runes, fewer path segments, then path in byte order.
+
+Exact equality and prefix refer to the whole selected string: the basename by
+default, or the relative path with `in: "path"`. A first-folder prefix can
+therefore outrank a basename word-start hit, because sub-rank is compared first.
 
 `order` is ignored for relevance; results always run from best to worst.
 An empty or whitespace-only `q` with relevance returns 400 (`invalid_argument`).
@@ -104,7 +134,12 @@ outside the retained K.
 Only retained hits are pageable. Other sorts have no top-K cap.
 
 Every search page with a non-empty `q` includes `matches`, aligned with `items`.
-Each entry is an array of `[start, end)` rune ranges into the original basename.
+Each entry is an array of `[start, end)` rune ranges into the original basename
+with `in: "name"`. With `in: "path"`, offsets refer to `items[i].path` relative
+to the normalized search base, without a leading slash. For base `docs` and node
+`docs/Müller/2026/scan.pdf`, the offset string is `Müller/2026/scan.pdf`;
+`muller 2026` highlights `[[0, 6], [7, 11]]`. At the root base (`.`), use the
+returned path as-is. `Node.path` always remains root-relative.
 Exact hits highlight matching runes, typo hits the matched approximate substring,
 and loose hits the individual matched runes. Adjacent or overlapping ranges merge.
 Offsets refer to the original spelling, including composed or decomposed accents

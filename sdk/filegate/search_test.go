@@ -179,3 +179,25 @@ func TestSearchFiltersTimestampUTC(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchPathForwarding(t *testing.T) {
+	for _, in := range []string{"", "name", "path"} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("in") != in || q.Has("in") != (in != "") || q.Get("path") != "docs" || q.Get("q") != "rechnung 2026" {
+				t.Errorf("unexpected URL: %s", r.URL)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[{"path":"docs/Rechnungen/2026/scan01.pdf"}],"matches":[[[0,8],[11,15]]]}`))
+		}))
+		client, err := New(server.URL, "secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := client.Root("files").Search(context.Background(), "rechnung 2026", "docs", ListingOptions{In: in})
+		server.Close()
+		if err != nil || page.Matches == nil || (*page.Matches)[0][0] != (MatchRange{0, 8}) {
+			t.Fatalf("%+v %v", page, err)
+		}
+	}
+}

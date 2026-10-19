@@ -60,13 +60,15 @@ export class RootClient {
   resolve(id: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/resolve`, { id }); }
   /** List immediate children without consuming search capacity. */
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
-  /** Match descendant basenames using options.match (exact by default, or fuzzy).
+  /** Match descendant basenames, or scope-relative paths with in: "path".
+   * options.match defaults to exact; fuzzy includes typo and loose matching.
    * Metadata filters also work with an empty query. Size bounds are inclusive;
    * modifiedAfter is inclusive and modifiedBefore exclusive (RFC 3339 strings).
    * The server rejects raw queries over 8 KiB (UTF-8) or more than eight whitespace
    * tokens with 400 invalid_argument. Relevance requires non-empty q, ignores
-   * order and retains the best K. matches uses basename rune offsets; complete
-   * snapshot pages also report total/truncated. Search does not retry automatically. On 429
+   * order and retains the best K. matches uses basename rune offsets by default,
+   * or with in: "path", Node.path relative to options.path without a leading slash.
+   * Complete snapshot pages also report total/truncated. Search does not retry automatically. On 429
    * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages
    * retain their captured observation during concurrent writes; cursors remain
    * bound to that observation. Retained relevance hits that disappear, change
