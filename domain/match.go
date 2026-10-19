@@ -26,8 +26,8 @@ const (
 )
 
 type nameToken struct {
-	text, compact, folded, foldedCompact string
-	runes, foldedRunes                   []rune
+	text, compact, folded, foldedCompact                 string
+	runes, compactRunes, foldedRunes, foldedCompactRunes []rune
 }
 
 // nameQuery is compiled once per selection. Its scratch buffers are reused per
@@ -40,11 +40,12 @@ type nameQuery struct {
 	normalizer                            norm.Iter
 	plain, compact, folded, foldedCompact []byte
 	runes                                 []rune
+	compactStarts, foldedCompactStarts    []bool
 }
 
 // Scores retain each token's best tier and sub-rank for future relevance sorting.
-// Lower ranks, distances and spans are better; word starts and unaccented matches
-// win ties. The node's tier is the worst token tier. No ranges are retained.
+// Lower ranks, distances and spans are better; word starts and matches without
+// accent folding win ties. The node's tier is the worst token tier. No ranges are retained.
 type nameTokenMatch struct {
 	tier, exactRank, distance, span int
 	wordStart, accentFolded         bool
@@ -63,7 +64,9 @@ func compileNameQuery(query string) (*nameQuery, error) {
 		q.normalize(field)
 		token := nameToken{text: string(q.plain), compact: string(q.compact), folded: string(q.folded), foldedCompact: string(q.foldedCompact)}
 		token.runes = []rune(token.text)
+		token.compactRunes = []rune(token.compact)
 		token.foldedRunes = []rune(token.folded)
+		token.foldedCompactRunes = []rune(token.foldedCompact)
 		q.tokens = append(q.tokens, token)
 	}
 	return q, nil
@@ -75,6 +78,8 @@ func nameBoundary(r rune) bool {
 
 func (q *nameQuery) normalize(name string) {
 	q.plain, q.compact = q.plain[:0], q.compact[:0]
+	q.compactStarts = q.compactStarts[:0]
+	wordStart := true
 	// Most names are ASCII: full folding and NFC are equivalent to this loop.
 	ascii := true
 	for i := 0; i < len(name); i++ {
@@ -91,13 +96,17 @@ func (q *nameQuery) normalize(name string) {
 			}
 			if nameBoundary(rune(c)) {
 				q.plain = append(q.plain, ' ')
+				wordStart = true
 			} else {
 				q.plain = append(q.plain, c)
 				q.compact = append(q.compact, c)
+				q.compactStarts = append(q.compactStarts, wordStart)
+				wordStart = false
 			}
 		}
 		q.folded = append(q.folded[:0], q.plain...)
 		q.foldedCompact = append(q.foldedCompact[:0], q.compact...)
+		q.foldedCompactStarts = append(q.foldedCompactStarts[:0], q.compactStarts...)
 		return
 	}
 	q.normalizer.InitString(norm.NFC, name)
@@ -115,13 +124,18 @@ func (q *nameQuery) normalize(name string) {
 	for _, r := range string(q.nfc) {
 		if nameBoundary(r) {
 			q.plain = append(q.plain, ' ')
+			wordStart = true
 		} else {
 			q.plain = utf8.AppendRune(q.plain, r)
 			q.compact = utf8.AppendRune(q.compact, r)
+			q.compactStarts = append(q.compactStarts, wordStart)
+			wordStart = false
 		}
 	}
 	q.normalizer.Init(norm.NFD, q.plain)
 	q.folded, q.foldedCompact = q.folded[:0], q.foldedCompact[:0]
+	q.foldedCompactStarts = q.foldedCompactStarts[:0]
+	wordStart = true
 	for !q.normalizer.Done() {
 		for _, r := range string(q.normalizer.Next()) {
 			if unicode.Is(unicode.M, r) {
@@ -130,6 +144,10 @@ func (q *nameQuery) normalize(name string) {
 			q.folded = utf8.AppendRune(q.folded, r)
 			if r != ' ' {
 				q.foldedCompact = utf8.AppendRune(q.foldedCompact, r)
+				q.foldedCompactStarts = append(q.foldedCompactStarts, wordStart)
+				wordStart = false
+			} else {
+				wordStart = true
 			}
 		}
 	}
@@ -142,18 +160,24 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 	}
 	q.normalize(name)
 	for i, token := range q.tokens {
-		best := exactNameToken(q.plain, token.text)
-		best = betterNameMatch(best, exactNameToken(q.compact, token.compact))
+		best := exactNameToken(q.plain, token.text, nil)
+		best = betterNameMatch(best, exactNameToken(q.compact, token.compact, q.compactStarts))
 		accent := !bytes.Equal(q.plain, q.folded) || token.text != token.folded
 		if accent {
-			folded := betterNameMatch(exactNameToken(q.folded, token.folded), exactNameToken(q.foldedCompact, token.foldedCompact))
+			folded := betterNameMatch(exactNameToken(q.folded, token.folded, nil), exactNameToken(q.foldedCompact, token.foldedCompact, q.foldedCompactStarts))
 			folded.accentFolded = true
 			best = betterNameMatch(best, folded)
 		}
 		if best.tier == 0 && q.fuzzy {
-			best = q.fuzzyToken(q.plain, token.runes)
+			best = q.fuzzyToken(q.plain, token.runes, nil)
+			if len(q.compact) != len(q.plain) || token.compact != token.text {
+				best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
+			}
 			if accent {
-				folded := q.fuzzyToken(q.folded, token.foldedRunes)
+				folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
+				if len(q.foldedCompact) != len(q.folded) || token.foldedCompact != token.folded {
+					folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
+				}
 				folded.accentFolded = true
 				best = betterNameMatch(best, folded)
 			}
@@ -215,7 +239,7 @@ func betterNameMatch(a, b nameTokenMatch) nameTokenMatch {
 	return a
 }
 
-func exactNameToken(name []byte, token string) nameTokenMatch {
+func exactNameToken(name []byte, token string, starts []bool) nameTokenMatch {
 	if token == "" {
 		return nameTokenMatch{}
 	}
@@ -233,7 +257,11 @@ func exactNameToken(name []byte, token string) nameTokenMatch {
 		}
 		i += offset
 		previous, _ := utf8.DecodeLastRune(name[:i])
-		if nameBoundary(previous) {
+		wordStart := nameBoundary(previous)
+		if starts != nil {
+			wordStart = starts[utf8.RuneCount(name[:i])]
+		}
+		if wordStart {
 			return nameTokenMatch{tier: nameExact, exactRank: exactWord, wordStart: true}
 		}
 		best = nameTokenMatch{tier: nameExact, exactRank: exactSubstring}
@@ -242,7 +270,7 @@ func exactNameToken(name []byte, token string) nameTokenMatch {
 	return best
 }
 
-func (q *nameQuery) fuzzyToken(name []byte, token []rune) nameTokenMatch {
+func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
 	q.runes = q.runes[:0]
 	var present uint64
 	for _, r := range string(name) {
@@ -270,20 +298,20 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune) nameTokenMatch {
 		}
 	}
 	if budget > 0 {
-		if score := typoNameToken(q.runes, token, budget); score.tier != 0 {
+		if score := typoNameToken(q.runes, token, budget, starts); score.tier != 0 {
 			return score
 		}
 	}
 	if missing != 0 {
 		return nameTokenMatch{}
 	}
-	return looseNameToken(q.runes, token)
+	return looseNameToken(q.runes, token, starts)
 }
 
 // Each start explores at most four edit choices at each of at most two edits.
 // Matching prefixes are consumed without branching. O(n*m*4^k), k <= 2, constant
 // stack space, no matrix or per-name allocations. Long tokens are not truncated.
-func typoNameToken(name, token []rune, budget int) nameTokenMatch {
+func typoNameToken(name, token []rune, budget int, starts []bool) nameTokenMatch {
 	best := nameTokenMatch{}
 	for start := 0; start < len(name); start++ {
 		if len(name)-start < len(token)-budget {
@@ -291,7 +319,7 @@ func typoNameToken(name, token []rune, budget int) nameTokenMatch {
 		}
 		distance := osaPrefix(name[start:], token, budget)
 		if distance <= budget {
-			candidate := nameTokenMatch{tier: nameTypo, distance: distance, wordStart: start == 0 || nameBoundary(name[start-1])}
+			candidate := nameTokenMatch{tier: nameTypo, distance: distance, wordStart: nameRuneStart(name, starts, start)}
 			best = betterNameMatch(best, candidate)
 			if distance == 0 {
 				break
@@ -337,7 +365,7 @@ func osaPrefix(name, token []rune, budget int) int {
 
 // Greedy completion gives the smallest span for each start. The span cap bounds
 // each attempt to 3*m runes; a short name or missing rune fails without branching.
-func looseNameToken(name, token []rune) nameTokenMatch {
+func looseNameToken(name, token []rune, starts []bool) nameTokenMatch {
 	if len(token) < 2 || len(token) > len(name) {
 		return nameTokenMatch{}
 	}
@@ -353,10 +381,18 @@ func looseNameToken(name, token []rune) nameTokenMatch {
 			}
 			j++
 			if j == len(token) {
-				best = betterNameMatch(best, nameTokenMatch{tier: nameLoose, wordStart: start == 0 || nameBoundary(name[start-1]), span: end - start + 1})
+				best = betterNameMatch(best, nameTokenMatch{tier: nameLoose, wordStart: nameRuneStart(name, starts, start), span: end - start + 1})
 				break
 			}
 		}
 	}
 	return best
+}
+
+// Compact forms retain the original word starts even after removing gaps.
+func nameRuneStart(name []rune, starts []bool, start int) bool {
+	if starts != nil {
+		return starts[start]
+	}
+	return start == 0 || nameBoundary(name[start-1])
 }

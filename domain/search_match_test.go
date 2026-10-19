@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -190,5 +191,25 @@ func TestSearchMatchExecutionAuthorizesEveryNode(t *testing.T) {
 	page, err = r.Search(context.Background(), "tata", ".", opts)
 	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "b-taxa" || page.Next != "" {
 		t.Fatalf("retry: %+v %v", page, err)
+	}
+}
+
+func TestSearchMatchListKeepsImmediateChildPaging(t *testing.T) {
+	r := indexedListingRoot(t, []Node{{Path: "a", Directory: true}, {Path: "a/nested"}, {Path: "a/nested/another"}, {Path: "z"}})
+	r.Files = &listingFiles{base: t.TempDir()}
+	page, err := r.List(context.Background(), ".", ListingOptions{Match: "fuzzy", Limit: 1, MaxEntries: 1})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "a" || page.Next == "" {
+		t.Fatalf("list descended into subtree: %+v %v", page, err)
+	}
+	var cursor listingCursor
+	raw, err := base64.RawURLEncoding.DecodeString(page.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	if cursor.Snapshot != "" || cursor.Last == "" {
+		t.Fatalf("list lost indexed continuation: %+v", cursor)
 	}
 }

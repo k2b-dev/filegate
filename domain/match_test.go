@@ -34,6 +34,15 @@ func TestNameQueryMatch(t *testing.T) {
 		{label: "all gaps", query: "quartalsbericht", name: "Quartals - .\t\u2003Bericht.xlsx", tier: 1, rank: exactPrefix, word: true},
 		{label: "query separator", query: "quartals-bericht", name: "Quartals_Bericht.xlsx", tier: 1, rank: exactPrefix, word: true},
 		{label: "separator token", query: "--", name: "x---", tier: 1, rank: exactWord, word: true},
+		{label: "gapless word rank", query: "testtest", name: "my_test-test.pdf", tier: 1, rank: exactWord, word: true},
+		{label: "gapless typo", query: "taxfrom", name: "tax-form.pdf", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "gapless typo word rank", query: "taxfrom", name: "my_tax-form.pdf", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "gapless loose word rank", query: "ab", name: "q_a---x---b", fuzzy: true, tier: 3, span: 3, word: true},
+		{label: "folded gapless word rank", query: "testtest", name: "q_tést-test.pdf", tier: 1, rank: exactWord, word: true, accent: true},
+		{label: "gapless query typo", query: "tax-frm", name: "taxform.pdf", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "gapless loose", query: "ab", name: "a---x---b", fuzzy: true, tier: 3, span: 3, word: true},
+		{label: "folded gapless typo", query: "taxfrom", name: "täx-form.pdf", fuzzy: true, tier: 2, distance: 1, word: true, accent: true},
+		{label: "gapless query loose", query: "ab-cd", name: "a1b2c3d", fuzzy: true, tier: 3, span: 7, word: true},
 		{label: "exact no typo", query: "tsettest", name: "testtest.ods"},
 		{label: "transpose first", query: "tsettest", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1, word: true},
 		{label: "transpose last", query: "testtets", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1, word: true},
@@ -149,7 +158,7 @@ func TestNameQueryAgainstOSA(t *testing.T) {
 					}
 				}
 				for _, budget := range []int{1, 2} {
-					score := typoNameToken(runes, token, budget)
+					score := typoNameToken(runes, token, budget, nil)
 					// An empty fragment is irrelevant for real tokens (length >= 4, budget <= 2).
 					want := best <= budget && len(runes) > 0
 					if (score.tier != 0) != want || want && score.distance != best {

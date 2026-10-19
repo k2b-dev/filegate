@@ -206,7 +206,7 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
 func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
-	if o.Match == "fuzzy" || recursive && p != "." && o.Sort != "path" {
+	if recursive && (o.Match == "fuzzy" || p != "." && o.Sort != "path") {
 		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 			scanned := 0
 			prefix := "i/" + r.generation + "/"
