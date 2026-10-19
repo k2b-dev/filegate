@@ -52,6 +52,43 @@ func TestSearchMatchTierSelectionUsesTypeFilter(t *testing.T) {
 	}
 }
 
+func TestSearchMatchSnapshotMemoryLimit(t *testing.T) {
+	previousLimit := listingMemoryLimit
+	listingMemoryLimit = 1024
+	t.Cleanup(func() { listingMemoryLimit = previousLimit })
+	loose := []Node{{Path: "a-t1a2t3a"}, {Path: "b-t1a2t3a"}, {Path: "c-t1a2t3a"}, {Path: "d-t1a2t3a"}, {Path: "e-t1a2t3a"}}
+	for _, tc := range []struct {
+		label string
+		nodes []Node
+		want  string
+		limit bool
+	}{
+		{label: "overflow before late exact", nodes: append(append([]Node{}, loose...), Node{Path: "z-tata"}), want: "z-tata"},
+		{label: "overflow before late typo", nodes: append(append([]Node{}, loose...), Node{Path: "z-taxa"}), want: "z-taxa"},
+		{label: "overflow without strong", nodes: append(append([]Node{}, loose...), Node{Path: "z-unrelated"}), limit: true},
+		{label: "loose after strong", nodes: append([]Node{{Path: "0-tata"}}, loose...), want: "0-tata"},
+		{label: "strong still bounded", nodes: []Node{{Path: "a-tata"}, {Path: "b-tata"}, {Path: "c-tata"}, {Path: "d-tata"}, {Path: "e-tata"}}, limit: true},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			r := indexedListingRoot(t, tc.nodes)
+			page, err := r.Search(context.Background(), "tata", ".", ListingOptions{Match: "fuzzy"})
+			if tc.limit {
+				if !errors.Is(err, ErrLimit) || len(page.Items) != 0 {
+					t.Fatalf("overflow: %+v %v", page, err)
+				}
+			} else if err != nil || len(page.Items) != 1 || page.Items[0].Path != tc.want || page.Next != "" {
+				t.Fatalf("selection: %+v %v; want %q", page, err, tc.want)
+			}
+			if tc.label == "overflow without strong" && r.State.(*listingState).visits != len(tc.nodes) {
+				t.Fatal("loose overflow stopped scanning before checking for strong hits")
+			}
+			if r.listingBytes != 0 || len(r.listings) != 0 {
+				t.Fatal("discarded snapshot retained in cache")
+			}
+		})
+	}
+}
+
 func TestSearchMatchRootSnapshotAndBudget(t *testing.T) {
 	r := indexedListingRoot(t, []Node{{Path: "a-t1a2t3a.ods"}, {Path: "z-taxa"}})
 	page, err := r.Search(context.Background(), "tata", ".", ListingOptions{Match: "fuzzy", Limit: 1})

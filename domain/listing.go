@@ -19,7 +19,8 @@ import (
 const currentIndexFormat = 2
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
-const listingMemoryLimit int64 = 32 << 20
+
+var listingMemoryLimit int64 = 32 << 20
 
 var ErrCursorInvalid = errors.New("listing cursor is invalid or expired; restart the query")
 var errListingStop = errors.New("listing complete")
@@ -312,9 +313,10 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		snapshot = &listingSnapshot{query: c.Query, entries: []Node{}}
 		strong := false
+		looseOverflow := false
 		err := scan(func(n Node) error {
 			tier := matches(n)
-			if tier == 0 || tier == nameLoose && strong {
+			if tier == 0 || tier == nameLoose && (strong || looseOverflow) {
 				return nil
 			}
 			// Once any exact/typo hit exists, loose hits cannot enter this
@@ -330,7 +332,15 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			}
 			snapshot.bytes += int64(len(encoded) + 128)
 			if snapshot.bytes > listingMemoryLimit {
-				return ErrLimit
+				if strong {
+					return ErrLimit
+				}
+				// Loose hits are provisional: a later exact/typo hit can
+				// suppress them all. Release storage but finish the scan.
+				looseOverflow = true
+				snapshot.entries = nil
+				snapshot.bytes = 0
+				return nil
 			}
 			for r.listingBytes+snapshot.bytes > listingMemoryLimit {
 				r.evictListing()
@@ -340,6 +350,9 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		})
 		if err != nil {
 			return Page{}, err
+		}
+		if looseOverflow && !strong {
+			return Page{}, ErrLimit
 		}
 		sort.Slice(snapshot.entries, func(i, j int) bool {
 			a, b := snapshot.entries[i], snapshot.entries[j]
