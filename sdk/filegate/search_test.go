@@ -115,3 +115,23 @@ func TestSearchFiltersOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSearchFiltersInvalidTimestampOffset(t *testing.T) {
+	handler := httpadapter.New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, httpadapter.Options{Token: "secret"})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offset := range []int{-24 * 60 * 60, 24 * 60 * 60} {
+		at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("offset", offset))
+		for _, opts := range []ListingOptions{{ModifiedAfter: &at}, {ModifiedBefore: &at}} {
+			_, err := client.Root("files").Search(context.Background(), "", ".", opts)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_argument" || apiErr.Message == "" {
+				t.Fatalf("offset=%d filters=%+v: %v", offset, opts, err)
+			}
+		}
+	}
+}

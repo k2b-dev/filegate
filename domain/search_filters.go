@@ -4,7 +4,16 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
+
+func normalizeSearchExtension(ext string) string {
+	// Match the name matcher's NFC and full case folding, retaining accents
+	// and separators because extensions are compared as complete values.
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(ext)))
+}
 
 func normalizeSearchFilters(o ListingOptions) (ListingOptions, error) {
 	if len(o.Ext) > 0 {
@@ -13,7 +22,7 @@ func normalizeSearchFilters(o ListingOptions) (ListingOptions, error) {
 			if ext == "" || strings.HasPrefix(ext, ".") {
 				return o, ErrInvalid
 			}
-			extensions = append(extensions, strings.ToLower(ext))
+			extensions = append(extensions, normalizeSearchExtension(ext))
 		}
 		sort.Strings(extensions)
 		o.Ext = extensions[:0]
@@ -60,7 +69,7 @@ func (o ListingOptions) matchesSearchFilters(n Node) bool {
 			if dot <= 0 || dot == len(name)-1 {
 				return false
 			}
-			ext := strings.ToLower(name[dot+1:])
+			ext := normalizeSearchExtension(name[dot+1:])
 			i := sort.SearchStrings(o.Ext, ext)
 			if i == len(o.Ext) || o.Ext[i] != ext {
 				return false

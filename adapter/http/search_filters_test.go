@@ -52,3 +52,59 @@ func TestSearchFiltersInvalidHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchFiltersTimestampSyntax(t *testing.T) {
+	h := New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, Options{Token: "secret"})
+	for _, parameter := range []string{"modifiedAfter", "modifiedBefore"} {
+		for _, raw := range []string{
+			"2026-01-01T00:00:00+24:00", "2026-01-01T00:00:00-24:00",
+			"2026-01-01T00:00:00+01:60", "2026-01-01T00:00:00-01:60",
+			"2026-01-01T00:00:00,123Z", "2026-01-01T0:00:00Z",
+			"2026-01-01T24:00:00Z", "2026-01-01T00:60:00Z", "2026-01-01T00:00:60Z",
+			"2026-01-01t00:00:00Z", "2026-01-01T00:00:00z", "2026-01-01T00:00:00.Z",
+			"2026-01-01T00:00:00Z\n", "2026-02-29T00:00:00Z",
+		} {
+			t.Run(parameter+"/invalid/"+raw, func(t *testing.T) {
+				q := url.Values{parameter: {raw}}
+				req := httptest.NewRequest("GET", "/v1/roots/files/search?"+q.Encode(), nil)
+				if _, err := searchOptions(req); err == nil {
+					t.Fatal("accepted invalid RFC 3339 timestamp")
+				}
+				req.Header.Set("Authorization", "Bearer secret")
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, req)
+				var body api.Error
+				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if w.Code != 400 || body.Error != "invalid_argument" || body.Message == "" {
+					t.Fatalf("%d %+v", w.Code, body)
+				}
+			})
+		}
+		for _, raw := range []string{
+			"2026-01-01T00:00:00Z", "2026-01-01T23:59:59Z",
+			"2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.123456789Z",
+			"2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00-00:00",
+			"2026-01-01T00:00:00+23:59", "2026-01-01T00:00:00-23:59",
+			"2024-02-29T00:00:00.123+01:30",
+			"0000-01-01T00:00:00Z", "9999-12-31T23:59:59Z",
+		} {
+			t.Run(parameter+"/valid/"+raw, func(t *testing.T) {
+				q := url.Values{parameter: {raw}}
+				opts, err := searchOptions(httptest.NewRequest("GET", "/?"+q.Encode(), nil))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := opts.ModifiedAfter
+				if parameter == "modifiedBefore" {
+					got = opts.ModifiedBefore
+				}
+				want, err := time.Parse(time.RFC3339, raw)
+				if err != nil || got == nil || !got.Equal(want) {
+					t.Fatalf("parsed %v, want %v: %v", got, want, err)
+				}
+			})
+		}
+	}
+}

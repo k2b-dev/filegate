@@ -3,10 +3,15 @@ package httpadapter
 import (
 	"github.com/k2b-dev/filegate/v7/domain"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// time.Parse also accepts malformed RFC 3339 hours, offsets and fractions.
+// Check wire syntax first; parsing then validates the calendar date.
+var searchTimestampSyntax = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
 
 func listingOptions(r *http.Request) domain.ListingOptions {
 	q := r.URL.Query()
@@ -44,7 +49,11 @@ func searchOptions(r *http.Request) (domain.ListingOptions, error) {
 		if !q.Has(bound.name) {
 			continue
 		}
-		v, err := time.Parse(time.RFC3339, q.Get(bound.name))
+		raw := q.Get(bound.name)
+		if !searchTimestampSyntax.MatchString(raw) {
+			return o, domain.ErrInvalid
+		}
+		v, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			return o, domain.ErrInvalid
 		}

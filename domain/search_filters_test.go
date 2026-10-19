@@ -48,6 +48,10 @@ func TestSearchFiltersPredicate(t *testing.T) {
 		want bool
 	}{
 		{"case insensitive", ListingOptions{Ext: []string{"PDF"}}, Node{Path: "reports/a.PdF"}, true},
+		{"unicode sigma", ListingOptions{Ext: []string{"Σ"}}, Node{Path: "report.ς"}, true},
+		{"unicode expansion", ListingOptions{Ext: []string{"SS"}}, Node{Path: "report.ß"}, true},
+		{"unicode canonical form", ListingOptions{Ext: []string{"É"}}, Node{Path: "report.e\u0301"}, true},
+		{"unicode accents distinct", ListingOptions{Ext: []string{"e"}}, Node{Path: "report.é"}, false},
 		{"multi dot final", ListingOptions{Ext: []string{"gz"}}, Node{Path: "a.tar.gz"}, true},
 		{"multi dot earlier", ListingOptions{Ext: []string{"tar"}}, Node{Path: "a.tar.gz"}, false},
 		{"no extension", ListingOptions{Ext: []string{"pdf"}}, Node{Path: "pdf"}, false},
@@ -150,6 +154,34 @@ func TestSearchFiltersCursor(t *testing.T) {
 			if _, err := r.Search(context.Background(), "", ".", changed); !errors.Is(err, ErrCursorInvalid) {
 				t.Fatalf("%s change %d accepted: %v", mode, i, err)
 			}
+		}
+	}
+}
+
+func TestSearchFiltersUnicodeCursor(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		filter, equivalent, extension string
+	}{
+		{"Σ", "ς", "σ"},
+		{"SS", "ß", "ß"},
+		{"É", "E\u0301", "e\u0301"},
+	} {
+		for _, mode := range []string{"exact", "fuzzy"} {
+			t.Run(tc.filter+"/"+mode, func(t *testing.T) {
+				r := indexedListingRoot(t, []Node{{Path: "a." + tc.extension}, {Path: "b." + tc.extension}})
+				r.now = func() time.Time { return at }
+				opts := ListingOptions{Ext: []string{tc.filter, tc.equivalent}, Limit: 1, Match: mode}
+				page, err := r.Search(context.Background(), "", ".", opts)
+				if err != nil || page.Next == "" || len(page.Items) != 1 || page.Items[0].Path != "a."+tc.extension {
+					t.Fatalf("first page: %+v %v", page, err)
+				}
+				opts.After, opts.Ext = page.Next, []string{tc.equivalent}
+				page, err = r.Search(context.Background(), "", ".", opts)
+				if err != nil || len(page.Items) != 1 || page.Items[0].Path != "b."+tc.extension {
+					t.Fatalf("equivalent extension cursor: %+v %v", page, err)
+				}
+			})
 		}
 	}
 }
