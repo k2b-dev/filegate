@@ -14,6 +14,7 @@ import (
 
 const nameQueryTokenLimit = 8
 const nameQueryByteLimit = 8 << 10
+const nameTypoRuneLimit = 32
 const (
 	nameExact = 1
 	nameTypo  = 2
@@ -27,7 +28,7 @@ const (
 )
 
 type nameToken struct {
-	text, compact, folded, foldedCompact                 string
+	text, compact, folded, foldedCompact                 []byte
 	runes, compactRunes, foldedRunes, foldedCompactRunes []rune
 }
 
@@ -67,11 +68,11 @@ func compileNameQuery(query string) (*nameQuery, error) {
 			return nil, fmt.Errorf("%w: name query must have at most %d tokens", ErrInvalid, nameQueryTokenLimit)
 		}
 		q.normalize(field)
-		token := nameToken{text: string(q.plain), compact: string(q.compact), folded: string(q.folded), foldedCompact: string(q.foldedCompact)}
-		token.runes = []rune(token.text)
-		token.compactRunes = []rune(token.compact)
-		token.foldedRunes = []rune(token.folded)
-		token.foldedCompactRunes = []rune(token.foldedCompact)
+		token := nameToken{text: bytes.Clone(q.plain), compact: bytes.Clone(q.compact), folded: bytes.Clone(q.folded), foldedCompact: bytes.Clone(q.foldedCompact)}
+		token.runes = []rune(string(token.text))
+		token.compactRunes = []rune(string(token.compact))
+		token.foldedRunes = []rune(string(token.folded))
+		token.foldedCompactRunes = []rune(string(token.foldedCompact))
 		q.tokens = append(q.tokens, token)
 	}
 	return q, nil
@@ -126,7 +127,9 @@ func (q *nameQuery) normalize(name string) {
 	for !q.normalizer.Done() {
 		q.nfc = append(q.nfc, q.normalizer.Next()...)
 	}
-	for _, r := range string(q.nfc) {
+	for remaining := q.nfc; len(remaining) > 0; {
+		r, size := utf8.DecodeRune(remaining)
+		remaining = remaining[size:]
 		if nameBoundary(r) {
 			q.plain = append(q.plain, ' ')
 			wordStart = true
@@ -167,7 +170,7 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 	for i, token := range q.tokens {
 		best := exactNameToken(q.plain, token.text, nil)
 		best = betterNameMatch(best, exactNameToken(q.compact, token.compact, q.compactStarts))
-		accent := !bytes.Equal(q.plain, q.folded) || token.text != token.folded
+		accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
 		if accent {
 			folded := betterNameMatch(exactNameToken(q.folded, token.folded, nil), exactNameToken(q.foldedCompact, token.foldedCompact, q.foldedCompactStarts))
 			folded.accentFolded = true
@@ -177,12 +180,12 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 			best = q.fuzzyToken(q.plain, token.runes, nil)
 			// Exact matching failed for every form. A distance-one typo
 			// without accent folding cannot be improved by another form.
-			if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || token.compact != token.text) {
+			if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || !bytes.Equal(token.compact, token.text)) {
 				best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
 			}
 			if accent && (best.tier != nameTypo || best.distance > 1) {
 				folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
-				if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || token.foldedCompact != token.folded) {
+				if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || !bytes.Equal(token.foldedCompact, token.folded)) {
 					folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
 				}
 				folded.accentFolded = true
@@ -246,19 +249,19 @@ func betterNameMatch(a, b nameTokenMatch) nameTokenMatch {
 	return a
 }
 
-func exactNameToken(name []byte, token string, starts []bool) nameTokenMatch {
-	if token == "" {
+func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
+	if len(token) == 0 {
 		return nameTokenMatch{}
 	}
-	if bytes.Equal(name, []byte(token)) {
+	if bytes.Equal(name, token) {
 		return nameTokenMatch{tier: nameExact, exactRank: exactEqual, wordStart: true}
 	}
-	if bytes.HasPrefix(name, []byte(token)) {
+	if bytes.HasPrefix(name, token) {
 		return nameTokenMatch{tier: nameExact, exactRank: exactPrefix, wordStart: true}
 	}
 	best := nameTokenMatch{}
 	for offset := 0; offset < len(name); {
-		i := bytes.Index(name[offset:], []byte(token))
+		i := bytes.Index(name[offset:], token)
 		if i < 0 {
 			break
 		}
@@ -280,15 +283,19 @@ func exactNameToken(name []byte, token string, starts []bool) nameTokenMatch {
 func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
 	q.runes = q.runes[:0]
 	var present uint64
-	for _, r := range string(name) {
+	for len(name) > 0 {
+		r, size := utf8.DecodeRune(name)
+		name = name[size:]
 		q.runes = append(q.runes, r)
 		present |= 1 << (uint32(r) % 64)
 	}
 	budget := 0
-	if len(token) >= 8 {
-		budget = 2
-	} else if len(token) >= 4 {
-		budget = 1
+	if len(token) <= nameTypoRuneLimit {
+		if len(token) >= 8 {
+			budget = 2
+		} else if len(token) >= 4 {
+			budget = 1
+		}
 	}
 	if len(token) > len(q.runes)+budget {
 		return nameTokenMatch{}
@@ -317,7 +324,8 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTok
 
 // Each start explores at most four edit choices at each of at most two edits.
 // Matching prefixes are consumed without branching. O(n*m*4^k), k <= 2, constant
-// stack space, no matrix or per-name allocations. Long tokens are not truncated.
+// stack space, no matrix or per-name allocations. The caller limits typo tokens
+// to nameTypoRuneLimit runes; longer tokens still use exact and loose matching.
 // minimumDistance is one after all exact forms miss, or zero for a general scan.
 func typoNameToken(name, token []rune, budget, minimumDistance int, starts []bool) nameTokenMatch {
 	best := nameTokenMatch{}

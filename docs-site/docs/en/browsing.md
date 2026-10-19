@@ -68,8 +68,9 @@ Each token uses the strongest matching tier:
    match with word gaps removed.
 2. **Typo:** an approximate substring with optimal string alignment distance:
    one insertion, deletion, substitution or adjacent transposition for tokens of
-   4–7 runes; up to two edits for tokens of 8 or more runes. Shorter tokens never
-   get typo matching. `tsettest` and `tete` both find `testtest.ods`.
+   4–7 runes; up to two edits for tokens of 8–32 runes. Tokens outside the 4–32
+   rune range use exact and loose matching only. `tsettest` and `tete` both find
+   `testtest.ods`.
 3. **Loose:** the token's runes occur in order. Tokens need at least two runes,
    and the span from the first to the last matched rune must be at most three
    times the token length. `tst` finds `testtest.ods` this way.

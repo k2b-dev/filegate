@@ -335,8 +335,9 @@ match with gaps removed (`quartalsbericht` finds `Quartals_Bericht.xlsx`). At mo
 8 KiB (8192 UTF-8 bytes) before normalization. Exceeding either query limit or
 using an unknown match returns 400 (`invalid_argument`).
 Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
-adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for >=8;
-shorter tokens never get typos. Tier 3: subsequence, token >=2 runes, span <=3x
+adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for 8–32;
+tokens outside 4–32 runes use exact and loose matching only.
+Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
 A node's tier is its worst token. For every supported sort, tier 3 appears only
 if the complete path/type-filtered selection has no tier 1/2 hit. Fuzzy always

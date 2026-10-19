@@ -67,8 +67,12 @@ func TestNameQueryMatch(t *testing.T) {
 		{label: "loose smaller interior span", query: "ab", name: "xaxxxbxaxb", fuzzy: true, tier: 3, span: 3},
 		{label: "empty query", name: "anything", tier: 1},
 		{label: "empty name", query: "abcd", fuzzy: true},
-		{label: "long typo", query: strings.Repeat("ä", 64) + "b", name: strings.Repeat("Ä", 64) + "c", fuzzy: true, tier: 2, distance: 1, word: true},
-		{label: "repeated prefix typo", query: strings.Repeat("a", 128) + "b", name: strings.Repeat("a", 255), fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "32 rune typo", query: strings.Repeat("ä", 31) + "b", name: strings.Repeat("Ä", 31) + "c", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "33 rune no typo", query: strings.Repeat("a", 32) + "b", name: strings.Repeat("a", 32) + "c", fuzzy: true},
+		{label: "long no typo", query: strings.Repeat("ä", 64) + "b", name: strings.Repeat("Ä", 64) + "c", fuzzy: true},
+		{label: "repeated prefix no typo", query: strings.Repeat("a", 128) + "b", name: strings.Repeat("a", 255), fuzzy: true},
+		{label: "long exact", query: strings.Repeat("a", 33), name: strings.Repeat("a", 33), fuzzy: true, tier: 1, word: true},
+		{label: "long loose", query: strings.Repeat("a", 33), name: strings.Repeat("ax", 33), fuzzy: true, tier: 3, span: 65, word: true},
 		{label: "compact improves typo distance", query: "abcdefgh", name: "abcd_efgx", fuzzy: true, tier: 2, distance: 1, word: true},
 		{label: "accent improves typo distance", query: "abcdefgx", name: "äbcdefgh", fuzzy: true, tier: 2, distance: 1, word: true, accent: true},
 		{label: "compact accent improves typo distance", query: "abcdefgx", name: "äbcd_efgh", fuzzy: true, tier: 2, distance: 1, word: true, accent: true},
@@ -129,6 +133,35 @@ func TestNameQueryBufferReuse(t *testing.T) {
 				t.Fatalf("warm match for %q allocated %g", name, allocations)
 			}
 		}
+	}
+}
+
+func TestNameQueryLongTokenAllocations(t *testing.T) {
+	for _, query := range []string{strings.Repeat("a", 64), strings.Repeat("ä", 32), strings.Repeat("a-b", 16)} {
+		t.Run(query, func(t *testing.T) {
+			q, err := compileNameQuery(query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q.fuzzy = true
+			name := "x" + query + ".txt"
+			if ok, _ := q.match(name); !ok {
+				t.Fatal("expected long substring match")
+			}
+			if allocations := testing.AllocsPerRun(100, func() { q.match(name) }); allocations != 0 {
+				t.Fatalf("warm match allocated %g", allocations)
+			}
+		})
+	}
+	q, err := compileNameQuery(strings.Repeat("a", 128) + "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.fuzzy = true
+	name := strings.Repeat("a", 255)
+	q.match(name)
+	if allocations := testing.AllocsPerRun(100, func() { q.match(name) }); allocations != 0 {
+		t.Fatalf("long fuzzy miss allocated %g", allocations)
 	}
 }
 
@@ -211,14 +244,16 @@ func BenchmarkNameQueryTiers(b *testing.B) {
 		tier               int
 	}{
 		{"exact", "bericht 2026", "Quartalsbericht_0123_2026.pdf", 1},
+		{"exact-long", strings.Repeat("a", 64), "x" + strings.Repeat("a", 64) + ".pdf", 1},
+		{"exact-long-accent", strings.Repeat("ä", 32), "x" + strings.Repeat("ä", 32) + ".pdf", 1},
 		{"accent", "muller", "Müller.docx", 1},
 		{"typo1", "quartalsberihct", "Quartalsbericht_0123_2026.pdf", 2},
 		{"typo2", "quatralsberihct", "Quartalsbericht_0123_2026.pdf", 2},
 		{"loose", "tata", "t1a2t3a.ods", 3},
 		{"loose-short", "tst", "testtest.ods", 3},
 		{"miss", "inventarliste", "Quartalsbericht_0123_2026.pdf", 0},
-		{"typo-repeated-prefix", strings.Repeat("a", 128) + "b", strings.Repeat("a", 255), 2},
-		{"typo-eight-tokens", strings.TrimSpace(strings.Repeat(strings.Repeat("a", 128)+"b ", 8)), strings.Repeat("a", 255), 2},
+		{"typo-repeated-prefix", strings.Repeat("a", 128) + "b", strings.Repeat("a", 255), 0},
+		{"typo-eight-tokens", strings.TrimSpace(strings.Repeat(strings.Repeat("a", 128)+"b ", 8)), strings.Repeat("a", 255), 0},
 	} {
 		b.Run(tc.label, func(b *testing.B) {
 			q, _ := compileNameQuery(tc.query)

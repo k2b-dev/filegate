@@ -100,6 +100,56 @@ func TestSearchMatchRootSnapshotAndBudget(t *testing.T) {
 	}
 }
 
+func TestSearchMatchEvictsOnlyForFinalSnapshot(t *testing.T) {
+	previousLimit := listingMemoryLimit
+	listingMemoryLimit = 1024
+	t.Cleanup(func() { listingMemoryLimit = previousLimit })
+	for _, tc := range []struct {
+		label  string
+		strong int
+		evict  bool
+	}{
+		{label: "loose overflow without strong"},
+		{label: "single page", strong: 1},
+		{label: "final snapshot fits", strong: 2},
+		{label: "final snapshot needs eviction", strong: 3, evict: true},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			nodes := []Node{{Path: "cached-a"}, {Path: "cached-b"}, {Path: "a-t1a2t3a"}, {Path: "b-t1a2t3a"}, {Path: "c-t1a2t3a"}, {Path: "d-t1a2t3a"}, {Path: "e-t1a2t3a"}}
+			for i := 0; i < tc.strong; i++ {
+				nodes = append(nodes, Node{Path: "z-tata" + string(rune('a'+i))})
+			}
+			r := indexedListingRoot(t, nodes)
+			r.now = func() time.Time { return time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC) }
+			opts := ListingOptions{Match: "fuzzy", Limit: 1}
+			cached, err := r.Search(context.Background(), "cached", ".", opts)
+			if err != nil || cached.Next == "" {
+				t.Fatalf("cached query: %+v %v", cached, err)
+			}
+			page, err := r.Search(context.Background(), "tata", ".", opts)
+			if tc.strong == 0 {
+				if !errors.Is(err, ErrLimit) {
+					t.Fatalf("expected loose overflow, got %v", err)
+				}
+			} else if err != nil || len(page.Items) != 1 || (page.Next != "") != (tc.strong > 1) {
+				t.Fatalf("final selection: %+v %v", page, err)
+			}
+			if r.listingBytes > listingMemoryLimit {
+				t.Fatalf("cache exceeds memory limit: %d", r.listingBytes)
+			}
+			opts.After = cached.Next
+			page, err = r.Search(context.Background(), "cached", ".", opts)
+			if tc.evict {
+				if !errors.Is(err, ErrCursorInvalid) {
+					t.Fatalf("expected capacity eviction, got %+v %v", page, err)
+				}
+			} else if err != nil || len(page.Items) != 1 || page.Items[0].Path != "cached-b" {
+				t.Fatalf("provisional hits evicted cached cursor: %+v %v", page, err)
+			}
+		})
+	}
+}
+
 func TestSearchMatchCursorFingerprint(t *testing.T) {
 	for _, sortBy := range []string{"path", "name"} {
 		for _, mode := range []string{"exact", "fuzzy"} {

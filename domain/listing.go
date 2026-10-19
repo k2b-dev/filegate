@@ -343,9 +343,6 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 				snapshot.bytes = 0
 				return nil
 			}
-			for r.listingBytes+snapshot.bytes > listingMemoryLimit {
-				r.evictListing()
-			}
 			snapshot.entries = append(snapshot.entries, n)
 			return nil
 		})
@@ -370,7 +367,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			if r.listings == nil {
 				r.listings = make(map[string]*listingSnapshot)
 			}
-			for len(r.listings) >= listingSnapshotLimit {
+			for len(r.listings) >= listingSnapshotLimit || r.listingBytes+snapshot.bytes > listingMemoryLimit {
 				r.evictListing()
 			}
 			c.Snapshot = newID()
