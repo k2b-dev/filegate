@@ -13,11 +13,9 @@ import (
 // DefaultSearchTopK bounds retained relevance hits unless the server overrides it.
 const DefaultSearchTopK = 1000
 
-// Token sub-ranks are summed only within the node's worst tier. Loose scores
-// first count non-word-start tokens, then sum spans. Path searches next prefer
-// fewer tokens without a basename hit at their selected tier or better.
-// Any accent folding loses
-// an otherwise equal comparison, followed by basename length and path ties.
+// Path searches prefer fewer parent-only tokens directly after the worst tier.
+// Token sub-ranks are summed within that tier; loose scores count non-word starts
+// before summing spans. Accent folding, basename length and path break ties.
 type relevanceScore struct {
 	tier, rank, span, parentOnly int
 	accent                       bool
@@ -52,7 +50,7 @@ func scoreName(p string, m nameMatch) relevanceScore {
 	return s
 }
 func compareSearchHit(a, b searchHit) int {
-	for _, c := range []int{cmp.Compare(a.score.tier, b.score.tier), cmp.Compare(a.score.rank, b.score.rank), cmp.Compare(a.score.span, b.score.span), cmp.Compare(a.score.parentOnly, b.score.parentOnly)} {
+	for _, c := range []int{cmp.Compare(a.score.tier, b.score.tier), cmp.Compare(a.score.parentOnly, b.score.parentOnly), cmp.Compare(a.score.rank, b.score.rank), cmp.Compare(a.score.span, b.score.span)} {
 		if c != 0 {
 			return c
 		}

@@ -52,8 +52,12 @@ func TestSearchPathMatching(t *testing.T) {
 
 func TestSearchPathRanking(t *testing.T) {
 	for _, tc := range []struct{ query, a, b string }{
-		// Same exact word-start rank: basename wins even though it needs accent folding.
+		// Basename wins even though it needs accent folding.
 		{"muller", "x/Müller-long.pdf", "x/muller/a"},
+		{"rechnung", "Archiv/Alte Rechnung.pdf", "Rechnungen/x.pdf"},
+		{"report", "x/report.pdf", "report/z/myreport.pdf"},
+		// Tier still precedes the basename preference.
+		{"report", "report/notes.pdf", "notes/reprot.pdf"},
 		// Same typo distance or loose sub-rank: basename wins before name length/path ties.
 		{"tsettest", "x/testtest-long.pdf", "x/testtest/a"},
 		{"tst", "x/testtest-long.pdf", "x/testtest/a"},
@@ -68,11 +72,31 @@ func TestSearchPathRanking(t *testing.T) {
 	}
 }
 
-func TestSearchPathSubrankPrecedesBasename(t *testing.T) {
+func TestSearchPathBasenamePrecedesSubrank(t *testing.T) {
 	r := indexedListingRoot(t, []Node{{Path: "report/z/notes.txt"}, {Path: "a/report.pdf"}})
 	got := collectSearch(t, r, "report", ".", ListingOptions{In: "path", Sort: "relevance", Type: "files"})
-	if len(got) != 2 || got[0].Path != "report/z/notes.txt" {
-		t.Fatalf("whole-path prefix must precede basename word start: %+v", got)
+	if len(got) != 2 || got[0].Path != "a/report.pdf" {
+		t.Fatalf("basename must precede whole-path prefix: %+v", got)
+	}
+}
+
+func TestSearchPathBasenameScore(t *testing.T) {
+	for _, tc := range []struct {
+		query, candidate string
+		rank             int
+		accent           bool
+	}{
+		{"report", "report/z/myreport.pdf", exactSubstring, false},
+		{"muller", "muller/Müller.pdf", exactPrefix, true},
+	} {
+		q, err := compileSearchQuery(tc.query, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok, m := q.match(tc.candidate)
+		if !ok || m.parentOnly != 0 || m.tokens[0].exactRank != tc.rank || m.tokens[0].accentFolded != tc.accent {
+			t.Fatalf("basename score for %q: %+v", tc.candidate, m)
+		}
 	}
 }
 
@@ -87,6 +111,13 @@ func TestSearchPathHighlights(t *testing.T) {
 			{"quartalsbericht", "Quartals/Bericht.pdf", []MatchRange{{0, 8}, {9, 16}}},
 			{"tsettest", "x/testtest.pdf", []MatchRange{{2, 10}}},
 			{"tst", "x/testtest.pdf", []MatchRange{{2, 3}, {4, 6}}},
+			{"report", "report/z/myreport.pdf", []MatchRange{{11, 17}}},
+			{"rechnung", "Archiv/Alte Rechnung.pdf", []MatchRange{{12, 20}}},
+			{"muller", "muller/Müller.pdf", []MatchRange{{7, 13}}},
+			{"tsettest", "testtest/é/testtest.pdf", []MatchRange{{11, 19}}},
+			{"tst", "testtest/é/testtest.pdf", []MatchRange{{11, 12}, {13, 15}}},
+			{"tsettest", "é/testtest/scan.pdf", []MatchRange{{2, 10}}},
+			{"tst", "é/testtest/scan.pdf", []MatchRange{{2, 3}, {4, 6}}},
 		} {
 			r := indexedListingRoot(t, []Node{{Path: "docs/" + tc.path}})
 			page, err := r.Search(context.Background(), tc.query, "docs", ListingOptions{In: "path", Match: "fuzzy", Sort: sortBy})
@@ -160,61 +191,55 @@ func TestSearchPathLongBaseAllocations(t *testing.T) {
 	}
 }
 
-func TestSearchPathFuzzyBound(t *testing.T) {
-	for _, query := range []string{"tsettest", "tst"} {
-		q, err := compileSearchQuery(query, true)
+func TestSearchPathFuzzySegments(t *testing.T) {
+	for _, tc := range []struct {
+		query, candidate string
+		tier             int
+	}{
+		{"taxform", "tax/form.pdf", nameExact},
+		{"taxfrom", "tax/form.pdf", 0},
+		{"tst", "t1/s2/t.pdf", 0},
+		{"quartalsberihct", "Quartals_Bericht/scan.pdf", nameTypo},
+		{"tsettest", strings.Repeat("x/", 1900) + "testtest.pdf", nameTypo},
+		{"tst", strings.Repeat("é/", 1000) + "testtest.pdf", nameLoose},
+		{"tsettest", strings.Repeat("x/", 1800) + strings.Repeat("é", 120) + "testtest.pdf", nameTypo},
+		{"tst", strings.Repeat("x/", 1800) + strings.Repeat("a", 243) + "testtest.pdf", nameLoose},
+		{"tsettest", "testtest/" + strings.Repeat("folder/", 50) + "scan.pdf", nameTypo},
+		{"tst", "testtest/" + strings.Repeat("folder/", 50) + "scan.pdf", nameLoose},
+	} {
+		q, err := compileSearchQuery(tc.query, true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		q.fuzzy = true
-		within := strings.Repeat("x", pathFuzzyRuneLimit-len("testtest")) + "testtest"
-		if ok, _ := q.match(within); !ok {
-			t.Fatalf("bounded candidate should match %q", query)
+		ok, m := q.match(tc.candidate)
+		if ok != (tc.tier != 0) || m.tier != tc.tier {
+			t.Fatalf("query=%q candidate=%q: ok=%v score=%+v", tc.query, tc.candidate, ok, m)
 		}
-		// Neither edit recursion nor loose matching runs on forms over the cap.
-		q.runes = []rune{'!'}
-		beyond := []byte(strings.Repeat("x", pathFuzzyRuneLimit+1))
-		if m := q.fuzzyToken(beyond, q.tokens[0].runes, nil); m.tier != 0 || string(q.runes) != "!" {
-			t.Fatalf("unbounded fuzzy work: %+v scratch=%d", m, len(q.runes))
-		}
-		if ok, _ := q.match(within + "x"); ok {
-			t.Fatalf("over-limit candidate matched %q", query)
-		}
-	}
-	// Unicode is counted in runes, and each compact form has its own cap.
-	q, _ := compileSearchQuery("tsettest", true)
-	q.fuzzy = true
-	for _, candidate := range []string{strings.Repeat("é", pathFuzzyRuneLimit-8) + "testtest", strings.Repeat("/", 300) + "testtest"} {
-		if ok, _ := q.match(candidate); !ok {
-			t.Fatal("byte length or gaps incorrectly consumed rune budget")
-		}
-	}
-	for _, candidate := range []string{strings.Repeat("x/", 2042) + "testtest.pdf", strings.Repeat("é/", 1000) + "testtest.pdf"} {
-		q, err := compileSearchQuery("testtest", true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		q.fuzzy = true
-		if ok, _ := q.match(candidate); !ok {
-			t.Fatal("long exact path lost")
-		}
-		if allocations := testing.AllocsPerRun(10, func() { q.match(candidate) }); allocations != 0 {
+		if allocations := testing.AllocsPerRun(10, func() { q.match(tc.candidate) }); allocations != 0 {
 			t.Fatalf("per-path allocations: %v", allocations)
 		}
 	}
 }
 
 func TestSearchPathFuzzyLongPathCoverage(t *testing.T) {
-	candidate := strings.Repeat("folder/", 50) + "tsettest.pdf"
-	r := indexedListingRoot(t, []Node{{Path: candidate}})
-	for _, in := range []string{"name", "path"} {
-		got := collectSearch(t, r, "testtest", ".", ListingOptions{In: in, Match: "fuzzy"})
-		want := 0
-		if in == "name" {
-			want = 1
-		}
-		if len(got) != want {
-			t.Fatalf("in=%s: %+v", in, got)
+	for _, query := range []string{"testtest", "tst"} {
+		candidate := strings.Repeat("folder/", 50) + "tsettest.pdf"
+		r := indexedListingRoot(t, []Node{{Path: candidate}})
+		for _, in := range []string{"name", "path"} {
+			page, err := r.Search(context.Background(), query, ".", ListingOptions{In: in, Match: "fuzzy", Sort: "relevance"})
+			if err != nil || len(page.Items) != 1 || page.Matches == nil || len((*page.Matches)[0]) == 0 {
+				t.Fatalf("in=%s query=%q: %+v err=%v", in, query, page, err)
+			}
+			offset := 0
+			if in == "path" {
+				offset = len(strings.Repeat("folder/", 50))
+			}
+			for _, r := range (*page.Matches)[0] {
+				if r[0] < offset || r[1] > offset+len("tsettest.pdf") {
+					t.Fatalf("range outside basename: %v", r)
+				}
+			}
 		}
 	}
 }
@@ -301,6 +326,12 @@ func TestNameQueryExactUnicodeCursor(t *testing.T) {
 		ok, m := q.match(tc.name)
 		if !ok || m.tokens[0].exactRank != tc.rank {
 			t.Fatalf("query=%q name=%q: %+v", tc.query, tc.name, m)
+		}
+		// Check the compact form directly so the plain form cannot mask a
+		// byte/rune cursor error at overlapping non-ASCII occurrences.
+		compact := exactNameToken(q.compact, q.tokens[0].compact, q.compactStarts)
+		if compact.tier != nameExact || compact.exactRank != tc.rank {
+			t.Fatalf("compact query=%q name=%q: %+v", tc.query, tc.name, compact)
 		}
 	}
 }

@@ -17,8 +17,6 @@ const nameQueryTokenLimit = 8
 const nameQueryByteLimit = 8 << 10
 const nameTypoRuneLimit = 32
 
-// Bound both typo recursion and loose subsequence work on path candidates.
-const pathFuzzyRuneLimit = 256
 const (
 	nameExact = 1
 	nameTypo  = 2
@@ -64,6 +62,8 @@ type nameMatch struct {
 	tier       int
 	parentOnly int
 	tokens     [nameQueryTokenLimit]nameTokenMatch
+	// Non-empty byte ranges select the segment used for scoring and highlights.
+	subjects [nameQueryTokenLimit][2]int
 }
 
 func compileNameQuery(query string) (*nameQuery, error) {
@@ -197,35 +197,64 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 	}
 	q.normalize(name)
 	for i, token := range q.tokens {
-		best := q.matchToken(token)
-		if best.tier == 0 {
-			return false, nameMatch{}
+		if q.pathSearch {
+			// Exact forms may span separators; fuzzy forms never do.
+			score.tokens[i] = q.exactToken(token)
+		} else {
+			score.tokens[i] = q.matchToken(token)
 		}
-		score.tokens[i] = best
-		score.tier = max(score.tier, best.tier)
 	}
 	if q.pathSearch {
-		q.normalize(path.Base(name))
-		for i, token := range q.tokens {
-			// A weaker basename tier cannot promote a stronger parent hit.
-			basename := q.matchToken(token)
-			if basename.tier == 0 || basename.tier > score.tokens[i].tier {
-				score.parentOnly++
+		start := 0
+		for segment := range strings.SplitSeq(name, "/") {
+			end := start + len(segment)
+			basename := end == len(name)
+			q.normalize(segment)
+			for i, token := range q.tokens {
+				current := score.tokens[i]
+				if !basename && (current.tier == nameExact || !q.fuzzy) {
+					continue
+				}
+				hit := q.matchToken(token)
+				if hit.tier == 0 {
+					continue
+				}
+				// Within the selected tier, basename hits own their sub-rank,
+				// accent requirement and highlight occurrence.
+				if basename && (current.tier == 0 || hit.tier <= current.tier) || betterNameMatch(current, hit) != current {
+					score.tokens[i] = hit
+					score.subjects[i] = [2]int{start, end}
+				}
 			}
+			start = end + 1
+		}
+	}
+	for i := range q.tokens {
+		hit := score.tokens[i]
+		if hit.tier == 0 {
+			return false, nameMatch{}
+		}
+		score.tier = max(score.tier, hit.tier)
+		if q.pathSearch && score.subjects[i][1] != len(name) {
+			score.parentOnly++
 		}
 	}
 	return true, score
 }
 
-func (q *nameQuery) matchToken(token nameToken) nameTokenMatch {
+func (q *nameQuery) exactToken(token nameToken) nameTokenMatch {
 	best := exactNameToken(q.plain, token.text, nil)
 	best = betterNameMatch(best, exactNameToken(q.compact, token.compact, q.compactStarts))
-	accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
-	if accent {
+	if !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded) {
 		folded := betterNameMatch(exactNameToken(q.folded, token.folded, nil), exactNameToken(q.foldedCompact, token.foldedCompact, q.foldedCompactStarts))
 		folded.accentFolded = true
 		best = betterNameMatch(best, folded)
 	}
+	return best
+}
+
+func (q *nameQuery) matchToken(token nameToken) nameTokenMatch {
+	best := q.exactToken(token)
 	if best.tier == 0 && q.fuzzy {
 		best = q.fuzzyToken(q.plain, token.runes, nil)
 		// Exact matching failed for every form. A distance-one typo
@@ -233,6 +262,7 @@ func (q *nameQuery) matchToken(token nameToken) nameTokenMatch {
 		if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || !bytes.Equal(token.compact, token.text)) {
 			best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
 		}
+		accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
 		if accent && (best.tier != nameTypo || best.distance > 1) {
 			folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
 			if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || !bytes.Equal(token.foldedCompact, token.folded)) {
@@ -339,11 +369,6 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 }
 
 func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
-	// Exact matching still scans the entire path. Each normalized form exceeding
-	// this limit skips fuzzy matching before growing scratch or edit recursion.
-	if q.pathSearch && nameRuneCount(name) > pathFuzzyRuneLimit {
-		return nameTokenMatch{}
-	}
 	q.runes = q.runes[:0]
 	var present uint64
 	for len(name) > 0 {
