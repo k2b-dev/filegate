@@ -233,6 +233,9 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 	err := r.client.call(ctx, "GET", r.endpoint("/entries"), listingQuery(p, o), nil, &page)
 	return page, err
 }
+
+// Search matches descendant basenames. The server rejects raw queries over 8 KiB
+// or more than eight whitespace-separated tokens with a 400 invalid_argument.
 func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
 	var page Page
 	q := listingQuery(p, o)

@@ -59,6 +59,7 @@ export class RootClient {
   stat(path: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/stat`, { path }); }
   resolve(id: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/resolve`, { id }); }
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
+  /** The server rejects raw queries over 8 KiB (UTF-8) or more than eight whitespace tokens with 400 invalid_argument. */
   search(q: string, options: ListingOptions & { path?: string; signal?: AbortSignal } = {}): Promise<Page> { const { signal, ...query } = options; return this.client.json("GET", `${this.prefix}/search`, { q, ...query }, undefined, signal); }
   contentRaw(path: string, signal?: AbortSignal): Promise<Response> { return this.client.raw("GET", `${this.prefix}/content`, { path }, undefined, signal); }
   /** Read the current file on a stable-ID root; HTTP errors remain raw responses. */

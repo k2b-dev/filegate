@@ -13,6 +13,7 @@ import (
 )
 
 const nameQueryTokenLimit = 8
+const nameQueryByteLimit = 8 << 10
 const (
 	nameExact = 1
 	nameTypo  = 2
@@ -57,6 +58,9 @@ type nameMatch struct {
 }
 
 func compileNameQuery(query string) (*nameQuery, error) {
+	if len(query) > nameQueryByteLimit {
+		return nil, fmt.Errorf("%w: name query must be at most %d bytes", ErrInvalid, nameQueryByteLimit)
+	}
 	q := &nameQuery{folder: cases.Fold()}
 	for field := range strings.FieldsSeq(query) {
 		if len(q.tokens) == nameQueryTokenLimit {

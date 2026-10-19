@@ -142,6 +142,35 @@ func TestSearchMatchOptionsAndTokenLimit(t *testing.T) {
 	}
 }
 
+func TestSearchQueryByteLimit(t *testing.T) {
+	for _, mode := range []string{"exact", "fuzzy"} {
+		for _, tc := range []struct {
+			label, query string
+			invalid      bool
+		}{
+			{label: "below limit", query: strings.Repeat("a", 8191)},
+			{label: "at limit", query: strings.Repeat("a", 8192)},
+			{label: "over limit", query: strings.Repeat("a", 8193), invalid: true},
+			{label: "multibyte at limit", query: strings.Repeat("é", 4096)},
+			{label: "multibyte over limit", query: strings.Repeat("é", 4096) + "a", invalid: true},
+			{label: "whitespace at limit", query: strings.Repeat(" ", 8192)},
+			{label: "whitespace over limit", query: strings.Repeat(" ", 8193), invalid: true},
+		} {
+			t.Run(mode+"/"+tc.label, func(t *testing.T) {
+				r := indexedListingRoot(t, nil)
+				_, err := r.Search(context.Background(), tc.query, ".", ListingOptions{Match: mode})
+				if tc.invalid {
+					if !errors.Is(err, ErrInvalid) || r.State.(*listingState).scans != 0 {
+						t.Fatalf("oversized raw query: err=%v scans=%d", err, r.State.(*listingState).scans)
+					}
+				} else if err != nil {
+					t.Fatalf("valid query rejected: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestSearchMatchIndexedAndIndexFree(t *testing.T) {
 	nodes := []Node{{Path: "Quartals_Bericht_2026.xlsx"}, {Path: "Müller.docx"}, {Path: "testtest.ods"}}
 	for _, indexed := range []bool{false, true} {

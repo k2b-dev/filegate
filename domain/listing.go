@@ -119,6 +119,7 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 }
 
 // Search selects descendants of base using normalized basename matching.
+// The raw query must be at most 8 KiB and contain at most eight whitespace tokens.
 // Indexed subtree searches with non-path ordering sort a bounded snapshot.
 // Execution views scan the live filesystem and bind snapshots to their identity.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {

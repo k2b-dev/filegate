@@ -48,9 +48,10 @@ and folds accents (`muller` finds `Müller.docx`). These rules apply with the de
 `match: "exact"` too. Underscores, hyphens, dots and whitespace are word gaps;
 `quartalsbericht` finds `Quartals_Bericht.xlsx` with the gaps removed.
 
-The query has at most eight whitespace-separated tokens. Every token must match,
-in any order: `2026 bericht` finds `Quartalsbericht 2026.pdf`. More than eight
-tokens or an unknown `match` value returns 400.
+The raw `q` value is limited to 8 KiB (8192 UTF-8 bytes) before normalization
+and has at most eight whitespace-separated tokens. Every token must match,
+in any order: `2026 bericht` finds `Quartalsbericht 2026.pdf`. Exceeding either
+query limit or using an unknown `match` value returns 400 (`invalid_argument`).
 
 Use `match: "fuzzy"` to include typos and loose abbreviations:
 

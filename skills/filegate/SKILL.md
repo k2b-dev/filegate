@@ -331,8 +331,10 @@ descendants, excluding its base.
 Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
 (`muller` finds `Müller.docx`). `_ - .` and whitespace are word gaps; tokens also
 match with gaps removed (`quartalsbericht` finds `Quartals_Bericht.xlsx`). At most
-8 whitespace tokens, AND in any order (`2026 bericht`); more or unknown match
-returns 400. Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
+8 whitespace tokens, AND in any order (`2026 bericht`). Raw `q` is limited to
+8 KiB (8192 UTF-8 bytes) before normalization. Exceeding either query limit or
+using an unknown match returns 400 (`invalid_argument`).
+Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
 adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for >=8;
 shorter tokens never get typos. Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.

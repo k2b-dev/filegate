@@ -3,6 +3,8 @@ package httpadapter
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	api "github.com/k2b-dev/filegate/v7/api/v1"
@@ -20,7 +22,7 @@ func TestListingMatchParsing(t *testing.T) {
 
 func TestSearchMatchInvalidHTTP(t *testing.T) {
 	h := New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, Options{Token: "secret"})
-	for _, suffix := range []string{"match=unknown", "match=Fuzzy", "q=a+b+c+d+e+f+g+h+i"} {
+	for _, suffix := range []string{"match=unknown", "match=Fuzzy", "q=a+b+c+d+e+f+g+h+i", "q=" + strings.Repeat("a", 8193), "q=" + url.QueryEscape(strings.Repeat("é", 4096)+"a"), "q=" + strings.Repeat("+", 8193)} {
 		req := httptest.NewRequest("GET", "/v1/roots/files/search?"+suffix, nil)
 		req.Header.Set("Authorization", "Bearer secret")
 		w := httptest.NewRecorder()
