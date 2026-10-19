@@ -5,6 +5,7 @@ package httpadapter
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,5 +49,32 @@ func TestSearchRelevanceHTTPPage(t *testing.T) {
 	}
 	if w.Code != 200 || len(page.Items) != 1 || page.Items[0].Path != "report" || page.Total == nil || *page.Total != 2 || page.Truncated == nil || !*page.Truncated || page.Matches == nil || len(*page.Matches) != 1 || (*page.Matches)[0][0] != (api.MatchRange{0, 6}) {
 		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+
+	// Missing live hits must use the restart error clients already recognize.
+	root.SearchTopK = 2
+	req = httptest.NewRequest("GET", "/v1/roots/files/search?q=report&sort=relevance&limit=1", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || page.Next == "" {
+		t.Fatalf("first pageable result: %d %s", w.Code, w.Body)
+	}
+	if err := os.Remove(filepath.Join(data, "report.pdf")); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("GET", "/v1/roots/files/search?q=report&sort=relevance&limit=1&after="+url.QueryEscape(page.Next), nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	var body api.Error
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 409 || body.Error != "cursor_invalid" || body.Message == "" {
+		t.Fatalf("missing hit: %d %s", w.Code, w.Body)
 	}
 }

@@ -152,9 +152,10 @@ their captured observation even if a Filegate mutation or rebuild occurs during
 the scan. Any returned cursor stays bound to that observation, so following it
 after such a change returns `409 cursor_invalid`. Continuation pages also return
 this error if the root changes while they scan. Indexed scans allow writes to
-proceed. If a retained indexed result is unexpectedly missing, the whole page
-fails with 404 (`not_found`); restart the query. Live filesystem scans retain the
-root lock to coordinate identity and revision updates with permission checks.
+proceed. Relevance pages also return `409 cursor_invalid` if a retained hit is
+missing or has changed between a file and a directory, including after an
+external deletion or rename. Live filesystem scans retain the root lock to
+coordinate identity and revision updates with permission checks.
 Filesystem observations are not atomic snapshots of external writers.
 
 Each root admits at most two searches at once, shared across Unix execution
@@ -175,10 +176,11 @@ A recursive scan that encounters an unreadable subtree fails the whole query,
 even when that subtree would not match the search text. It does not return a
 successful partial result. Each page rechecks base-directory access, traversal
 to each returned entry and read permission on its parent. An entry deleted by an
-external writer makes the page fail with 404; revoked access returns 403. Neither
-returns a partial page. Restart the query to obtain a new observation. A readable
-directory can expose a file's name and metadata without granting access to its
-bytes; download checks content read permission separately.
+external writer makes a relevance page fail with `409 cursor_invalid`; other
+sorts return 404. Revoked access returns 403. These errors return no partial page.
+Restart the query to obtain a new observation. A readable directory can expose a
+file's name and metadata without granting access to its bytes; download checks
+content read permission separately.
 
 ## Read recursive totals
 

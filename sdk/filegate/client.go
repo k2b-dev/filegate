@@ -245,6 +245,8 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 // tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
 // retry after the Retry-After: 1 delay. Indexed first pages retain their captured
 // observation during concurrent writes; their cursors remain bound to it.
+// Retained relevance hits that disappear or change file/directory type also
+// return 409 cursor_invalid.
 // On 409 cursor_invalid, discard previous pages and restart the query.
 func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
 	var page Page

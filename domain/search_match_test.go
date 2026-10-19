@@ -335,19 +335,76 @@ func TestSearchMatchFirstPageHighlightCancellationDoesNotCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	now := time.Unix(1000, 0)
+	state := r.State.(*listingState)
 	clockReads := 0
 	r.now = func() time.Time {
 		clockReads++
 		if clockReads == 2 {
 			// The observation is complete and starts its lifetime, before the
 			// first page's highlights. Collection itself has already succeeded.
+			if state.scans == 0 {
+				t.Fatal("highlight cancellation happened before collection")
+			}
 			cancel()
 		}
 		return now
 	}
 	page, err := r.Search(ctx, "report", "docs", ListingOptions{Sort: "name", Match: "fuzzy", Limit: 1})
-	state := r.State.(*listingState)
+	if clockReads < 2 {
+		t.Fatalf("highlight cancellation hook was not reached: clockReads=%d", clockReads)
+	}
 	if !errors.Is(err, context.Canceled) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 || state.closed != 1 {
 		t.Fatalf("failed highlights retained state: page=%+v err=%v cache=%d bytes=%d slots=%d closed=%d", page, err, len(r.listings), r.listingBytes, len(r.searches), state.closed)
+	}
+}
+
+// Probe the lock at cancellation checkpoints without scheduling another goroutine.
+type highlightLockContext struct {
+	context.Context
+	check func()
+}
+
+func (c highlightLockContext) Err() error {
+	c.check()
+	return c.Context.Err()
+}
+
+func TestSearchHighlightContinuationHoldsRootLock(t *testing.T) {
+	for _, sort := range []string{"path", "name"} {
+		t.Run(sort, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "docs/report-a"}, {Path: "docs/report-b"}})
+			now := time.Unix(1000, 0)
+			r.now = func() time.Time { return now }
+			base := "."
+			if sort == "name" {
+				base = "docs" // Cached subtree observation.
+			}
+			opts := ListingOptions{Sort: sort, Limit: 1}
+			page, err := r.Search(context.Background(), "report", base, opts)
+			if err != nil || page.Next == "" {
+				t.Fatalf("first: %+v %v", page, err)
+			}
+			opts.After = page.Next
+			state := r.State.(*listingState)
+			cachedPage := false
+			r.now = func() time.Time { cachedPage = true; return now }
+			checks := 0
+			ctx := highlightLockContext{Context: context.Background(), check: func() {
+				// Keyset scans run outside mu; their reader closes before highlights.
+				// Cached continuation pages perform no scan and stay under mu.
+				if sort == "path" && state.closed < 2 || sort == "name" && !cachedPage {
+					return
+				}
+				checks++
+				if r.mu.TryLock() {
+					r.mu.Unlock()
+					t.Error("continuation highlights released the root lock")
+				}
+			}}
+			page, err = r.Search(ctx, "report", base, opts)
+			if err != nil || checks == 0 || len(page.Items) != 1 || page.Items[0].Path != "docs/report-b" || page.Matches == nil || len(*page.Matches) != 1 || len((*page.Matches)[0]) == 0 {
+				t.Fatalf("continuation: %+v err=%v checks=%d", page, err, checks)
+			}
+		})
 	}
 }

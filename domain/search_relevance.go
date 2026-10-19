@@ -22,9 +22,10 @@ type relevanceScore struct {
 	nameLength, segments int
 }
 type searchHit struct {
-	path   string
-	score  relevanceScore
-	ranges []MatchRange
+	path      string
+	directory bool
+	score     relevanceScore
+	ranges    []MatchRange
 }
 
 func scoreName(p string, m nameMatch) relevanceScore {
@@ -89,7 +90,7 @@ func collectRelevance(ctx context.Context, o ListingOptions, query string, match
 			return nil
 		}
 		s.total++
-		candidate := searchHit{path: n.Path, score: scoreName(n.Path, m)}
+		candidate := searchHit{path: n.Path, directory: n.Directory, score: scoreName(n.Path, m)}
 		if len(h) == o.topK && compareSearchHit(candidate, h[0]) >= 0 {
 			return nil
 		}

@@ -381,20 +381,98 @@ func TestSearchRelevanceFirstPageFailureDoesNotCache(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceContinuationRequiresPrimaryRow(t *testing.T) {
-	r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
-	opts := ListingOptions{Sort: "relevance", Limit: 1}
-	page, err := r.Search(context.Background(), "report", ".", opts)
-	if err != nil || page.Next == "" {
-		t.Fatalf("first: %+v %v", page, err)
+func TestSearchRelevanceContinuationInvalidatesChangedPrimaryRow(t *testing.T) {
+	for _, filter := range []string{"all", "files", "directories"} {
+		for _, change := range []string{"missing", "kind"} {
+			t.Run(filter+"/"+change, func(t *testing.T) {
+				directory := filter == "directories"
+				r := indexedListingRoot(t, []Node{{Path: "report-a", Directory: directory}, {Path: "report-b", Directory: directory}})
+				opts := ListingOptions{Sort: "relevance", Type: filter, Limit: 1}
+				page, err := r.Search(context.Background(), "report", ".", opts)
+				if err != nil || page.Next == "" {
+					t.Fatalf("first: %+v %v", page, err)
+				}
+				// Simulate an inconsistent index without an epoch change. Never skip a hit.
+				state := r.State.(*listingState)
+				key := "i/" + r.generation + "/report-b"
+				if change == "missing" {
+					delete(state.rows, key)
+				} else {
+					state.rows[key], err = json.Marshal(Node{Path: "report-b", Directory: !directory})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				opts.After = page.Next
+				page, err = r.Search(context.Background(), "report", ".", opts)
+				if !errors.Is(err, ErrCursorInvalid) || len(page.Items) != 0 || page.Next != "" || state.closed != 1 || state.scans != 1 {
+					t.Fatalf("changed row did not require restart: %+v %v closed=%d scans=%d", page, err, state.closed, state.scans)
+				}
+			})
+		}
 	}
-	// Simulate an inconsistent index without an epoch change. Never skip a hit.
-	state := r.State.(*listingState)
-	delete(state.rows, "i/"+r.generation+"/report-b")
-	opts.After = page.Next
-	page, err = r.Search(context.Background(), "report", ".", opts)
-	if !errors.Is(err, os.ErrNotExist) || len(page.Items) != 0 || page.Next != "" || state.closed != 1 {
-		t.Fatalf("missing row was skipped or rescanned: %+v %v closed=%d", page, err, state.closed)
+}
+
+func TestSearchRelevanceLiveContinuationInvalidatesChangedHit(t *testing.T) {
+	for _, execution := range []bool{false, true} {
+		for _, filter := range []string{"all", "files", "directories"} {
+			for _, change := range []string{"delete", "rename", "kind"} {
+				t.Run(fmt.Sprintf("execution=%v/%s/%s", execution, filter, change), func(t *testing.T) {
+					r := indexedListingRoot(t, nil)
+					f := &searchAccessFiles{listingFiles: &listingFiles{base: t.TempDir()}, checked: map[string]int{}}
+					r.Files = f
+					r.Config.Index = execution
+					if execution {
+						r.execution = &ExecutionIdentity{UID: 1001, GID: 100}
+					}
+					directory := filter == "directories"
+					for _, name := range []string{"report-a", "report-b"} {
+						var err error
+						if directory {
+							err = os.Mkdir(filepath.Join(f.base, name), 0700)
+						} else {
+							err = os.WriteFile(filepath.Join(f.base, name), nil, 0600)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						value, _ := json.Marshal(claim{Device: 1, Inode: 1, Path: name})
+						if err := r.State.Batch([]Change{{Key: "identity/" + name, Value: value}}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					opts := ListingOptions{Sort: "relevance", Type: filter, Limit: 1}
+					page, err := r.Search(context.Background(), "report", ".", opts)
+					if err != nil || page.Next == "" || len(page.Items) != 1 || page.Items[0].Path != "report-a" {
+						t.Fatalf("first: %+v %v", page, err)
+					}
+					p := filepath.Join(f.base, "report-b")
+					if change == "rename" {
+						err = os.Rename(p, filepath.Join(f.base, "renamed"))
+					} else {
+						err = os.Remove(p)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if change == "kind" {
+						if directory {
+							err = os.WriteFile(p, nil, 0600)
+						} else {
+							err = os.Mkdir(p, 0700)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					opts.After = page.Next
+					page, err = r.Search(context.Background(), "report", ".", opts)
+					if !errors.Is(err, ErrCursorInvalid) || len(page.Items) != 0 || page.Next != "" {
+						t.Fatalf("changed live hit did not require restart: %+v %v", page, err)
+					}
+				})
+			}
+		}
 	}
 }
 

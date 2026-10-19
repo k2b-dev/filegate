@@ -267,13 +267,7 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 		return Page{}, err
 	}
 	if recursive && len(matcher.tokens) > 0 && out.Matches == nil {
-		highlight := func() error { return listingHighlights(ctx, &out, matcher) }
-		if r.Config.Index && r.execution == nil {
-			err = r.scanListing(ctx, cursor, o.After != "", highlight)
-		} else {
-			err = highlight()
-		}
-		if err != nil {
+		if err := listingHighlights(ctx, &out, matcher); err != nil {
 			return Page{}, err
 		}
 	}
@@ -494,13 +488,19 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			if reader != nil {
 				err = reader.Get("i/"+c.Generation+"/"+h.path, &n)
 			} else if r.Config.Index && r.execution == nil {
-				// An unchanged epoch and generation guarantee the captured rows.
+				// Reload retained hits from the current primary rows.
 				err = r.State.Get("i/"+c.Generation+"/"+h.path, &n)
 			} else {
 				n, err = r.node(h.path, true)
 			}
+			if errors.Is(err, os.ErrNotExist) {
+				return Page{}, ErrCursorInvalid
+			}
 			if err != nil {
 				return Page{}, err
+			}
+			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
+				return Page{}, ErrCursorInvalid
 			}
 			out.Items = append(out.Items, n)
 			ranges = append(ranges, slices.Clone(h.ranges))
@@ -518,18 +518,14 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 	}
 	if r.execution != nil {
 		if err := r.checkListingAccess(ctx, p, out.Items); err != nil {
+			if o.Sort == "relevance" && errors.Is(err, os.ErrNotExist) {
+				return Page{}, ErrCursorInvalid
+			}
 			return Page{}, err
 		}
 	}
 	if o.search && len(matcher.tokens) > 0 && out.Matches == nil {
-		highlight := func() error { return listingHighlights(ctx, &out, matcher) }
-		var err error
-		if r.Config.Index && r.execution == nil {
-			err = r.scanListing(ctx, c, o.After != "", highlight)
-		} else {
-			err = highlight()
-		}
-		if err != nil {
+		if err := listingHighlights(ctx, &out, matcher); err != nil {
 			return Page{}, err
 		}
 	}

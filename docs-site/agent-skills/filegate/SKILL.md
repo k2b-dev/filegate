@@ -374,9 +374,10 @@ membership/order stay fixed. A new query sees external NFS changes without an
 index rebuild; continuations retain their original observation. An unreadable subtree during
 recursive search fails the whole query even if it would not match. Every page
 checks its base, traversal to each returned entry and parent read permissions.
-External deletion of a returned entry fails the whole page with 404; revoked
-access returns 403. An unexpectedly missing retained indexed result also returns
-404 (not_found). These failures return no partial page; restart for a new observation.
+Relevance pages return 409 cursor_invalid if a retained hit is missing or changes
+between a file and a directory, including after external deletion or rename.
+Other sorts return 404 for external deletion of a returned entry; revoked access
+returns 403. These failures return no partial page; restart for a new observation.
 A visible name and metadata do not grant content read access; download checks it
 separately.
 Keep query parameters unchanged. Mutations/rebuild/restart/query change/
