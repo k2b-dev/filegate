@@ -37,6 +37,8 @@ type rootShared struct {
 	listingBytes    int64
 	listingEpoch    uint64
 	listingInstance string
+	searchOnce      sync.Once
+	searches        chan struct{}
 	generation      string
 	now             func() time.Time
 }

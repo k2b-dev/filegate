@@ -56,8 +56,22 @@ the request returns 413 instead of a partially sorted result.
 
 Filegate mutations, an index rebuild, restart, changed query options, observation
 expiry or capacity eviction can invalidate a cursor. On `409 cursor_invalid`,
-discard the accumulated pages and restart the query. Filesystem observations
-are not atomic snapshots of external writers.
+discard the accumulated pages and restart the query. Indexed first pages return
+their captured observation even if a Filegate mutation or rebuild occurs during
+the scan. Any returned cursor stays bound to that observation, so following it
+after such a change returns `409 cursor_invalid`. Continuation pages also return
+this error if the root changes while they scan. Indexed scans allow writes to
+proceed. Live filesystem scans retain the root lock to coordinate identity and
+revision updates with permission checks. Filesystem observations are not atomic
+snapshots of external writers.
+
+Each root admits at most two searches at once, shared across Unix execution
+identities. Directory listings do not consume search slots. A further search
+waits up to 200 ms, then returns
+`429 search_busy` with `Retry-After: 1` if both slots remain occupied. Retry the
+same request after that delay. Active scans check cancellation between entries
+and release their slots when they exit. A search waiting for the root lock
+retains its slot until that lock becomes available.
 
 Unix execution identities are supported for both listing and search. Scoped
 queries always use the live filesystem, including on indexed roots; they never

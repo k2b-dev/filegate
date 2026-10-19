@@ -133,6 +133,9 @@ func fail(w http.ResponseWriter, e error) {
 		w.Header().Set("Retry-After", "1")
 	case errors.Is(e, domain.ErrCursorInvalid):
 		status, code = 409, "cursor_invalid"
+	case errors.Is(e, domain.ErrSearchBusy):
+		status, code = 429, "search_busy"
+		w.Header().Set("Retry-After", "1")
 	case errors.Is(e, domain.ErrPrecondition):
 		status, code = 412, "precondition_failed"
 	case errors.Is(e, domain.ErrSessionCommitted):
