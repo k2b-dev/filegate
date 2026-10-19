@@ -44,8 +44,9 @@ type nameQuery struct {
 }
 
 // Scores retain each token's best tier and sub-rank for future relevance sorting.
-// Lower ranks, distances and spans are better; word starts and matches without
-// accent folding win ties. The node's tier is the worst token tier. No ranges are retained.
+// Exact sub-ranks and typo distances sort ascending. Loose word starts precede
+// smaller spans; avoiding accent folding wins otherwise equal scores. The node's
+// tier is the worst token tier. No ranges are retained.
 type nameTokenMatch struct {
 	tier, exactRank, distance, span int
 	wordStart, accentFolded         bool
