@@ -316,7 +316,7 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 		return nameTokenMatch{tier: nameExact, exactRank: exactPrefix, wordStart: true}
 	}
 	best := nameTokenMatch{}
-	for offset := 0; offset < len(name); {
+	for offset, cursorByte, cursorRune := 0, 0, 0; offset < len(name); {
 		i := bytes.Index(name[offset:], token)
 		if i < 0 {
 			break
@@ -325,7 +325,9 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 		previous, _ := utf8.DecodeLastRune(name[:i])
 		wordStart := nameBoundary(previous)
 		if starts != nil {
-			wordStart = starts[nameRuneCount(name[:i])]
+			cursorRune += nameRuneCount(name[cursorByte:i])
+			cursorByte = i
+			wordStart = starts[cursorRune]
 		}
 		if wordStart {
 			return nameTokenMatch{tier: nameExact, exactRank: exactWord, wordStart: true}

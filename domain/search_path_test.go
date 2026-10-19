@@ -284,3 +284,48 @@ func BenchmarkSearchPathLong(b *testing.B) {
 		})
 	}
 }
+
+func TestNameQueryExactUnicodeCursor(t *testing.T) {
+	for _, tc := range []struct {
+		query, name string
+		rank        int
+	}{
+		{"ää", "xääxää_ää.pdf", exactWord},
+		{"aa", "éaaaéaaa_aa.pdf", exactWord},
+		{"ää", "xääääxää.pdf", exactSubstring},
+	} {
+		q, err := compileNameQuery(tc.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok, m := q.match(tc.name)
+		if !ok || m.tokens[0].exactRank != tc.rank {
+			t.Fatalf("query=%q name=%q: %+v", tc.query, tc.name, m)
+		}
+	}
+}
+
+func BenchmarkSearchPath(b *testing.B) {
+	for _, tc := range []struct{ label, query, candidate string }{
+		{"typical-exact", "rechnung 2026", "Rechnungen/2026/scan01.pdf"},
+		{"typical-typo", "tsettest", "reports/2026/testtest.pdf"},
+		{"typical-loose", "tst", "reports/2026/testtest.pdf"},
+		{"long-repeated-substring", "aa", strings.TrimSuffix(strings.Repeat("x"+strings.Repeat("a", 254)+"/", 16), "/")},
+	} {
+		b.Run(tc.label, func(b *testing.B) {
+			q, err := compileSearchQuery(tc.query, true)
+			if err != nil {
+				b.Fatal(err)
+			}
+			q.fuzzy = true
+			if ok, _ := q.match(tc.candidate); !ok {
+				b.Fatal("candidate did not match")
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				_, nameQueryBenchmarkScore = q.match(tc.candidate)
+			}
+		})
+	}
+}
