@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestNameQueryMatch(t *testing.T) {
@@ -87,6 +88,19 @@ func TestNameQueryMatch(t *testing.T) {
 			want := nameTokenMatch{tier: tc.tier, exactRank: tc.rank, distance: tc.distance, span: tc.span, wordStart: tc.word, accentFolded: tc.accent}
 			if got != (tc.tier != 0) || score.tier != tc.tier || len(q.tokens) > 0 && score.tokens[0] != want {
 				t.Fatalf("match(%q, %q) = %v, %+v; want tier=%d token=%+v", tc.query, tc.name, got, score, tc.tier, want)
+			}
+			if got && len(q.tokens) > 0 {
+				ranges := q.highlights(tc.name)
+				if len(ranges) == 0 {
+					t.Fatal("matched name has no highlight ranges")
+				}
+				previous := -1
+				for _, r := range ranges {
+					if r[0] <= previous || r[0] >= r[1] || r[1] > utf8.RuneCountInString(tc.name) {
+						t.Fatalf("invalid original-rune ranges: %v", ranges)
+					}
+					previous = r[1]
+				}
 			}
 		})
 	}

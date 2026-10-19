@@ -24,6 +24,9 @@ type Config struct {
 	Auth struct {
 		TokenFile string `yaml:"token_file"`
 	} `yaml:"auth"`
+	Search struct {
+		TopK int `yaml:"topK"`
+	} `yaml:"search"`
 	StateDir string `yaml:"state_dir"`
 	Uploads  struct {
 		MaxFileSize string `yaml:"max_file_size"`
@@ -46,6 +49,7 @@ type rootConfig struct {
 
 func LoadConfig(file string) (Config, error) {
 	c := Config{}
+	c.Search.TopK = domain.DefaultSearchTopK
 	c.Server.Listen = "127.0.0.1:8080"
 	c.Uploads.MaxFileSize = "10GiB"
 	f, e := os.Open(file)
@@ -85,6 +89,9 @@ func LoadConfig(file string) (Config, error) {
 	c.maxBytes, e = parseSize(c.Uploads.MaxFileSize)
 	if e != nil || c.maxBytes < 1 {
 		return c, fmt.Errorf("invalid uploads.max_file_size")
+	}
+	if c.Search.TopK < 1 || c.Search.TopK > 100000 {
+		return c, fmt.Errorf("search.topK must be between 1 and 100000")
 	}
 	if len(c.Roots) == 0 {
 		return c, fmt.Errorf("at least one root required")

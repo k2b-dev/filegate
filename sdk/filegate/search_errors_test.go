@@ -13,7 +13,7 @@ func TestSearchPreservesTypedErrors(t *testing.T) {
 	for _, tc := range []struct {
 		status int
 		code   string
-	}{{429, "search_busy"}, {409, "cursor_invalid"}} {
+	}{{429, "search_busy"}, {409, "cursor_invalid"}, {413, "limit_exceeded"}} {
 		t.Run(tc.code, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)

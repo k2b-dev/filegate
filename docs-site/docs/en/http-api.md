@@ -25,7 +25,7 @@ Use `GET /resolve?id=ID` to find a file or directory's current path on those roo
 | `GET /stat` | `path` | Node. |
 | `GET /resolve` | `id` | Current Node; requires `stableIds`. |
 | `GET /entries` | `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | `{items,next?}`. |
-| `GET /search` | `q`, `path`, `match`, `sort`, `order`, `type`, `ext`, `minSize`, `maxSize`, `modifiedAfter`, `modifiedBefore`, `after`, `limit`, `maxEntries` | Filtered filename matches; `q` may be omitted. |
+| `GET /search` | `q`, `path`, `match`, `sort`, `order`, `type`, `ext`, `minSize`, `maxSize`, `modifiedAfter`, `modifiedBefore`, `after`, `limit`, `maxEntries` | Filtered filename matches: `{items,next?,total?,truncated?,matches?}`; `q` may be omitted. |
 | `GET /content` | Exactly one of `path` or `fileId`; optional `fileName` | File bytes, Range/HEAD supported. ID reads require `stableIds`. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
@@ -61,8 +61,17 @@ A Node contains `root`, `path`, optional `id`, `directory`, `size`, `modified`,
 `"2770"` for a setgid directory. Timestamps are RFC 3339, sizes are integer bytes. Directory
 size is zero; recursive totals belong to stats. `limit` defaults to 100 and is
 bounded by 1000. Listing/search traversal defaults to 100,000 entries, also its
-maximum. Stats uses an explicit traversal budget. [Browsing](/docs/en/browsing)
+maximum. Indexed relevance scans apply this budget to retained hits rather than
+visited entries. Stats uses an explicit traversal budget. [Browsing](/docs/en/browsing)
 describes cursor validity, sorting/filtering and completeness.
+
+Search accepts `sort=relevance` only with non-empty `q`; it ignores `order`,
+includes all matching tiers and retains the best `search.topK` hits (default 1000).
+`total` and `truncated` appear only for complete snapshot selections, before the
+cap; keyset exact pages omit them. With non-empty `q`, `matches` is always an
+array aligned with `items`: each entry contains `[start,end)` rune ranges into
+the original basename, merged when adjacent or overlapping. `Node` is unchanged.
+
 Listing revisions may be absent or stale; use current stat or current-content
 ETag when selecting an `ifMatch` condition.
 

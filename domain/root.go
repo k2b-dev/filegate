@@ -17,12 +17,14 @@ import (
 
 type Root struct {
 	*rootShared
-	Config    RootConfig
-	Files     Files
-	State     State
-	MaxBytes  int64
-	control   *Root
-	execution *ExecutionIdentity
+	Config RootConfig
+	Files  Files
+	State  State
+	// SearchTopK bounds relevance results. Zero uses DefaultSearchTopK.
+	SearchTopK int
+	MaxBytes   int64
+	control    *Root
+	execution  *ExecutionIdentity
 }
 
 // Every request view shares coordination and recovery with its service root.
@@ -41,6 +43,8 @@ type rootShared struct {
 	searches        chan struct{}
 	generation      string
 	now             func() time.Time
+
+	searchScanTimeout time.Duration // Zero uses the server-owned searchScanBudget.
 }
 type claim struct {
 	Device uint64

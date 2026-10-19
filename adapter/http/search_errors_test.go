@@ -24,3 +24,17 @@ func TestSearchBusyHTTPError(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchLimitHTTPError(t *testing.T) {
+	for _, err := range []error{domain.ErrLimit, fmt.Errorf("search: %w", domain.ErrLimit)} {
+		response := httptest.NewRecorder()
+		fail(response, err)
+		var body api.Error
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusRequestEntityTooLarge || body.Error != "limit_exceeded" || body.Message != err.Error() {
+			t.Fatalf("unexpected limit response: %d %+v", response.Code, body)
+		}
+	}
+}

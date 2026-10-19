@@ -84,7 +84,7 @@ The exported `ExecutionContext` type is either `{mode:"service"}` or
 | `resolve(id)` | Current Node for a file or directory ID; requires `stableIds`. |
 | `contentByIDRaw(fileId, signal?)` | Current file bytes by ID; raw HTTP response, requires `stableIds`. |
 | `list(path, options?)` | Globally sorted/filtered page of immediate children. |
-| `search(q, { path, after, limit, maxEntries, signal })` | Case-insensitive filename substring search. |
+| `search(q, { path, after, limit, maxEntries, signal })` | Normalized filename search; supports relevance and highlights. |
 | `mkdir(path, { ownership, acl })` | Create one configured directory; parent must exist. |
 | `setOwnership(path, ownership)` | Apply Unix ownership/mode without creating a version. |
 | `getACL(path, scope)` | Read the access or default ACL. |
@@ -123,12 +123,16 @@ with `Node.id`, which is present for files and directories on those roots.
 history. See [stable IDs and migration](/docs/en/stable-ids).
 
 List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
-`limit` and `maxEntries`. Search also accepts `ext` (comma-separated extensions
-without dots; whitespace is trimmed and values are case-folded, `ß` = `ss`),
-`minSize`, `maxSize`, `modifiedAfter` and `modifiedBefore` (timestamp strings),
-including with an empty query. Keep every option unchanged while following `next`,
-including through empty indexed pages. Indexed first pages retain their captured
-observation during concurrent writes; following their cursor after a mutation
+`limit`, `maxEntries` and `match`. Search also accepts `ext` (comma-separated
+extensions without dots; whitespace is trimmed and values are case-folded,
+`ß` = `ss`), `minSize`, `maxSize`, `modifiedAfter` and `modifiedBefore`
+(timestamp strings), including with an empty query. Search supports
+`sort: "relevance"` with non-empty `q`; it ignores `order` and returns the best K
+matches after filtering. Search pages include rune-based `matches` for non-empty
+`q`, and optional `total`/`truncated` for complete snapshot selections. Keep every
+option unchanged while following `next`, including through empty indexed pages.
+Indexed first pages retain their captured observation during concurrent writes;
+following their cursor after a mutation
 returns `409 cursor_invalid`. Restart on that error. Searches are not retried
 automatically. On `429 search_busy`, retry the same request after the
 `Retry-After: 1` delay. See

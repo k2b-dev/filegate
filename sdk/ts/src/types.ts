@@ -19,11 +19,13 @@ export interface ListingOptions {
   minSize?: number; maxSize?: number;
   /** Search only: RFC 3339 strings, after inclusive and before exclusive. */
   modifiedAfter?: string; modifiedBefore?: string;
-  match?: "exact" | "fuzzy"; after?: string; limit?: number; maxEntries?: number; sort?: "path" | "name" | "size" | "modified"; order?: "asc" | "desc"; type?: "all" | "files" | "directories" }
+  match?: "exact" | "fuzzy"; after?: string; limit?: number; maxEntries?: number; sort?: "path" | "name" | "size" | "modified" | "relevance"; order?: "asc" | "desc"; type?: "all" | "files" | "directories" }
 export interface DownloadOptions { expiresIn?: number; fileName?: string }
 export interface WriteOptions { precondition?: Precondition; accessACL?: ACL; onConflict?: "error" | "overwrite" | "rename"; ownership?: Ownership; metadata?: Metadata }
 export interface Node { revision?: string; root: string; path: string; id?: string; directory: boolean; size: number; modified: string; mode: string; uid: number; gid: number }
-export interface Page { items: Node[]; next?: string }
+/** Half-open rune offsets into the original basename. */
+export type MatchRange = [number, number];
+export interface Page { items: Node[]; next?: string; total?: number; truncated?: boolean; matches?: MatchRange[][] }
 export interface Stats { path: string; started: string; completed: string; complete: boolean; freshness: "observed" | "unknown"; indexBuilt?: string; files: number; directories: number; bytes: number; updated: string; source: "filesystem" | "index" }
 export interface Keep { last: number; hourly: number; daily: number; weekly: number; monthly: number }
 export interface IndexStatus { enabled: boolean; rebuilding: boolean; scanned: number; lastBuilt: string | null; durationMs: number; error?: string }

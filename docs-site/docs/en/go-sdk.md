@@ -31,6 +31,28 @@ fmt.Println(node.Path, node.ID)
 `expiresIn` to 0 for the 60-second default, or choose 1–300 seconds. The byte count
 must match exactly. `filegate.PutDirect(ctx, url, reader, size)` sends no bearer token.
 
+## Search with relevance and highlights
+
+```go
+page, err := root.Search(ctx, "tst", ".", filegate.ListingOptions{
+    Match: "fuzzy", Sort: "relevance",
+})
+if err != nil { return err }
+if page.Total != nil {
+    fmt.Println(*page.Total, *page.Truncated)
+}
+if page.Matches != nil {
+    // Per item: [start, end) rune offsets into its original basename.
+    fmt.Println(*page.Matches)
+}
+```
+
+Relevance requires non-empty text, ignores `Order` and retains the best K hits
+(default 1000, configured by the server). `Total` and `Truncated` are optional:
+keyset-paged exact searches omit them. Non-empty searches always include
+`Matches`, including empty pages. Use `[]rune(basename)` when applying ranges.
+See [browsing](/docs/en/browsing) for ranking and cursor validity.
+
 ## Run with Unix permissions
 
 `Client.WithExecution` and `Root.WithExecution` return independent scoped clients

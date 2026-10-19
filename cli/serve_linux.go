@@ -75,6 +75,7 @@ func serve(parent context.Context, c Config) error {
 			f.Close()
 			return e
 		}
+		root.SearchTopK = c.Search.TopK
 		roots = append(roots, root)
 	}
 	h := httpadapter.New(roots, httpadapter.Options{Token: token, PublicURL: c.Server.PublicURL, Origins: c.Server.AllowedOrigins, Version: Version})

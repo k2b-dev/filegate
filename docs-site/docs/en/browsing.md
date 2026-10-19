@@ -29,7 +29,7 @@ the current-content response. Do not use listing metadata as a fresh revision.
 
 | Option | Values and default |
 | --- | --- |
-| `sort` | `path` (default), `name`, `size`, `modified`. |
+| `sort` | `path` (default), `name`, `size`, `modified`; search also accepts `relevance` with non-empty `q`. |
 | `order` | `asc` (default), `desc`. |
 | `type` | `all` (default), `files`, `directories`. |
 | `match` | `exact` (default), `fuzzy`. |
@@ -75,17 +75,60 @@ Each token uses the strongest matching tier:
    and the span from the first to the last matched rune must be at most three
    times the token length. `tst` finds `testtest.ods` this way.
 
-A filename's tier is its weakest token's tier. With every supported sort, loose
-hits appear only when the complete selection has no exact or typo hit. This
-rule applies after all filters, before pagination. Fuzzy searches
-collect the complete selection once; they keep your requested sort and order.
-`match: "exact"` includes only the first tier.
+A filename's tier is its weakest token's tier. With `sort: "relevance"`, loose
+hits always appear after exact and typo hits. With other sorts, loose hits appear
+only when the complete selection has no exact or typo hit. This rule applies
+after all filters, before pagination. `match: "exact"` includes
+only the first tier.
+
+## Show the best matches first
+
+Use `sort: "relevance"` with a non-empty `q`. Filegate orders results by:
+
+1. Tier: exact, then typo, then loose.
+2. Sub-rank, summed across tokens in the filename's weakest tier. Exact uses
+   equality (0), prefix (1), word start (2), substring (3); typo sums edit
+   distances. Loose first prefers fewer tokens that start inside a word, then
+   the smaller sum of matched spans.
+3. No accent folding needed, then accent folding needed.
+4. Shorter basename in runes, fewer path segments, then path in byte order.
+
+`order` is ignored for relevance; results always run from best to worst.
+An empty or whitespace-only `q` with relevance returns 400 (`invalid_argument`).
+Directory listings do not accept relevance.
+
+Relevance keeps only the best K hits, default 1000. Operators can change K with
+[`search.topK`](/docs/en/configuration). `total` counts the complete selection
+after all filters and before this cap; `truncated: true` means some hits are
+outside the retained K.
+Only retained hits are pageable. Other sorts have no top-K cap.
+
+Every search page with a non-empty `q` includes `matches`, aligned with `items`.
+Each entry is an array of `[start, end)` rune ranges into the original basename.
+Exact hits highlight matching runes, typo hits the matched approximate substring,
+and loose hits the individual matched runes. Adjacent or overlapping ranges merge.
+Offsets refer to the original spelling, including composed or decomposed accents
+and full case folds; they are not UTF-8 byte or JavaScript UTF-16 offsets.
+
+```ts
+const page = await root.search("tst", { match: "fuzzy", sort: "relevance" });
+// For items[i].path === "reports/testtest.ods":
+// matches[i] === [[0, 1], [2, 4]] highlights t + st.
+const basename = page.items[0]?.path.split("/").at(-1) ?? "";
+const runes = Array.from(basename);
+const fragments = page.matches?.[0]?.map(([start, end]) => runes.slice(start, end).join(""));
+```
+
+`total` and `truncated` are present when Filegate collected the complete
+selection into an observation, including empty-query searches on that path.
+Keyset-paged exact searches omit both fields, even on the last page. A missing
+`total` means unknown. Directory listing responses retain `{items, next?}`.
 
 ## Filter search results
 
 Search accepts these additional filters, with or without `q`. Combine them with
-`type` and any supported sort. They apply before name matching and pagination;
-directory listings do not use them.
+`type` and any supported sort. They apply before name matching, relevance scoring
+and top-K selection; directory listings do not use them.
 
 | Option | Values |
 | --- | --- |
@@ -130,15 +173,22 @@ filter invalidates the cursor.
 Indexed queries reflect the configured index, including its freshness limits for
 external writers. Run a rebuild to include external changes. Searches below a
 non-root path with `sort: "name"`, `"size"` or `"modified"` collect and sort the
-selected subtree once. Fuzzy searches collect and sort once for every path and
-sort. These scan budgets apply only to the selected subtree. Other indexed
+selected subtree once. Fuzzy and relevance searches collect and sort once for
+every path. These scan budgets apply only to the selected subtree. Other indexed
 queries seek to the next position instead of rescanning earlier pages.
 
-Filesystem queries, sorted indexed subtree searches and all fuzzy searches use
-a bounded temporary observation. The observation lasts 60 seconds. Each root
-retains at most 16 observations and 32 MiB of listing data; each scan accepts at most
-`maxEntries` entries (default and maximum: 100000). If the scan budget is exceeded,
-the request returns 413 instead of a partially sorted result.
+Filesystem queries, sorted indexed subtree searches, fuzzy and relevance searches
+use a bounded temporary observation. The observation lasts 60 seconds. Each root
+retains at most 16 observations and 32 MiB of listing data. Live filesystem scans
+and indexed scans with other sorts accept at most `maxEntries` visited entries
+(default and maximum: 100000). Indexed relevance scans visit the complete subtree
+and retain at most K hits; `maxEntries` caps retained hits on this path instead
+of visited entries. Setting it below K can return 413 if too many hits need to
+be retained. Indexed relevance scans also have a server-owned 10-second time
+budget. Cancellation still stops the scan. Exceeding a visit, memory or scan-time
+budget returns 413 (`limit_exceeded`) instead of a partially sorted result;
+failed first pages leave no cached observation. Narrow the search path or query
+before retrying.
 
 Filegate mutations, an index rebuild, restart, changed query options, observation
 expiry or capacity eviction can invalidate a cursor. On `409 cursor_invalid`,
@@ -147,9 +197,12 @@ their captured observation even if a Filegate mutation or rebuild occurs during
 the scan. Any returned cursor stays bound to that observation, so following it
 after such a change returns `409 cursor_invalid`. Continuation pages also return
 this error if the root changes while they scan. Indexed scans allow writes to
-proceed. Live filesystem scans retain the root lock to coordinate identity and
-revision updates with permission checks. Filesystem observations are not atomic
-snapshots of external writers.
+proceed. Relevance pages also return `409 cursor_invalid` if a retained hit is
+missing, has changed between a file and a directory, or no longer satisfies the
+search filters. This includes external deletion or rename. Live filesystem scans
+retain the root lock to coordinate identity and revision updates with permission
+checks.
+Filesystem observations are not atomic snapshots of external writers.
 
 Each root admits at most two searches at once, shared across Unix execution
 identities. Directory listings do not consume search slots. A further search
@@ -169,10 +222,11 @@ A recursive scan that encounters an unreadable subtree fails the whole query,
 even when that subtree would not match the search text. It does not return a
 successful partial result. Each page rechecks base-directory access, traversal
 to each returned entry and read permission on its parent. An entry deleted by an
-external writer makes the page fail with 404; revoked access returns 403. Neither
-returns a partial page. Restart the query to obtain a new observation. A readable
-directory can expose a file's name and metadata without granting access to its
-bytes; download checks content read permission separately.
+external writer makes a relevance page fail with `409 cursor_invalid`; other
+sorts return 404. Revoked access returns 403. These errors return no partial page.
+Restart the query to obtain a new observation. A readable directory can expose a
+file's name and metadata without granting access to its bytes; download checks
+content read permission separately.
 
 ## Read recursive totals
 
