@@ -196,6 +196,7 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 		return true, score
 	}
 	q.normalize(name)
+	needsFuzzy := false
 	for i, token := range q.tokens {
 		if q.pathSearch {
 			// Exact forms may span separators; fuzzy forms never do.
@@ -203,19 +204,34 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 		} else {
 			score.tokens[i] = q.matchToken(token)
 		}
+		if score.tokens[i].tier == 0 {
+			if !q.pathSearch || !q.fuzzy {
+				return false, nameMatch{}
+			}
+			needsFuzzy = true
+		}
 	}
 	if q.pathSearch {
 		start := 0
 		for segment := range strings.SplitSeq(name, "/") {
 			end := start + len(segment)
 			basename := end == len(name)
+			if !basename && !needsFuzzy {
+				start = end + 1
+				continue
+			}
 			q.normalize(segment)
 			for i, token := range q.tokens {
 				current := score.tokens[i]
 				if !basename && (current.tier == nameExact || !q.fuzzy) {
 					continue
 				}
-				hit := q.matchToken(token)
+				var hit nameTokenMatch
+				if current.tier == nameExact {
+					hit = q.exactToken(token)
+				} else {
+					hit = q.matchToken(token)
+				}
 				if hit.tier == 0 {
 					continue
 				}

@@ -360,3 +360,24 @@ func BenchmarkSearchPath(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkSearchPathEarlyMiss(b *testing.B) {
+	for _, mode := range []string{"exact", "fuzzy"} {
+		b.Run(mode, func(b *testing.B) {
+			q, err := compileSearchQuery("zzzz tsettest quartalsbericht", true)
+			if err != nil {
+				b.Fatal(err)
+			}
+			q.fuzzy = mode == "fuzzy"
+			candidate := strings.Repeat("éfolder/", 64) + "testtest.pdf"
+			if ok, _ := q.match(candidate); ok {
+				b.Fatal("unexpected match")
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				_, nameQueryBenchmarkScore = q.match(candidate)
+			}
+		})
+	}
+}
