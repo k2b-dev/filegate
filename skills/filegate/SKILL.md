@@ -340,8 +340,26 @@ tokens outside 4–32 runes use exact and loose matching only.
 Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
 A node's tier is its worst token. For every supported sort, tier 3 appears only
-if the complete path/type-filtered selection has no tier 1/2 hit. Fuzzy always
+if the complete filtered selection has no tier 1/2 hit. Fuzzy always
 collects/sorts one snapshot, preserving sort/order. Exact keeps ordinary paging.
+
+Search-only filters (also without q): ext is comma-separated, without dots.
+Values are trimmed and case-folded (ß = ss); ext=pdf, docx is accepted, as are
+repeated HTTP parameters (ext=pdf&ext=docx). Empty values or values containing
+dots return 400 invalid_argument.
+Only the basename's final extension matches: a.tar.gz → gz; .bashrc, README and
+name. have no extension. minSize/maxSize are inclusive non-negative int64 bytes,
+minSize <= maxSize. ext or either size filter excludes directories.
+modifiedAfter is inclusive, modifiedBefore exclusive, both RFC 3339; time filters
+apply to files and directories. Invalid sizes/timestamps return 400 invalid_argument;
+UTC-normalized timestamps must keep a four-digit year (0000–9999).
+Filters combine with type and run before name matching/pagination. List ignores
+these search-only options. Example: search("", {ext:"pdf", minSize:10485760,
+modifiedAfter:"2026-01-01T00:00:00Z", modifiedBefore:"2027-01-01T00:00:00Z"}).
+TS dates are strings. Go ListingOptions uses Ext:[]string{"pdf"}, *int64 size
+bounds and *time.Time dates; nil omits a bound, a pointer to zero includes it.
+Extensions are case-folded, sorted and deduplicated; timestamps normalize to UTC.
+Normalized filters bind the cursor, so keep them on every page.
 
 Indexed exact scans can seek forward; an empty page can still have next.
 Filesystem and fuzzy scans sort one bounded observation: 60-second lifetime, 16 snapshots / 32 MiB per root,

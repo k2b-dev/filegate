@@ -123,7 +123,10 @@ with `Node.id`, which is present for files and directories on those roots.
 history. See [stable IDs and migration](/docs/en/stable-ids).
 
 List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
-`limit` and `maxEntries`. Keep every option unchanged while following `next`,
+`limit` and `maxEntries`. Search also accepts `ext` (comma-separated extensions
+without dots; whitespace is trimmed and values are case-folded, `ß` = `ss`),
+`minSize`, `maxSize`, `modifiedAfter` and `modifiedBefore` (timestamp strings),
+including with an empty query. Keep every option unchanged while following `next`,
 including through empty indexed pages. Indexed first pages retain their captured
 observation during concurrent writes; following their cursor after a mutation
 returns `409 cursor_invalid`. Restart on that error. Searches are not retried

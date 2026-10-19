@@ -61,6 +61,8 @@ export class RootClient {
   /** List immediate children without consuming search capacity. */
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
   /** Match descendant basenames using options.match (exact by default, or fuzzy).
+   * Metadata filters also work with an empty query. Size bounds are inclusive;
+   * modifiedAfter is inclusive and modifiedBefore exclusive (RFC 3339 strings).
    * The server rejects raw queries over 8 KiB (UTF-8) or more than eight whitespace
    * tokens with 400 invalid_argument. Search does not retry automatically. On 429
    * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages

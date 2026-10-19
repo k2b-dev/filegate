@@ -77,9 +77,53 @@ Each token uses the strongest matching tier:
 
 A filename's tier is its weakest token's tier. With every supported sort, loose
 hits appear only when the complete selection has no exact or typo hit. This
-rule applies after the path and type filters, before pagination. Fuzzy searches
+rule applies after all filters, before pagination. Fuzzy searches
 collect the complete selection once; they keep your requested sort and order.
 `match: "exact"` includes only the first tier.
+
+## Filter search results
+
+Search accepts these additional filters, with or without `q`. Combine them with
+`type` and any supported sort. They apply before name matching and pagination;
+directory listings do not use them.
+
+| Option | Values |
+| --- | --- |
+| `ext` | Comma-separated extensions without dots, such as `pdf,docx`; case-folded (`ß` = `ss`). |
+| `minSize`, `maxSize` | Inclusive byte bounds: non-negative 64-bit integers, with `minSize <= maxSize`. |
+| `modifiedAfter` | RFC 3339 timestamp, inclusive. |
+| `modifiedBefore` | RFC 3339 timestamp, exclusive. |
+
+Whitespace around extension values is trimmed: `ext=pdf, docx` works like
+`ext=pdf,docx`. HTTP also accepts repeated parameters: `ext=pdf&ext=docx`.
+
+`ext` matches only the basename's final extension: `a.tar.gz` matches `gz`,
+while `.bashrc`, `README` and `name.` have no extension. Any extension or size
+filter excludes directories. Time filters apply to both files and directories.
+Empty extension values, values containing dots, invalid sizes or invalid
+timestamps return 400 (`invalid_argument`). Timestamps must stay within the four-digit year range
+(0000–9999) after UTC conversion. Encode `+` in HTTP timestamp offsets as `%2B`.
+
+Find PDFs of at least 10 MiB modified during 2026 without a filename query:
+
+```ts
+const page = await root.search("", {
+  ext: "pdf",
+  minSize: 10485760,
+  modifiedAfter: "2026-01-01T00:00:00Z",
+  modifiedBefore: "2027-01-01T00:00:00Z",
+});
+```
+
+The HTTP equivalent is
+`GET /v1/roots/{root}/search?ext=pdf&minSize=10485760&modifiedAfter=2026-01-01T00:00:00Z&modifiedBefore=2027-01-01T00:00:00Z`.
+TypeScript uses timestamp strings. In Go, set `ListingOptions.Ext` to
+`[]string{"pdf"}`, size bounds to `*int64` and time bounds to `*time.Time`;
+`nil` omits a bound, while a size pointer to zero includes that bound.
+
+Keep the filters when following a cursor. Extension order, duplicates and case,
+and equivalent timestamp offsets normalize to the same selection. Changing a
+filter invalidates the cursor.
 
 ## Handle changing directories
 
