@@ -74,7 +74,7 @@ const upload = await root.directUpload("notes.txt", 5, { onConflict: "error" });
 | --- | --- |
 | `info()`, `stat(path)`, `resolve(id)` | Root capabilities or current Node. |
 | `list(path?, ListingOptions?)` | Immediate children, sorted/filtered before paging. |
-| `search(q, ListingOptions & {path?,signal?})` | Descendant filename matches; `{match:"fuzzy"}` allows typos and loose hits. |
+| `search(q, ListingOptions & {path?,signal?})` | Descendant name/path matches; `{match:"fuzzy"}` allows typos and loose hits. |
 | `mkdir(path, {ownership?,acl?:{access?,default?}})` | Prepare permissions, then publish one directory; parent must exist. |
 | `setOwnership`, `getACL`, `setACL`, `clearDefaultACL` | Explicit live metadata changes; no recursive correction or versions. |
 | `remove(path, recursive?)` | Permanent removal, including histories. |
@@ -324,7 +324,7 @@ existing versions; it does not schedule snapshots.
 
 ListingOptions: sort=`path|name|size|modified|relevance` (default path), order=`asc|desc`
 (default asc), type=`all|files|directories` (default all), limit 1–1000 (default 100),
-match=`exact|fuzzy` (default exact), maxEntries 1–100000 (default 100000), opaque
+match=`exact|fuzzy` (default exact), in=`name|path` (default name), maxEntries 1–100000 (default 100000), opaque
 after. Stable path ties follow the same order. Filter/sort precedes pagination. List returns immediate children; search walks
 descendants, excluding its base.
 
@@ -333,7 +333,17 @@ Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
 match with gaps removed (`quartalsbericht` finds `Quartals_Bericht.xlsx`). At most
 8 whitespace tokens, AND in any order (`2026 bericht`). Raw `q` is limited to
 8 KiB (8192 UTF-8 bytes) before normalization. Exceeding either query limit or
-using an unknown match returns 400 (`invalid_argument`).
+using an unknown match or in returns 400 (`invalid_argument`).
+With in=path, match the path relative to the normalized search base without a
+leading slash; never include the base prefix. `/` is a word gap, also removed
+in compact forms. All tokens must match but may hit different segments.
+Example: search("rechnung 2026", {in:"path",path:"docs"}) finds
+`docs/Rechnungen/2026/scan01.pdf`. Go: ListingOptions{In: "path"}.
+Exact matching covers the whole relative path (`taxform` finds `tax/form.pdf`).
+Typo/loose matching runs within individual segments, including the basename,
+regardless of path depth or total length. Fuzzy matches across `/`, such as
+`taxfrom` matching `tax/form.pdf`, are excluded.
+in is part of the cursor fingerprint.
 Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
 adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for 8–32;
 tokens outside 4–32 runes use exact and loose matching only.
@@ -341,11 +351,19 @@ Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
 A node's tier is its worst token. Relevance always includes tier 3 after tiers
 1/2. Other sorts include tier 3 only if the complete filtered selection
-has no tier 1/2 hit. Fuzzy and relevance always collect/sort one snapshot.
+has no tier 1/2 hit. Fuzzy searches keep the requested sort and order for
+non-relevance sorts. Fuzzy and relevance always collect/sort one snapshot.
 Relevance requires non-empty q (otherwise 400 invalid_argument), is search-only,
-and ignores order. Rank by worst tier, then summed sub-ranks of tokens in that
-tier: exact equal=0/prefix=1/word=2/substring=3; typo edit distance; loose fewer
-non-word starts, then summed spans. Ties: no accent folding, shorter basename in
+and ignores order. Rank by worst tier; with in=path, next prefer fewer tokens
+without a basename hit at their selected tier, counting all tokens. Weaker
+basename tiers do not promote stronger parent hits. Next sum sub-ranks of tokens
+in the worst tier: exact equal=0/prefix=1/word=2/substring=3; typo edit distance;
+loose fewer non-word starts, then summed spans.
+Qualifying basename hits supply their own sub-rank, accent requirement and
+highlight occurrence. `rechnung`: Archiv/Alte Rechnung.pdf before Rechnungen/x.pdf;
+`report`: x/report.pdf before report/z/myreport.pdf. Exact equality/prefix refer
+to the basename for these hits, otherwise to the whole relative path.
+Ties: no accent folding, shorter basename in
 runes, fewer path segments, path byte order.
 Relevance retains only best K hits, default 1000, server YAML `search.topK`
 (integer 1–100000). Only retained hits are pageable. Other sorts have no top-K.
@@ -353,7 +371,11 @@ Search pages from complete snapshot selections include total (after filters,
 before top-K) and truncated (whether top-K dropped hits), including empty-query searches. Keyset
 exact pages omit both. Every search page with non-empty q includes matches,
 aligned with items: per item an array of [start,end) original basename rune
-ranges, not bytes/UTF-16. Exact highlights matched runes; typo the approximate
+ranges by default, not bytes/UTF-16. With in=path, ranges address Node.path
+relative to the normalized search base, without a leading slash. At base docs,
+`docs/Müller/2026/scan.pdf` uses offset string `Müller/2026/scan.pdf`;
+q="muller 2026" gives [[0,6],[7,11]]. At base `.`, use Node.path as-is.
+Node.path remains root-relative. Exact highlights matched runes; typo the approximate
 substring; loose individual runes. Merge adjacent/overlapping ranges. Example:
 q=tst matches testtest.ods with [[0,1],[2,4]]. Full folds/composed accents map
 back to original rune offsets. Node is unchanged; directory pages stay items/next.
@@ -382,8 +404,10 @@ lifetime, 16 snapshots / 32 MiB per root. Live scans and indexed non-relevance
 scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit
 the complete subtree, retaining at most K; maxEntries caps retained hits instead
 of scanned keys on this path. A tighter request budget fails with 413 rather
-than reducing K. Indexed relevance scans also have a server-owned 10-second time
-budget. Cancellation still applies. Exceeded visit/memory/scan-time budgets
+than reducing K. Every recursive search scan has a server-owned 10-second time
+budget, for all sorts and match modes on indexed and live paths. Directory
+listings are unaffected. Client cancellation and deadlines remain cancellation
+or deadline errors. Exceeded visit/memory/scan-time budgets
 return 413 (limit_exceeded), not a globally sorted partial result. Failed first
 pages leave no cached observation. Narrow the search path or query before retrying.
 Scoped Unix listing and search use live filesystem observations even on indexed

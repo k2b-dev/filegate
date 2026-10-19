@@ -19,11 +19,14 @@ export interface ListingOptions {
   minSize?: number; maxSize?: number;
   /** Search only: RFC 3339 strings, after inclusive and before exclusive. */
   modifiedAfter?: string; modifiedBefore?: string;
+  /** Search only: basename (default), or path relative to the search base. */
+  in?: "name" | "path";
   match?: "exact" | "fuzzy"; after?: string; limit?: number; maxEntries?: number; sort?: "path" | "name" | "size" | "modified" | "relevance"; order?: "asc" | "desc"; type?: "all" | "files" | "directories" }
 export interface DownloadOptions { expiresIn?: number; fileName?: string }
 export interface WriteOptions { precondition?: Precondition; accessACL?: ACL; onConflict?: "error" | "overwrite" | "rename"; ownership?: Ownership; metadata?: Metadata }
 export interface Node { revision?: string; root: string; path: string; id?: string; directory: boolean; size: number; modified: string; mode: string; uid: number; gid: number }
-/** Half-open rune offsets into the original basename. */
+/** Half-open rune offsets into the basename, or with in=path, Node.path relative
+ * to the search base without a leading slash (not UTF-16 offsets). */
 export type MatchRange = [number, number];
 export interface Page { items: Node[]; next?: string; total?: number; truncated?: boolean; matches?: MatchRange[][] }
 export interface Stats { path: string; started: string; completed: string; complete: boolean; freshness: "observed" | "unknown"; indexBuilt?: string; files: number; directories: number; bytes: number; updated: string; source: "filesystem" | "index" }

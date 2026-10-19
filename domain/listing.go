@@ -39,8 +39,10 @@ type ListingOptions struct {
 	Order      string `json:"order,omitempty"`
 	Type       string `json:"type,omitempty"`
 	Match      string `json:"match,omitempty"`
-	topK       int
-	search     bool
+	// In selects search basenames (name, default) or scope-relative paths (path).
+	In     string `json:"in,omitempty"`
+	topK   int
+	search bool
 	// Search-only metadata filters. Pointers distinguish an omitted bound from zero.
 	Ext            []string   `json:"ext,omitempty"`
 	MinSize        *int64     `json:"minSize,omitempty"`
@@ -84,6 +86,12 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 		o.Match = "exact"
 	}
 	if o.Match != "exact" && o.Match != "fuzzy" {
+		return o, ErrInvalid
+	}
+	if o.In == "" {
+		o.In = "name"
+	}
+	if o.In != "name" && o.In != "path" {
 		return o, ErrInvalid
 	}
 	if o.Type == "" {
@@ -141,10 +149,12 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 	return r.queryListing(ctx, p, "", false, o)
 }
 
-// Search selects descendants of base using normalized basename matching.
+// Search selects descendants of base using normalized basename matching,
+// or scope-relative path matching with In: "path".
 // The raw query must be at most 8 KiB and contain at most eight whitespace tokens.
 // Indexed subtree searches with non-path ordering sort a bounded snapshot.
 // Execution views scan the live filesystem and bind snapshots to their identity.
+// Every search scan has a 10-second server budget; expiry returns ErrLimit.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {
 	return r.queryListing(ctx, base, query, true, o)
 }
@@ -178,8 +188,8 @@ func (r *Root) admitSearchWithin(ctx context.Context, wait time.Duration) error 
 	}
 }
 
-func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool, o ListingOptions) (Page, error) {
-	p, err := CleanPath(p)
+func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool, o ListingOptions) (out Page, err error) {
+	p, err = CleanPath(p)
 	if err != nil {
 		return Page{}, err
 	}
@@ -187,10 +197,11 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	if err != nil {
 		return Page{}, err
 	}
-	matcher, err := compileNameQuery(query)
+	matcher, err := compileSearchQuery(query, o.In == "path")
 	if err != nil {
 		return Page{}, err
 	}
+	matcher.base = p
 	o.search = recursive
 	matcher.fuzzy = o.Match == "fuzzy"
 	if o.Sort == "relevance" && (!recursive || len(matcher.tokens) == 0) {
@@ -261,13 +272,26 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 		if recursive && !o.matchesSearchFilters(n) {
 			return nameMatch{}
 		}
-		matched, score := matcher.match(path.Base(n.Path))
+		matched, score := matcher.match(matcher.subject(n.Path))
 		if !matched {
 			return nameMatch{}
 		}
 		return score
 	}
-	var out Page
+	if recursive {
+		budget := r.searchScanTimeout
+		if budget == 0 {
+			budget = searchScanBudget
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, budget, ErrLimit)
+		defer cancel()
+		defer func() {
+			if errors.Is(context.Cause(ctx), ErrLimit) && errors.Is(err, context.DeadlineExceeded) {
+				err = ErrLimit
+			}
+		}()
+	}
 	if r.Config.Index && r.execution == nil {
 		out, err = r.indexedListing(ctx, p, recursive, o, cursor, matches, matcher)
 	} else {
@@ -290,7 +314,7 @@ func listingHighlights(ctx context.Context, out *Page, matcher *nameQuery) error
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ranges = append(ranges, matcher.highlights(path.Base(n.Path)))
+		ranges = append(ranges, matcher.highlights(matcher.subject(n.Path)))
 	}
 	out.Matches = &ranges
 	return nil
@@ -333,20 +357,6 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (out Page, err error) {
 	if o.Sort == "relevance" && c.Snapshot != "" {
 		return r.snapshotListing(ctx, p, o, c, matches, nil, matcher, nil)
-	}
-	if o.Sort == "relevance" {
-		budget := r.searchScanTimeout
-		if budget == 0 {
-			budget = searchScanBudget
-		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, budget, ErrLimit)
-		defer cancel()
-		defer func() {
-			if errors.Is(context.Cause(ctx), ErrLimit) && errors.Is(err, context.DeadlineExceeded) {
-				err = ErrLimit
-			}
-		}()
 	}
 	state, err := r.State.Snapshot()
 	if err != nil {

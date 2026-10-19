@@ -19,7 +19,7 @@ type highlightForm struct {
 	starts  []bool
 }
 
-func highlightForms(name string) [4]highlightForm {
+func (q *nameQuery) highlightForms(name string) [4]highlightForm {
 	var forms [4]highlightForm
 	var it norm.Iter
 	it.InitString(norm.NFC, name)
@@ -36,7 +36,7 @@ func highlightForms(name string) [4]highlightForm {
 		original += count
 		cased := norm.NFC.String(folder.String(string(segment)))
 		for _, r := range cased {
-			gap := nameBoundary(r)
+			gap := q.boundary(r)
 			if gap {
 				r = ' '
 			}
@@ -71,8 +71,19 @@ func (q *nameQuery) highlights(name string) []MatchRange {
 	if !ok {
 		return ranges
 	}
-	forms := highlightForms(name)
+	var forms [4]highlightForm
+	previous := [2]int{-1, -1}
+	originOffset := 0
 	for i, t := range q.tokens {
+		subject := m.subjects[i]
+		if subject[1] == 0 {
+			subject = [2]int{0, len(name)}
+		}
+		if subject != previous {
+			forms = q.highlightForms(name[subject[0]:subject[1]])
+			originOffset = utf8.RuneCountInString(name[:subject[0]])
+			previous = subject
+		}
 		tokens := [4][]byte{t.text, t.compact, t.folded, t.foldedCompact}
 		target := m.tokens[i]
 		for f, form := range forms {
@@ -92,7 +103,8 @@ func (q *nameQuery) highlights(name string) []MatchRange {
 			}
 			positions := highlightPositions(form, token, target)
 			for _, j := range positions {
-				ranges = append(ranges, form.origins[j])
+				origin := form.origins[j]
+				ranges = append(ranges, MatchRange{origin[0] + originOffset, origin[1] + originOffset})
 			}
 			break
 		}

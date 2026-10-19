@@ -228,6 +228,9 @@ func listingQuery(p string, o ListingOptions) url.Values {
 	if o.Match != "" {
 		q.Set("match", o.Match)
 	}
+	if o.In != "" {
+		q.Set("in", o.In)
+	}
 	return q
 }
 
@@ -239,9 +242,14 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 	return page, err
 }
 
-// Search matches descendant basenames using o.Match (exact by default, or fuzzy).
+// Search matches descendant basenames, or scope-relative paths with In: "path".
+// Match defaults to exact; fuzzy includes typo and loose matching.
 // Sort relevance requires non-empty text, ignores Order and retains the best K.
-// Matches uses original basename rune offsets; Total/Truncated are optional.
+// Matches uses original basename rune offsets by default. With In: "path",
+// offsets refer to Node.Path relative to p, without a leading slash.
+// Total/Truncated are optional.
+// Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
+// Client cancellation and deadlines remain context errors.
 // Ext, size and modification-time filters also work with an empty query.
 // Ext values are trimmed and case-folded; use extensions without dots.
 // Size bounds are inclusive; ModifiedAfter is inclusive, ModifiedBefore exclusive.

@@ -358,17 +358,6 @@ func TestSearchMatchFirstPageHighlightCancellationDoesNotCache(t *testing.T) {
 	}
 }
 
-// Probe the lock at cancellation checkpoints without scheduling another goroutine.
-type highlightLockContext struct {
-	context.Context
-	check func()
-}
-
-func (c highlightLockContext) Err() error {
-	c.check()
-	return c.Context.Err()
-}
-
 func TestSearchHighlightContinuationHoldsRootLock(t *testing.T) {
 	for _, sort := range []string{"path", "name"} {
 		t.Run(sort, func(t *testing.T) {
@@ -386,22 +375,24 @@ func TestSearchHighlightContinuationHoldsRootLock(t *testing.T) {
 			}
 			opts.After = page.Next
 			state := r.State.(*listingState)
-			cachedPage := false
-			r.now = func() time.Time { cachedPage = true; return now }
 			checks := 0
-			ctx := highlightLockContext{Context: context.Background(), check: func() {
-				// Keyset scans run outside mu; their reader closes before highlights.
-				// Cached continuation pages perform no scan and stay under mu.
-				if sort == "path" && state.closed < 2 || sort == "name" && !cachedPage {
-					return
-				}
+			check := func() {
 				checks++
 				if r.mu.TryLock() {
 					r.mu.Unlock()
 					t.Error("continuation highlights released the root lock")
 				}
-			}}
-			page, err = r.Search(ctx, "report", base, opts)
+			}
+			// The indexed reader closes immediately before keyset highlights;
+			// cached pages read the observation clock before their highlights.
+			// Probe those boundaries instead of the caller's Err method, which
+			// the server's standard timeout context no longer calls per node.
+			if sort == "path" {
+				state.onClose = check
+			} else {
+				r.now = func() time.Time { check(); return now }
+			}
+			page, err = r.Search(context.Background(), "report", base, opts)
 			if err != nil || checks == 0 || len(page.Items) != 1 || page.Items[0].Path != "docs/report-b" || page.Matches == nil || len(*page.Matches) != 1 || len((*page.Matches)[0]) == 0 {
 				t.Fatalf("continuation: %+v err=%v checks=%d", page, err, checks)
 			}

@@ -266,6 +266,7 @@ func BenchmarkNameQueryTiers(b *testing.B) {
 		{"loose", "tata", "t1a2t3a.ods", 3},
 		{"loose-short", "tst", "testtest.ods", 3},
 		{"miss", "inventarliste", "Quartalsbericht_0123_2026.pdf", 0},
+		{"early-miss", "zzzz tsettest quartalsbericht", "reports-2026-testtest.pdf", 0},
 		{"typo-repeated-prefix", strings.Repeat("a", 128) + "b", strings.Repeat("a", 255), 0},
 		{"typo-eight-tokens", strings.TrimSpace(strings.Repeat(strings.Repeat("a", 128)+"b ", 8)), strings.Repeat("a", 255), 0},
 	} {

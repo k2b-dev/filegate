@@ -33,6 +33,7 @@ the current-content response. Do not use listing metadata as a fresh revision.
 | `order` | `asc` (default), `desc`. |
 | `type` | `all` (default), `files`, `directories`. |
 | `match` | `exact` (default), `fuzzy`. |
+| `in` | Search basename with `name` (default), or scope-relative `path`. |
 | `limit` | 1–1000; default 100. |
 | `maxEntries` | 1–100000; default 100000. |
 | `after` | The previous response's opaque `next` cursor. |
@@ -51,7 +52,22 @@ and folds accents (`muller` finds `Müller.docx`). These rules apply with the de
 The raw `q` value is limited to 8 KiB (8192 UTF-8 bytes) before normalization
 and has at most eight whitespace-separated tokens. Every token must match,
 in any order: `2026 bericht` finds `Quartalsbericht 2026.pdf`. Exceeding either
-query limit or using an unknown `match` value returns 400 (`invalid_argument`).
+query limit or using an unknown `match` or `in` value returns 400 (`invalid_argument`).
+
+Use `in: "path"` to include folder names:
+
+```ts
+const page = await root.search("rechnung 2026", { in: "path", path: "docs" });
+// Finds docs/Rechnungen/2026/scan01.pdf.
+```
+
+The HTTP equivalent is
+`GET /v1/roots/{root}/search?q=rechnung%202026&in=path&path=docs`.
+In Go, pass `filegate.ListingOptions{In: "path"}` to `Search`.
+Every token can match any segment of the path relative to the search base.
+The base itself is excluded: searching below `docs` does not match `docs`
+against its own prefix. `/` is a word gap, including for matching with gaps
+removed. The default `in: "name"` searches only the basename.
 
 Use `match: "fuzzy"` to include typos and loose abbreviations:
 
@@ -75,7 +91,12 @@ Each token uses the strongest matching tier:
    and the span from the first to the last matched rune must be at most three
    times the token length. `tst` finds `testtest.ods` this way.
 
-A filename's tier is its weakest token's tier. With `sort: "relevance"`, loose
+With `in: "path"`, exact matching covers the whole relative path, so `taxform`
+finds `tax/form.pdf`. Typo and loose matching run within individual path segments,
+including the basename, regardless of path depth or total length.
+Fuzzy matches across `/`, such as `taxfrom` matching `tax/form.pdf`, are excluded.
+
+A result's tier is its weakest token's tier. With `sort: "relevance"`, loose
 hits always appear after exact and typo hits. With other sorts, loose hits appear
 only when the complete selection has no exact or typo hit. This rule applies
 after all filters, before pagination. `match: "exact"` includes
@@ -86,12 +107,22 @@ only the first tier.
 Use `sort: "relevance"` with a non-empty `q`. Filegate orders results by:
 
 1. Tier: exact, then typo, then loose.
-2. Sub-rank, summed across tokens in the filename's weakest tier. Exact uses
+2. With `in: "path"`, fewer tokens without a basename hit at their selected
+   tier. Count all tokens, including those in stronger tiers. A weaker basename
+   hit does not promote a stronger parent hit.
+3. Sub-rank, summed across tokens in the result's weakest tier. Exact uses
    equality (0), prefix (1), word start (2), substring (3); typo sums edit
    distances. Loose first prefers fewer tokens that start inside a word, then
    the smaller sum of matched spans.
-3. No accent folding needed, then accent folding needed.
-4. Shorter basename in runes, fewer path segments, then path in byte order.
+4. No accent folding needed, then accent folding needed.
+5. Shorter basename in runes, fewer path segments, then path in byte order.
+
+When a basename hit qualifies at the selected tier, its sub-rank, accent
+requirement and highlight occurrence apply. Thus `rechnung` ranks
+`Archiv/Alte Rechnung.pdf` before `Rechnungen/x.pdf`, and `report` ranks
+`x/report.pdf` before `report/z/myreport.pdf`.
+Exact equality and prefix refer to the basename for these hits; otherwise they
+refer to the whole relative path.
 
 `order` is ignored for relevance; results always run from best to worst.
 An empty or whitespace-only `q` with relevance returns 400 (`invalid_argument`).
@@ -104,7 +135,12 @@ outside the retained K.
 Only retained hits are pageable. Other sorts have no top-K cap.
 
 Every search page with a non-empty `q` includes `matches`, aligned with `items`.
-Each entry is an array of `[start, end)` rune ranges into the original basename.
+Each entry is an array of `[start, end)` rune ranges into the original basename
+with `in: "name"`. With `in: "path"`, offsets refer to `items[i].path` relative
+to the normalized search base, without a leading slash. For base `docs` and node
+`docs/Müller/2026/scan.pdf`, the offset string is `Müller/2026/scan.pdf`;
+`muller 2026` highlights `[[0, 6], [7, 11]]`. At the root base (`.`), use the
+returned path as-is. `Node.path` always remains root-relative.
 Exact hits highlight matching runes, typo hits the matched approximate substring,
 and loose hits the individual matched runes. Adjacent or overlapping ranges merge.
 Offsets refer to the original spelling, including composed or decomposed accents
@@ -184,8 +220,10 @@ and indexed scans with other sorts accept at most `maxEntries` visited entries
 (default and maximum: 100000). Indexed relevance scans visit the complete subtree
 and retain at most K hits; `maxEntries` caps retained hits on this path instead
 of visited entries. Setting it below K can return 413 if too many hits need to
-be retained. Indexed relevance scans also have a server-owned 10-second time
-budget. Cancellation still stops the scan. Exceeding a visit, memory or scan-time
+be retained. Every recursive search scan has a server-owned 10-second time
+budget, for all sorts and match modes on indexed and live paths. Directory
+listings are unaffected. Client cancellation and deadlines still stop the scan
+and remain cancellation or deadline errors. Exceeding a visit, memory or scan-time
 budget returns 413 (`limit_exceeded`) instead of a partially sorted result;
 failed first pages leave no cached observation. Narrow the search path or query
 before retrying.
@@ -199,9 +237,11 @@ after such a change returns `409 cursor_invalid`. Continuation pages also return
 this error if the root changes while they scan. Indexed scans allow writes to
 proceed. Relevance pages also return `409 cursor_invalid` if a retained hit is
 missing, has changed between a file and a directory, or no longer satisfies the
-search filters. This includes external deletion or rename. Live filesystem scans
-retain the root lock to coordinate identity and revision updates with permission
-checks.
+search filters. This includes external deletion or rename. On index-free roots
+and roots using Unix execution identities, even the first relevance page can
+return this error if a hit changes between scanning and serving the page. Retry
+without a cursor to restart the query. Live filesystem scans retain the root lock
+to coordinate identity and revision updates with permission checks.
 Filesystem observations are not atomic snapshots of external writers.
 
 Each root admits at most two searches at once, shared across Unix execution

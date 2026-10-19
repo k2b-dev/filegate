@@ -551,68 +551,119 @@ func TestSearchRelevanceCursorBindsEffectiveTopK(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceScanBudget(t *testing.T) {
-	for _, reason := range []string{"server budget", "request deadline", "request cancellation", "server budget then request cancellation", "server budget then request deadline"} {
-		t.Run(reason, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
-				r.searchScanTimeout = time.Second
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				want := ErrLimit
-				if reason == "request deadline" {
-					var stop context.CancelFunc
-					ctx, stop = context.WithTimeout(ctx, r.searchScanTimeout/2)
-					defer stop()
-					want = context.DeadlineExceeded
-				} else if reason == "request cancellation" {
-					want = context.Canceled
-				} else if reason == "server budget then request deadline" {
-					var stop context.CancelFunc
-					ctx, stop = context.WithTimeout(ctx, 3*r.searchScanTimeout/2)
-					defer stop()
+// Block only the first child metadata open, after base validation and scan admission.
+type budgetSearchFiles struct {
+	*listingFiles
+	onScan func()
+}
+
+func (f *budgetSearchFiles) Open(p string, flags int, mode os.FileMode) (*os.File, error) {
+	if p != "." && f.onScan != nil {
+		onScan := f.onScan
+		f.onScan = nil
+		onScan()
+	}
+	return f.listingFiles.Open(p, flags, mode)
+}
+
+func TestSearchScanBudget(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, sortBy := range []string{"path", "name", "size", "modified", "relevance"} {
+			for _, match := range []string{"exact", "fuzzy"} {
+				for _, reason := range []string{"server budget", "request deadline", "request cancellation", "server budget then request cancellation", "server budget then request deadline"} {
+					t.Run(fmt.Sprintf("indexed=%v/%s/%s/%s", indexed, sortBy, match, reason), func(t *testing.T) {
+						synctest.Test(t, func(t *testing.T) {
+							scanning, release := make(chan struct{}), make(chan struct{})
+							block := func() { close(scanning); <-release }
+							var r *Root
+							var state *listingState
+							if indexed {
+								r = indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
+								state = r.State.(*listingState)
+								state.onScan = block
+							} else {
+								files := &budgetSearchFiles{listingFiles: &listingFiles{base: t.TempDir()}, onScan: block}
+								for _, name := range []string{"report-a", "report-b"} {
+									if err := os.WriteFile(filepath.Join(files.base, name), nil, 0600); err != nil {
+										t.Fatal(err)
+									}
+								}
+								r = &Root{Files: files, rootShared: &rootShared{now: time.Now}}
+							}
+							r.searchScanTimeout = time.Second
+							ctx, cancel := context.WithCancel(context.Background())
+							defer cancel()
+							want := ErrLimit
+							if reason == "request deadline" {
+								var stop context.CancelFunc
+								ctx, stop = context.WithTimeout(ctx, r.searchScanTimeout/2)
+								defer stop()
+								want = context.DeadlineExceeded
+							} else if reason == "request cancellation" {
+								want = context.Canceled
+							} else if reason == "server budget then request deadline" {
+								var stop context.CancelFunc
+								ctx, stop = context.WithTimeout(ctx, 3*r.searchScanTimeout/2)
+								defer stop()
+							}
+							done := make(chan error, 1)
+							opts := ListingOptions{Sort: sortBy, Match: match, Limit: 1}
+							go func() {
+								page, err := r.Search(ctx, "report", ".", opts)
+								if len(page.Items) != 0 || page.Next != "" {
+									t.Errorf("expired search returned a partial page: %+v", page)
+								}
+								done <- err
+							}()
+							<-scanning
+							if reason == "request cancellation" {
+								cancel()
+							} else {
+								// Virtual time advances while the scan is blocked by channels.
+								<-time.After(2 * r.searchScanTimeout)
+								if reason == "server budget then request cancellation" {
+									cancel()
+								}
+							}
+							close(release)
+							if err := <-done; !errors.Is(err, want) {
+								t.Fatalf("search error=%v want=%v", err, want)
+							}
+							if state != nil {
+								if state.closed != 1 {
+									t.Fatalf("expired search retained reader: closed=%d", state.closed)
+								}
+								state.onScan = nil
+							}
+							if len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 {
+								t.Fatalf("expired search retained state: cache=%d bytes=%d slots=%d", len(r.listings), r.listingBytes, len(r.searches))
+							}
+							// Both admission slots remain usable after the failed scan.
+							for range 2 {
+								if err := r.admitSearch(context.Background()); err != nil {
+									t.Fatal(err)
+								}
+							}
+							<-r.searches
+							<-r.searches
+							if _, err := r.Search(context.Background(), "report", ".", opts); err != nil {
+								t.Fatalf("retry failed: %v", err)
+							}
+						})
+					})
 				}
-				state := r.State.(*listingState)
-				scanning, release := make(chan struct{}), make(chan struct{})
-				state.onScan = func() { close(scanning); <-release }
-				done := make(chan error, 1)
-				go func() {
-					page, err := r.Search(ctx, "report", ".", ListingOptions{Sort: "relevance", Limit: 1})
-					if len(page.Items) != 0 || page.Next != "" {
-						t.Errorf("expired search returned a partial page: %+v", page)
-					}
-					done <- err
-				}()
-				<-scanning
-				if reason == "request cancellation" {
-					cancel()
-				} else {
-					// Virtual time advances only while the scan is blocked by channels.
-					<-time.After(2 * r.searchScanTimeout)
-					if reason == "server budget then request cancellation" {
-						cancel()
-					}
-				}
-				close(release)
-				if err := <-done; !errors.Is(err, want) {
-					t.Fatalf("search error=%v want=%v", err, want)
-				}
-				if state.closed != 1 || len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 {
-					t.Fatalf("expired search retained state: closed=%d cache=%d bytes=%d slots=%d", state.closed, len(r.listings), r.listingBytes, len(r.searches))
-				}
-				// Both admission slots remain usable after the failed scan.
-				for range 2 {
-					if err := r.admitSearch(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-				}
-				<-r.searches
-				<-r.searches
-				state.onScan = nil
-				if _, err := r.Search(context.Background(), "report", ".", ListingOptions{Sort: "relevance"}); err != nil {
-					t.Fatalf("retry failed: %v", err)
-				}
-			})
-		})
+			}
+		}
+	}
+}
+
+func TestSearchBudgetExcludesDirectoryListings(t *testing.T) {
+	r, _, _ := liveListingRoot(t)
+	r.searchScanTimeout = -time.Second
+	if _, err := r.Search(context.Background(), "", ".", ListingOptions{}); !errors.Is(err, ErrLimit) {
+		t.Fatalf("search ignored expired budget: %v", err)
+	}
+	if page, err := r.List(context.Background(), ".", ListingOptions{}); err != nil || len(page.Items) == 0 {
+		t.Fatalf("search budget affected directory listing: %+v %v", page, err)
 	}
 }

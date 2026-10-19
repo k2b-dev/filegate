@@ -62,7 +62,8 @@ type Node struct {
 	GID       uint32    `json:"gid"`
 }
 
-// MatchRange is a half-open range of original basename rune offsets.
+// MatchRange is a half-open range of original basename rune offsets, or, with
+// in=path, Node.Path relative to the search base without a leading slash.
 type MatchRange = [2]int
 
 type Page struct {
