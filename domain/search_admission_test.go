@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
 
-// Observing Done proves admission reached its blocking select before cancellation.
+// Observing Done proves admission is evaluating its blocking select.
 type waitingSearchContext struct {
 	context.Context
 	waiting chan struct{}
+	once    sync.Once
 }
 
-func (c waitingSearchContext) Done() <-chan struct{} {
-	close(c.waiting)
+func (c *waitingSearchContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
 	return c.Context.Done()
 }
 
@@ -33,9 +35,13 @@ func TestSearchAdmissionCancellationAndViews(t *testing.T) {
 	defer cancel()
 	waiting := make(chan struct{})
 	done := make(chan error, 1)
-	go func() { done <- view.admitSearch(waitingSearchContext{Context: ctx, waiting: waiting}) }()
+	waitingCtx := &waitingSearchContext{Context: ctx, waiting: waiting}
+	// Keep the production 200 ms timeout out of the cancellation assertion.
+	go func() { done <- view.admitSearchWithin(waitingCtx, time.Hour) }()
 	<-waiting
 	cancel()
+	waitingCtx.Done()
+	waitingCtx.Done()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("admission ignored cancellation: %v", err)
 	}

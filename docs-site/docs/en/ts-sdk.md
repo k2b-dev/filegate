@@ -126,8 +126,9 @@ List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
 `limit` and `maxEntries`. Keep every option unchanged while following `next`,
 including through empty indexed pages. Indexed first pages retain their captured
 observation during concurrent writes; following their cursor after a mutation
-returns `409 cursor_invalid`. Restart on that error. Searches can also return
-`429 search_busy`; retry after a delay. See
+returns `409 cursor_invalid`. Restart on that error. Searches are not retried
+automatically. On `429 search_busy`, retry the same request after the
+`Retry-After: 1` delay. See
 [browsing](/docs/en/browsing) for sorting, query budgets and cursor lifetime.
 
 Root streaming methods `contentRaw`, `contentByIDRaw`, `thumbnailRaw` and

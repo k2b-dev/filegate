@@ -123,6 +123,10 @@ func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions)
 // prevent excess requests from observing the bounded capacity wait. Request
 // views share these slots with their service root.
 func (r *Root) admitSearch(ctx context.Context) error {
+	return r.admitSearchWithin(ctx, searchAdmissionWait)
+}
+
+func (r *Root) admitSearchWithin(ctx context.Context, wait time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -132,7 +136,7 @@ func (r *Root) admitSearch(ctx context.Context) error {
 		return nil
 	default:
 	}
-	timer := time.NewTimer(searchAdmissionWait)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case r.searches <- struct{}{}:
@@ -368,7 +372,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		var err error
 		if r.Config.Index && r.execution == nil {
-			err = r.scanListing(ctx, c, o.After != "", collect)
+			err = r.scanListing(ctx, c, false, collect)
 		} else {
 			// Live metadata collection can assign identities and revisions. Keep
 			// it serialized with publication and execution permission rechecks.
@@ -412,6 +416,8 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 
 // Collection and sorting touch request-local data only. The per-root cache is
 // updated after collection, under mu, so concurrent scans cannot race eviction.
+// Admission bounds indexed listing data per root to the 32 MiB cache plus two
+// in-flight collections of at most 32 MiB each.
 func collectListing(ctx context.Context, o ListingOptions, query string, matches func(Node) bool, scan func(func(Node) error) error) (*listingSnapshot, error) {
 	snapshot := &listingSnapshot{query: query, entries: []Node{}}
 	err := scan(func(n Node) error {
