@@ -329,3 +329,25 @@ func TestSearchMatchListKeepsImmediateChildPaging(t *testing.T) {
 		t.Fatalf("list lost indexed continuation: %+v", cursor)
 	}
 }
+
+func TestSearchMatchFirstPageHighlightCancellationDoesNotCache(t *testing.T) {
+	r := indexedListingRoot(t, []Node{{Path: "docs/report-a"}, {Path: "docs/report-b"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Unix(1000, 0)
+	clockReads := 0
+	r.now = func() time.Time {
+		clockReads++
+		if clockReads == 2 {
+			// The observation is complete and starts its lifetime, before the
+			// first page's highlights. Collection itself has already succeeded.
+			cancel()
+		}
+		return now
+	}
+	page, err := r.Search(ctx, "report", "docs", ListingOptions{Sort: "name", Match: "fuzzy", Limit: 1})
+	state := r.State.(*listingState)
+	if !errors.Is(err, context.Canceled) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 || state.closed != 1 {
+		t.Fatalf("failed highlights retained state: page=%+v err=%v cache=%d bytes=%d slots=%d closed=%d", page, err, len(r.listings), r.listingBytes, len(r.searches), state.closed)
+	}
+}

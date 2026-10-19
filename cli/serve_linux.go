@@ -54,7 +54,6 @@ func serve(parent context.Context, c Config) error {
 	roots := []*domain.Root{}
 	defer func() {
 		for _, r := range roots {
-			r.CloseListings()
 			r.State.Close()
 			r.Files.Close()
 		}

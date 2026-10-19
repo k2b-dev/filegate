@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -26,6 +27,10 @@ func TestSearchRelevanceRanking(t *testing.T) {
 		{"shorter name", "report", []string{"report.txt", "report-annual.txt"}},
 		{"segments then path bytes", "report", []string{"report", "a/report", "z/report", "a/b/report"}},
 		{"summed exact subranks", "annual report", []string{"annual-report", "report-annual.txt", "xannualreport.txt"}},
+		{"exact plus typo before two typos", "annual report", []string{"annual-reprot", "annula-reprot"}},
+		{"worst tier before summed distances", "annual abcdefgh", []string{"annula-abxdefxh", "annual-axbxcxdxexfxgxh"}},
+		{"only worst tier contributes subranks", "annual report", []string{"xannualx-reprot", "annula-reportxxx", "annula-reprot"}},
+		{"one loose token before two", "ab cd", []string{"axb-cd", "axb-cxd"}},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			var nodes []Node
@@ -33,7 +38,6 @@ func TestSearchRelevanceRanking(t *testing.T) {
 				nodes = append(nodes, Node{Path: tc.names[i]})
 			}
 			r := indexedListingRoot(t, nodes)
-			t.Cleanup(r.CloseListings)
 			for _, order := range []string{"asc", "desc"} {
 				got := collectSearch(t, r, tc.query, ".", ListingOptions{Sort: "relevance", Match: "fuzzy", Order: order, Limit: 1})
 				var names []string
@@ -67,7 +71,6 @@ func TestSearchRelevanceTopKPages(t *testing.T) {
 		nodes = append(nodes, Node{Path: fmt.Sprintf("folder/report-%02d.pdf", i)})
 	}
 	r := indexedListingRoot(t, nodes)
-	t.Cleanup(r.CloseListings)
 	r.SearchTopK = 3
 	opts := ListingOptions{Sort: "relevance", Limit: 1, MaxEntries: 3}
 	for i := 0; i < 3; i++ {
@@ -82,7 +85,7 @@ func TestSearchRelevanceTopKPages(t *testing.T) {
 			t.Fatalf("continuation %d: %q", i, page.Next)
 		}
 		for _, s := range r.listings {
-			if len(s.hits) != 3 || len(s.entries) != 0 || s.reader == nil || s.bytes > 1024 {
+			if len(s.hits) != 3 || len(s.entries) != 0 || s.bytes > 1024 {
 				t.Fatalf("not compact: %+v", s)
 			}
 		}
@@ -108,7 +111,6 @@ func TestSearchPageFields(t *testing.T) {
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			r := indexedListingRoot(t, []Node{{Path: "docs/report.pdf"}})
-			t.Cleanup(r.CloseListings)
 			p, err := r.Search(context.Background(), tc.query, tc.base, tc.opts)
 			if err != nil {
 				t.Fatal(err)
@@ -183,7 +185,15 @@ func TestSearchRelevanceExecutionAuthorization(t *testing.T) {
 		}
 	}
 	opts := ListingOptions{Sort: "relevance", Limit: 1}
+	// Stat is called only by the final access recheck, after live collection
+	// and page materialization. A failure must not admit the observation.
+	f.denied = "report"
 	p, err := r.Search(context.Background(), "report", ".", opts)
+	if !errors.Is(err, os.ErrPermission) || len(p.Items) != 0 || len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 {
+		t.Fatalf("failed authorization cached first page: %+v %v cache=%d", p, err, len(r.listings))
+	}
+	f.denied = ""
+	p, err = r.Search(context.Background(), "report", ".", opts)
 	if err != nil || len(p.Items) != 1 || p.Items[0].Path != "report" || p.Next == "" || f.checked["report"] == 0 {
 		t.Fatalf("first %+v %v", p, err)
 	}
@@ -191,6 +201,9 @@ func TestSearchRelevanceExecutionAuthorization(t *testing.T) {
 		t.Fatal("execution used index")
 	}
 	opts.After = p.Next
+	if err := os.WriteFile(filepath.Join(f.base, "report.pdf"), []byte("updated"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	f.denied = "report.pdf"
 	p, err = r.Search(context.Background(), "report", ".", opts)
 	if !errors.Is(err, os.ErrPermission) || len(p.Items) != 0 {
@@ -198,7 +211,7 @@ func TestSearchRelevanceExecutionAuthorization(t *testing.T) {
 	}
 	f.denied = ""
 	p, err = r.Search(context.Background(), "report", ".", opts)
-	if err != nil || len(p.Items) != 1 || p.Items[0].Path != "report.pdf" || p.Next != "" {
+	if err != nil || len(p.Items) != 1 || p.Items[0].Path != "report.pdf" || p.Items[0].Size != 7 || p.Next != "" {
 		t.Fatalf("retry %+v %v", p, err)
 	}
 }
@@ -214,11 +227,10 @@ func TestSearchRelevanceKeepsLooseHits(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceReaderRelease(t *testing.T) {
-	for _, reason := range []string{"single page", "invalidation", "expiry", "eviction", "shutdown", "cancellation", "memory limit"} {
+func TestSearchRelevanceRequestReaderRelease(t *testing.T) {
+	for _, reason := range []string{"single page", "invalidation", "expiry", "eviction", "cancellation", "memory limit"} {
 		t.Run(reason, func(t *testing.T) {
 			r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
-			t.Cleanup(r.CloseListings)
 			state := r.State.(*listingState)
 			now := time.Unix(1000, 0)
 			r.now = func() time.Time { return now }
@@ -256,8 +268,8 @@ func TestSearchRelevanceReaderRelease(t *testing.T) {
 				}
 				return
 			}
-			if state.closed != 0 {
-				t.Fatal("cached reader closed")
+			if state.closed != 1 {
+				t.Fatal("request reader retained in cache")
 			}
 			switch reason {
 			case "invalidation":
@@ -270,8 +282,6 @@ func TestSearchRelevanceReaderRelease(t *testing.T) {
 				}
 			case "eviction":
 				r.evictListing()
-			case "shutdown":
-				r.CloseListings()
 			}
 			if state.closed != 1 || len(r.listings) != 0 || r.listingBytes != 0 {
 				t.Fatalf("%s leaked reader: closed=%d cache=%d bytes=%d", reason, state.closed, len(r.listings), r.listingBytes)
@@ -316,33 +326,6 @@ func TestSearchRelevanceRetainedBudget(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceIdleExpiry(t *testing.T) {
-	r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
-	t.Cleanup(r.CloseListings)
-	p, err := r.Search(context.Background(), "report", ".", ListingOptions{Sort: "relevance", Limit: 1})
-	if err != nil || p.Next == "" {
-		t.Fatalf("first: %+v %v", p, err)
-	}
-	closed := make(chan struct{})
-	state := r.State.(*listingState)
-	r.mu.Lock()
-	state.onClose = func() { close(closed) }
-	for _, s := range r.listings {
-		s.timer.Reset(0)
-	}
-	r.mu.Unlock()
-	select {
-	case <-closed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("idle observation did not release its reader")
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if state.closed != 1 || len(r.listings) != 0 || r.listingBytes != 0 {
-		t.Fatalf("idle reader retained: closed=%d cache=%d bytes=%d", state.closed, len(r.listings), r.listingBytes)
-	}
-}
-
 func TestSearchRelevanceHeapReplacesWorst(t *testing.T) {
 	r := indexedListingRoot(t, []Node{{Path: "a-r1e2p3o4r5t"}, {Path: "b-reprot"}, {Path: "report"}, {Path: "z-report"}})
 	r.SearchTopK = 2
@@ -361,5 +344,154 @@ func TestSearchRelevanceDefaultTopK(t *testing.T) {
 	p, err := r.Search(context.Background(), "report", ".", ListingOptions{Sort: "relevance", Limit: 1000})
 	if err != nil || len(p.Items) != DefaultSearchTopK || p.Total == nil || *p.Total != DefaultSearchTopK+2 || p.Truncated == nil || !*p.Truncated || p.Next != "" {
 		t.Fatalf("default top-K: items=%d total=%v truncated=%v next=%q err=%v", len(p.Items), p.Total, p.Truncated, p.Next, err)
+	}
+}
+
+func TestSearchRelevanceFirstPageFailureDoesNotCache(t *testing.T) {
+	for _, failure := range []string{"read", "cancellation"} {
+		t.Run(failure, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
+			state := r.State.(*listingState)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			want := errors.New("injected primary read failure")
+			state.onGet = func(key string) error {
+				if key != "i/"+r.generation+"/report-a" {
+					t.Fatalf("unexpected materialization key: %s", key)
+				}
+				if failure == "cancellation" {
+					cancel()
+					return nil
+				}
+				return want
+			}
+			if failure == "cancellation" {
+				want = context.Canceled
+			}
+			page, err := r.Search(ctx, "report", ".", ListingOptions{Sort: "relevance", Limit: 1})
+			if !errors.Is(err, want) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 || r.listingBytes != 0 || state.closed != 1 || len(r.searches) != 0 {
+				t.Fatalf("failed first page retained state: page=%+v err=%v cache=%d bytes=%d closed=%d slots=%d", page, err, len(r.listings), r.listingBytes, state.closed, len(r.searches))
+			}
+			state.onGet = nil
+			page, err = r.Search(context.Background(), "report", ".", ListingOptions{Sort: "relevance", Limit: 1})
+			if err != nil || page.Next == "" || len(r.listings) != 1 {
+				t.Fatalf("retry failed: page=%+v err=%v cache=%d", page, err, len(r.listings))
+			}
+		})
+	}
+}
+
+func TestSearchRelevanceContinuationRequiresPrimaryRow(t *testing.T) {
+	r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
+	opts := ListingOptions{Sort: "relevance", Limit: 1}
+	page, err := r.Search(context.Background(), "report", ".", opts)
+	if err != nil || page.Next == "" {
+		t.Fatalf("first: %+v %v", page, err)
+	}
+	// Simulate an inconsistent index without an epoch change. Never skip a hit.
+	state := r.State.(*listingState)
+	delete(state.rows, "i/"+r.generation+"/report-b")
+	opts.After = page.Next
+	page, err = r.Search(context.Background(), "report", ".", opts)
+	if !errors.Is(err, os.ErrNotExist) || len(page.Items) != 0 || page.Next != "" || state.closed != 1 {
+		t.Fatalf("missing row was skipped or rescanned: %+v %v closed=%d", page, err, state.closed)
+	}
+}
+
+func TestSearchRelevanceCursorBindsEffectiveTopK(t *testing.T) {
+	for _, tc := range []struct {
+		label, sort   string
+		before, after int
+		invalid       bool
+	}{
+		{"changed relevance K", "relevance", 3, 1, true},
+		{"same effective relevance K", "relevance", 0, DefaultSearchTopK, false},
+		{"other sort ignores K", "name", 3, 1, false},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "docs/report-a"}, {Path: "docs/report-b"}, {Path: "docs/report-c"}})
+			r.SearchTopK = tc.before
+			opts := ListingOptions{Sort: tc.sort, Limit: 1}
+			page, err := r.Search(context.Background(), "report", "docs", opts)
+			if err != nil || page.Next == "" {
+				t.Fatalf("first: %+v %v", page, err)
+			}
+			r.SearchTopK = tc.after
+			opts.After = page.Next
+			page, err = r.Search(context.Background(), "report", "docs", opts)
+			if tc.invalid {
+				if !errors.Is(err, ErrCursorInvalid) || len(page.Items) != 0 {
+					t.Fatalf("cursor survived changed K: %+v %v", page, err)
+				}
+			} else if err != nil || len(page.Items) != 1 || page.Items[0].Path != "docs/report-b" {
+				t.Fatalf("unchanged selection invalidated: %+v %v", page, err)
+			}
+		})
+	}
+}
+
+func TestSearchRelevanceScanBudget(t *testing.T) {
+	for _, reason := range []string{"server budget", "request deadline", "request cancellation", "server budget then request cancellation", "server budget then request deadline"} {
+		t.Run(reason, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				r := indexedListingRoot(t, []Node{{Path: "report-a"}, {Path: "report-b"}})
+				r.searchScanTimeout = time.Second
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				want := ErrLimit
+				if reason == "request deadline" {
+					var stop context.CancelFunc
+					ctx, stop = context.WithTimeout(ctx, r.searchScanTimeout/2)
+					defer stop()
+					want = context.DeadlineExceeded
+				} else if reason == "request cancellation" {
+					want = context.Canceled
+				} else if reason == "server budget then request deadline" {
+					var stop context.CancelFunc
+					ctx, stop = context.WithTimeout(ctx, 3*r.searchScanTimeout/2)
+					defer stop()
+				}
+				state := r.State.(*listingState)
+				scanning, release := make(chan struct{}), make(chan struct{})
+				state.onScan = func() { close(scanning); <-release }
+				done := make(chan error, 1)
+				go func() {
+					page, err := r.Search(ctx, "report", ".", ListingOptions{Sort: "relevance", Limit: 1})
+					if len(page.Items) != 0 || page.Next != "" {
+						t.Errorf("expired search returned a partial page: %+v", page)
+					}
+					done <- err
+				}()
+				<-scanning
+				if reason == "request cancellation" {
+					cancel()
+				} else {
+					// Virtual time advances only while the scan is blocked by channels.
+					<-time.After(2 * r.searchScanTimeout)
+					if reason == "server budget then request cancellation" {
+						cancel()
+					}
+				}
+				close(release)
+				if err := <-done; !errors.Is(err, want) {
+					t.Fatalf("search error=%v want=%v", err, want)
+				}
+				if state.closed != 1 || len(r.listings) != 0 || r.listingBytes != 0 || len(r.searches) != 0 {
+					t.Fatalf("expired search retained state: closed=%d cache=%d bytes=%d slots=%d", state.closed, len(r.listings), r.listingBytes, len(r.searches))
+				}
+				// Both admission slots remain usable after the failed scan.
+				for range 2 {
+					if err := r.admitSearch(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				<-r.searches
+				<-r.searches
+				state.onScan = nil
+				if _, err := r.Search(context.Background(), "report", ".", ListingOptions{Sort: "relevance"}); err != nil {
+					t.Fatalf("retry failed: %v", err)
+				}
+			})
+		})
 	}
 }

@@ -31,7 +31,6 @@ func TestSearchRelevanceHTTPPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(root.CloseListings)
 	root.SearchTopK = 1
 	for _, name := range []string{"report", "report.pdf"} {
 		if err := os.WriteFile(filepath.Join(data, name), nil, 0600); err != nil {

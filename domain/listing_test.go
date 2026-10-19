@@ -16,13 +16,13 @@ import (
 
 type listingState struct {
 	State
-	rows    map[string][]byte
-	keys    []string
-	visits  int
-	scans   int
-	closed  int
-	onClose func()
-	onScan  func()
+	rows   map[string][]byte
+	keys   []string
+	visits int
+	scans  int
+	closed int
+	onGet  func(string) error
+	onScan func()
 }
 
 // These fixtures only mutate rows between requests. Production snapshot
@@ -34,13 +34,15 @@ func (s *listingState) Snapshot() (StateSnapshot, error) {
 }
 func (s *listingReadSnapshot) Close() error {
 	s.closed++
-	if s.onClose != nil {
-		s.onClose()
-	}
 	return nil
 }
 
 func (s *listingState) Get(key string, out any) error {
+	if s.onGet != nil {
+		if err := s.onGet(key); err != nil {
+			return err
+		}
+	}
 	b, ok := s.rows[key]
 	if !ok {
 		return os.ErrNotExist

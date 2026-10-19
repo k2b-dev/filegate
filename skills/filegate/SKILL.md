@@ -361,10 +361,13 @@ back to original rune offsets. Node is unchanged; directory pages stay items/nex
 Indexed exact scans can seek forward; an empty page can still have next.
 Filesystem, fuzzy and relevance scans use a bounded observation: 60-second
 lifetime, 16 snapshots / 32 MiB per root. Live scans and indexed non-relevance
-scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit the complete subtree, retaining at most K;
-maxEntries caps retained hits instead of scanned keys on this path. A tighter
-request budget fails with 413 rather than reducing K. Cancellation still applies.
-Exceeded visit/memory budget returns 413, not a globally sorted partial result.
+scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit
+the complete subtree, retaining at most K; maxEntries caps retained hits instead
+of scanned keys on this path. A tighter request budget fails with 413 rather
+than reducing K. Indexed relevance scans also have a server-owned 10-second time
+budget. Cancellation still applies. Exceeded visit/memory/scan-time budgets
+return 413 (limit_exceeded), not a globally sorted partial result. Failed first
+pages leave no cached observation. Narrow the search path or query before retrying.
 Scoped Unix listing and search use live filesystem observations even on indexed
 roots. Live relevance pages load current metadata for retained paths per page;
 membership/order stay fixed. A new query sees external NFS changes without an
@@ -372,7 +375,8 @@ index rebuild; continuations retain their original observation. An unreadable su
 recursive search fails the whole query even if it would not match. Every page
 checks its base, traversal to each returned entry and parent read permissions.
 External deletion of a returned entry fails the whole page with 404; revoked
-access returns 403. Neither returns a partial page; restart for a new observation.
+access returns 403. An unexpectedly missing retained indexed result also returns
+404 (not_found). These failures return no partial page; restart for a new observation.
 A visible name and metadata do not grant content read access; download checks it
 separately.
 Keep query parameters unchanged. Mutations/rebuild/restart/query change/

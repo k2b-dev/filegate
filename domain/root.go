@@ -43,6 +43,8 @@ type rootShared struct {
 	searches        chan struct{}
 	generation      string
 	now             func() time.Time
+
+	searchScanTimeout time.Duration // Zero uses the server-owned searchScanBudget.
 }
 type claim struct {
 	Device uint64

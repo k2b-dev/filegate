@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { Filegate, FilegateError } from "../src/index";
 
-test("listing and search preserve busy and invalid observation errors", async () => {
-  for (const [status, code] of [[429, "search_busy"], [409, "cursor_invalid"]] as const) {
+test("listing and search preserve busy, cursor and limit errors", async () => {
+  for (const [status, code] of [[429, "search_busy"], [409, "cursor_invalid"], [413, "limit_exceeded"]] as const) {
     const request: typeof fetch = async () => Response.json({ error: code, message: "retry query" }, { status });
     const root = new Filegate({ baseUrl: "https://files.example", token: "backend", fetch: request }).root("documents");
     for (const call of [() => root.list("."), () => root.search("name")]) {

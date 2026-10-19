@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -83,7 +82,6 @@ func newSearchRoot(t *testing.T) (*domain.Root, *searchState) {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(r.CloseListings)
 	return r, s
 }
 
@@ -405,9 +403,9 @@ func TestSearchStateSnapshotConsistent(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceCapturedObservationAndReaderLifetime(t *testing.T) {
-	for _, mutate := range []bool{false, true} {
-		t.Run(fmt.Sprint(mutate), func(t *testing.T) {
+func TestSearchRelevanceCapturedObservationAndRequestReader(t *testing.T) {
+	for _, change := range []string{"none", "remove", "rebuild"} {
+		t.Run(change, func(t *testing.T) {
 			r, state := newSearchRoot(t)
 			for _, p := range []string{"folder/report", "folder/report.pdf"} {
 				if _, err := r.Mkdir(p, domain.DirectoryOptions{}); err != nil {
@@ -426,9 +424,16 @@ func TestSearchRelevanceCapturedObservationAndReaderLifetime(t *testing.T) {
 			}()
 			t.Cleanup(func() { unblock(); awaitSearchValue(t, done) })
 			awaitSearchValue(t, blocked)
-			if mutate {
+			if change != "none" {
 				written := make(chan error, 1)
-				go func() { defer close(written); written <- r.Remove("folder/report", false) }()
+				go func() {
+					defer close(written)
+					if change == "rebuild" {
+						written <- r.Rebuild(context.Background())
+					} else {
+						written <- r.Remove("folder/report", false)
+					}
+				}()
 				t.Cleanup(func() { unblock(); awaitSearchValue(t, written) })
 				if err := awaitSearchValue(t, written); err != nil {
 					t.Fatal(err)
@@ -440,7 +445,7 @@ func TestSearchRelevanceCapturedObservationAndReaderLifetime(t *testing.T) {
 				t.Fatalf("captured first page: %+v", result)
 			}
 			opts.After = result.page.Next
-			if mutate {
+			if change != "none" {
 				if state.closed.Load() != 1 {
 					t.Fatal("stale reader retained")
 				}
@@ -448,15 +453,15 @@ func TestSearchRelevanceCapturedObservationAndReaderLifetime(t *testing.T) {
 					t.Fatalf("stale cursor: %v", err)
 				}
 			} else {
-				if state.closed.Load() != 0 {
-					t.Fatal("reader closed before continuation")
+				if state.closed.Load() != 1 {
+					t.Fatal("request reader retained after first page")
 				}
 				state.block = nil
 				p, err := r.Search(context.Background(), "report", ".", opts)
 				if err != nil || len(p.Items) != 1 || p.Items[0].Path != "folder/report.pdf" || p.Next != "" {
 					t.Fatalf("continuation: %+v %v", p, err)
 				}
-				if state.closed.Load() != 0 {
+				if state.closed.Load() != 1 {
 					t.Fatal("continuation opened another reader")
 				}
 				if err := r.Remove("folder/report", false); err != nil {
