@@ -115,26 +115,20 @@ func awaitSearchValue[T any](t *testing.T, ch <-chan T) T {
 
 // Exercise both slots after failures. One leftover slot would still allow
 // sequential queries, but would prevent these two requests from scanning.
-// List and Search must also share the root's admission limit.
 func assertSearchSlotsReusable(t *testing.T, r *domain.Root, state *searchState) {
 	t.Helper()
 	blocked, release := make(chan struct{}, 2), make(chan struct{})
 	state.block = func() { blocked <- struct{}{}; <-release }
 	unblock := sync.OnceFunc(func() { close(release) })
 	first := startSearch(r, context.Background(), ".", domain.ListingOptions{})
-	second := make(chan searchResult, 1)
-	go func() {
-		defer close(second)
-		page, err := r.List(context.Background(), "folder", domain.ListingOptions{})
-		second <- searchResult{page, err}
-	}()
+	second := startSearch(r, context.Background(), "folder", domain.ListingOptions{})
 	t.Cleanup(func() { unblock(); awaitSearchValue(t, first); awaitSearchValue(t, second) })
 	awaitSearchValue(t, blocked)
 	awaitSearchValue(t, blocked)
 	busy := startSearch(r, context.Background(), ".", domain.ListingOptions{})
 	t.Cleanup(func() { unblock(); awaitSearchValue(t, busy) })
 	if result := awaitSearchValue(t, busy); !errors.Is(result.err, domain.ErrSearchBusy) {
-		t.Fatalf("List and Search did not share capacity: %+v", result)
+		t.Fatalf("searches did not share capacity: %+v", result)
 	}
 	unblock()
 	if a, b := awaitSearchValue(t, first), awaitSearchValue(t, second); a.err != nil || b.err != nil {
@@ -143,17 +137,34 @@ func assertSearchSlotsReusable(t *testing.T, r *domain.Root, state *searchState)
 }
 
 func TestSearchScanAllowsWrites(t *testing.T) {
-	for _, tc := range []struct{ base, sort, order string }{
-		{".", "path", "asc"},
-		{".", "size", "desc"},
-		{"folder", "name", "asc"},
+	for _, tc := range []struct {
+		base, sort, order string
+		continuation      bool
+	}{
+		{".", "path", "asc", false},
+		{".", "size", "desc", false},
+		{"folder", "name", "asc", false},
+		{".", "path", "asc", true},
+		{".", "size", "desc", true},
 	} {
-		t.Run(tc.base+"/"+tc.sort, func(t *testing.T) {
+		name := tc.base + "/" + tc.sort
+		if tc.continuation {
+			name += "/continuation"
+		}
+		t.Run(name, func(t *testing.T) {
 			r, state := newSearchRoot(t)
+			opts := domain.ListingOptions{Sort: tc.sort, Order: tc.order, Limit: 1}
+			if tc.continuation {
+				page, err := r.Search(context.Background(), "", tc.base, opts)
+				if err != nil || page.Next == "" {
+					t.Fatalf("initial page: %+v %v", page, err)
+				}
+				opts.After = page.Next
+			}
 			blocked, release := make(chan struct{}), make(chan struct{})
 			state.block = func() { close(blocked); <-release }
 			unblock := sync.OnceFunc(func() { close(release) })
-			done := startSearch(r, context.Background(), tc.base, domain.ListingOptions{Sort: tc.sort, Order: tc.order, Limit: 1})
+			done := startSearch(r, context.Background(), tc.base, opts)
 			// Always unblock and join the search before closing its database,
 			// including when a write times out and fails the test.
 			t.Cleanup(func() { unblock(); awaitSearchValue(t, done) })
@@ -161,6 +172,10 @@ func TestSearchScanAllowsWrites(t *testing.T) {
 			written := make(chan error, 1)
 			go func() {
 				defer close(written)
+				if err := r.Remove("folder/a", false); err != nil {
+					written <- err
+					return
+				}
 				_, err := r.Mkdir("probe", domain.DirectoryOptions{})
 				written <- err
 			}()
@@ -170,8 +185,25 @@ func TestSearchScanAllowsWrites(t *testing.T) {
 			}
 			unblock()
 			result := awaitSearchValue(t, done)
-			if !errors.Is(result.err, domain.ErrCursorInvalid) || len(result.page.Items) != 0 || result.page.Next != "" || state.closed.Load() != 1 {
-				t.Fatalf("stale observation served or leaked: %+v closed=%d", result, state.closed.Load())
+			if tc.continuation {
+				if !errors.Is(result.err, domain.ErrCursorInvalid) || len(result.page.Items) != 0 || result.page.Next != "" || state.closed.Load() != 2 {
+					t.Fatalf("stale continuation served or leaked: %+v closed=%d", result, state.closed.Load())
+				}
+				assertSearchSlotsReusable(t, r, state)
+				return
+			}
+			want := "folder/a"
+			if tc.base == "." && tc.sort == "path" {
+				want = "folder"
+			} else if tc.order == "desc" {
+				want = "folder/c"
+			}
+			if result.err != nil || len(result.page.Items) != 1 || result.page.Items[0].Path != want || result.page.Next == "" || state.closed.Load() != 1 {
+				t.Fatalf("initial snapshot page failed or leaked: %+v closed=%d", result, state.closed.Load())
+			}
+			opts.After = result.page.Next
+			if _, err := r.Search(context.Background(), "", tc.base, opts); !errors.Is(err, domain.ErrCursorInvalid) {
+				t.Fatalf("cursor survived a concurrent write: %v", err)
 			}
 			assertSearchSlotsReusable(t, r, state)
 		})
@@ -205,7 +237,7 @@ func TestSearchScanCancellation(t *testing.T) {
 	}
 }
 
-func TestSearchScanRejectsRebuild(t *testing.T) {
+func TestSearchScanAllowsRebuild(t *testing.T) {
 	r, state := newSearchRoot(t)
 	blocked, release := make(chan struct{}), make(chan struct{})
 	state.block = func() { close(blocked); <-release }
@@ -224,10 +256,42 @@ func TestSearchScanRejectsRebuild(t *testing.T) {
 	}
 	unblock()
 	result := awaitSearchValue(t, done)
-	if !errors.Is(result.err, domain.ErrCursorInvalid) || len(result.page.Items) != 0 || result.page.Next != "" || state.closed.Load() != 1 {
-		t.Fatalf("rebuilt observation served or leaked: %+v closed=%d", result, state.closed.Load())
+	if result.err != nil || len(result.page.Items) != 1 || result.page.Items[0].Path != "folder/a" || result.page.Next == "" || state.closed.Load() != 1 {
+		t.Fatalf("initial snapshot page failed or leaked: %+v closed=%d", result, state.closed.Load())
+	}
+	if _, err := r.Search(context.Background(), "", "folder", domain.ListingOptions{Sort: "name", Limit: 1, After: result.page.Next}); !errors.Is(err, domain.ErrCursorInvalid) {
+		t.Fatalf("cursor survived a concurrent rebuild: %v", err)
 	}
 	assertSearchSlotsReusable(t, r, state)
+}
+
+func TestIndexedListingBypassesSearchAdmission(t *testing.T) {
+	r, state := newSearchRoot(t)
+	blocked, release := make(chan struct{}, 2), make(chan struct{})
+	var scans atomic.Int32
+	state.block = func() {
+		if scans.Add(1) <= 2 {
+			blocked <- struct{}{}
+			<-release
+		}
+	}
+	unblock := sync.OnceFunc(func() { close(release) })
+	first := startSearch(r, context.Background(), ".", domain.ListingOptions{})
+	second := startSearch(r, context.Background(), "folder", domain.ListingOptions{Sort: "name"})
+	t.Cleanup(func() { unblock(); awaitSearchValue(t, first); awaitSearchValue(t, second) })
+	awaitSearchValue(t, blocked)
+	awaitSearchValue(t, blocked)
+	listed := make(chan searchResult, 1)
+	go func() {
+		defer close(listed)
+		page, err := r.List(context.Background(), "folder", domain.ListingOptions{})
+		listed <- searchResult{page, err}
+	}()
+	t.Cleanup(func() { unblock(); awaitSearchValue(t, listed) })
+	result := awaitSearchValue(t, listed)
+	if result.err != nil || len(result.page.Items) != 3 || result.page.Next != "" {
+		t.Fatalf("search capacity throttled directory browsing: %+v", result)
+	}
 }
 
 func TestSearchConcurrencyBusy(t *testing.T) {

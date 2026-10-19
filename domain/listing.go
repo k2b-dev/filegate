@@ -153,10 +153,12 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	if err != nil {
 		return Page{}, err
 	}
-	if err := r.admitSearch(ctx); err != nil {
-		return Page{}, err
+	if recursive {
+		if err := r.admitSearch(ctx); err != nil {
+			return Page{}, err
+		}
+		defer func() { <-r.searches }()
 	}
-	defer func() { <-r.searches }()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.guard(); err != nil {
@@ -172,7 +174,7 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	cursor := listingCursor{Query: fingerprint, Instance: r.listingInstance, Epoch: r.listingEpoch, Generation: r.generation}
 	if o.After != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(o.After)
-		if e != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Query != fingerprint || cursor.Instance != r.listingInstance || cursor.Epoch != r.listingEpoch || cursor.Generation != r.generation {
+		if e != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Query != fingerprint || !r.listingCurrent(cursor) {
 			return Page{}, ErrCursorInvalid
 		}
 	}
@@ -214,10 +216,14 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	return r.liveListing(ctx, p, recursive, o, cursor, matches)
 }
 
+func (r *Root) listingCurrent(c listingCursor) bool {
+	return c.Instance == r.listingInstance && c.Epoch == r.listingEpoch && c.Generation == r.generation
+}
+
 // scanListing releases the lock only for read-only indexed work. The caller
-// owns the lock on entry and return. Even a first page is rejected if a write
-// or rebuild changed its observation; no stale page is published as current.
-func (r *Root) scanListing(ctx context.Context, c listingCursor, scan func() error) error {
+// owns the lock on entry and return. Initial pages keep their captured
+// observation; continuation pages must still match the current root state.
+func (r *Root) scanListing(ctx context.Context, c listingCursor, continuation bool, scan func() error) error {
 	err := func() error {
 		r.mu.Unlock()
 		defer r.mu.Lock()
@@ -232,7 +238,7 @@ func (r *Root) scanListing(ctx context.Context, c listingCursor, scan func() err
 	if err := r.guard(); err != nil {
 		return err
 	}
-	if c.Instance != r.listingInstance || c.Epoch != r.listingEpoch || c.Generation != r.generation {
+	if continuation && !r.listingCurrent(c) {
 		return ErrCursorInvalid
 	}
 	return nil
@@ -312,7 +318,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		}
 		return nil
 	}
-	err = r.scanListing(ctx, c, func() error {
+	err = r.scanListing(ctx, c, o.After != "", func() error {
 		var err error
 		if o.Order == "desc" {
 			err = state.ScanBefore(prefix, c.Last, visit)
@@ -362,7 +368,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		var err error
 		if r.Config.Index && r.execution == nil {
-			err = r.scanListing(ctx, c, collect)
+			err = r.scanListing(ctx, c, o.After != "", collect)
 		} else {
 			// Live metadata collection can assign identities and revisions. Keep
 			// it serialized with publication and execution permission rechecks.
@@ -375,13 +381,17 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		// not consume the usable lifetime before the first page is returned.
 		snapshot.created = r.now()
 		if len(snapshot.entries) > o.Limit {
+			c.Snapshot = newID()
+		}
+		// A concurrent write can make this initial observation stale. Return
+		// its page and bound cursor without retaining an unusable cache entry.
+		if c.Snapshot != "" && r.listingCurrent(c) {
 			if r.listings == nil {
 				r.listings = make(map[string]*listingSnapshot)
 			}
 			for len(r.listings) >= listingSnapshotLimit || r.listingBytes+snapshot.bytes > listingMemoryLimit {
 				r.evictListing()
 			}
-			c.Snapshot = newID()
 			r.listings[c.Snapshot] = snapshot
 			r.listingBytes += snapshot.bytes
 		}
