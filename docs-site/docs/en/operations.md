@@ -143,6 +143,7 @@ startup stops with an error. Preserve the state and logs for diagnosis.
 | ID-issued download returns 404 after a move | Issue another lease by ID to bind the current path; the old lease does not follow a rename. |
 | Listing/search/root-stats refresh returns 413 | Narrow the query or raise `maxEntries` within its documented limit. No globally sorted partial page is returned. |
 | Browse returns 409 `cursor_invalid` | Discard accumulated pages and restart with the same query. |
+| Listing/search returns 429 `search_busy` | Both root query slots are occupied; retry after `Retry-After: 1`. See [browsing](/docs/en/browsing). |
 | Upload returns 412 | Read the current managed revision and reconcile the edit; the upload condition failed without publication. |
 | Move remains `source_pending` | Inspect the receipt and both paths before resume or abandon; see [transfer recovery](/docs/en/transfers#recover-a-cross-root-move). |
 | Direct URL returns 401 | Expiry, token rotation or a modified signed URL. Mint a fresh URL. |

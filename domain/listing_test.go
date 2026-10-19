@@ -21,6 +21,15 @@ type listingState struct {
 	scans  int
 }
 
+// These fixtures only mutate rows between requests. Production snapshot
+// isolation and concurrent mutations are covered with Pebble in search tests.
+type listingReadSnapshot struct{ *listingState }
+
+func (s *listingState) Snapshot() (StateSnapshot, error) {
+	return &listingReadSnapshot{s}, nil
+}
+func (s *listingReadSnapshot) Close() error { return nil }
+
 func (s *listingState) Get(key string, out any) error {
 	b, ok := s.rows[key]
 	if !ok {

@@ -124,7 +124,8 @@ history. See [stable IDs and migration](/docs/en/stable-ids).
 
 List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
 `limit` and `maxEntries`. Keep every option unchanged while following `next`,
-including through empty indexed pages. Restart on `409 cursor_invalid`. See
+including through empty indexed pages. Restart on `409 cursor_invalid`;
+retry `429 search_busy` after a delay. See
 [browsing](/docs/en/browsing) for sorting, query budgets and cursor lifetime.
 
 Root streaming methods `contentRaw`, `contentByIDRaw`, `thumbnailRaw` and
