@@ -13,7 +13,7 @@ export interface DirectoryACLs { access?: ACL; default?: ACL }
 export interface DirectoryOptions { ownership?: Ownership; acl?: DirectoryACLs }
 export interface Precondition { ifMatch?: string; ifNoneMatch?: boolean }
 export interface ListingOptions {
-  /** Search only: comma-separated, case-insensitive extensions without dots. */
+  /** Search only: comma-separated extensions without dots; values are trimmed and case-folded. */
   ext?: string;
   /** Search only: inclusive byte bounds; directories are excluded. */
   minSize?: number; maxSize?: number;

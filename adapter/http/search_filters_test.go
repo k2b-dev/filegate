@@ -29,10 +29,23 @@ func TestSearchFiltersParsing(t *testing.T) {
 	}
 }
 
+func TestSearchFiltersRepeatedExtensions(t *testing.T) {
+	for _, raw := range []string{"ext=pdf&ext=docx", "ext=pdf,docx", "ext=pdf&ext=docx,gz"} {
+		opts, err := searchOptions(httptest.NewRequest("GET", "/?"+raw, nil))
+		want := []string{"pdf", "docx"}
+		if raw == "ext=pdf&ext=docx,gz" {
+			want = append(want, "gz")
+		}
+		if err != nil || !reflect.DeepEqual(opts.Ext, want) {
+			t.Fatalf("%s: extensions %v, want %v: %v", raw, opts.Ext, want, err)
+		}
+	}
+}
+
 func TestSearchFiltersInvalidHTTP(t *testing.T) {
 	h := New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, Options{Token: "secret"})
 	for _, suffix := range []string{
-		"ext=", "ext=.pdf", "ext=pdf,", "ext=,pdf", "ext=pdf,,docx",
+		"ext=", "ext=.pdf", "ext=tar.gz", "ext=pdf.", "ext=%20", "ext=pdf&ext=", "ext=pdf&ext=tar.gz", "ext=pdf,", "ext=,pdf", "ext=pdf,,docx",
 		"minSize=", "minSize=-1", "minSize=1.5", "minSize=1e3", "minSize=%2B1", "minSize=9223372036854775808",
 		"maxSize=", "maxSize=-1", "maxSize=1.5", "maxSize=abc", "minSize=2&maxSize=1",
 		"modifiedAfter=", "modifiedAfter=2026-01-01", "modifiedAfter=invalid", "modifiedBefore=", "modifiedBefore=2026-13-01T00:00:00Z",

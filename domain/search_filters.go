@@ -10,16 +10,23 @@ import (
 )
 
 func normalizeSearchExtension(ext string) string {
-	// Match the name matcher's NFC and full case folding, retaining accents
-	// and separators because extensions are compared as complete values.
-	return norm.NFC.String(cases.Fold().String(norm.NFC.String(ext)))
+	for i := 0; i < len(ext); i++ {
+		if ext[i] >= 128 {
+			// Match the name matcher's NFC and full case folding, retaining accents
+			// and separators because extensions are compared as complete values.
+			return norm.NFC.String(cases.Fold().String(norm.NFC.String(ext)))
+		}
+	}
+	// ASCII case folding is lowercase; ToLower reuses already lowercase strings.
+	return strings.ToLower(ext)
 }
 
 func normalizeSearchFilters(o ListingOptions) (ListingOptions, error) {
 	if len(o.Ext) > 0 {
 		extensions := make([]string, 0, len(o.Ext))
 		for _, ext := range o.Ext {
-			if ext == "" || strings.HasPrefix(ext, ".") {
+			ext = strings.TrimSpace(ext)
+			if ext == "" || strings.Contains(ext, ".") {
 				return o, ErrInvalid
 			}
 			extensions = append(extensions, normalizeSearchExtension(ext))

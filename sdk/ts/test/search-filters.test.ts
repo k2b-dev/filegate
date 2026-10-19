@@ -8,7 +8,7 @@ test("search forwards metadata filters with an empty query and execution identit
     return Response.json({ items: [] });
   };
   const root = new Filegate({ baseUrl: "https://api.test", token: "backend", fetch: request }).root("files");
-  const options = { ext: "PDF,docx", minSize: 0, maxSize: 10485760, modifiedAfter: "2026-01-01T00:00:00Z", modifiedBefore: "2027-01-01T00:00:00.123456789Z" };
+  const options = { ext: "PDF, docx", minSize: 0, maxSize: 10485760, modifiedAfter: "2026-01-01T00:00:00Z", modifiedBefore: "2027-01-01T00:00:00.123456789Z" };
   await root.search("", options);
   await root.as({ uid: 1001, gid: 100 }).search("", options);
   for (const call of calls) {

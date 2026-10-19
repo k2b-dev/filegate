@@ -59,8 +59,8 @@ func TestSearchQueryByteLimit(t *testing.T) {
 }
 
 func TestSearchFiltersForwarding(t *testing.T) {
-	after := time.Date(2026, 1, 1, 1, 0, 0, 123456789, time.FixedZone("offset", 3600))
-	before := after.Add(time.Hour)
+	after := time.Date(2026, 1, 1, 1, 0, 0, 123456789, time.FixedZone("offset", 3621))
+	before := after.Add(time.Hour).In(time.FixedZone("negative offset", -3621))
 	minSize, maxSize := int64(0), int64(9223372036854775807)
 	opts := ListingOptions{Ext: []string{"PDF", "docx"}, MinSize: &minSize, MaxSize: &maxSize, ModifiedAfter: &after, ModifiedBefore: &before}
 	calls := 0
@@ -68,7 +68,7 @@ func TestSearchFiltersForwarding(t *testing.T) {
 		calls++
 		q := r.URL.Query()
 		if strings.HasSuffix(r.URL.Path, "/search") {
-			if !q.Has("q") || q.Get("q") != "" || q.Get("ext") != "PDF,docx" || q.Get("minSize") != "0" || q.Get("maxSize") != "9223372036854775807" || q.Get("modifiedAfter") != after.Format(time.RFC3339Nano) || q.Get("modifiedBefore") != before.Format(time.RFC3339Nano) {
+			if !q.Has("q") || q.Get("q") != "" || q.Get("ext") != "PDF,docx" || q.Get("minSize") != "0" || q.Get("maxSize") != "9223372036854775807" || q.Get("modifiedAfter") != after.UTC().Format(time.RFC3339Nano) || q.Get("modifiedBefore") != before.UTC().Format(time.RFC3339Nano) {
 				t.Errorf("unexpected filters: %s", r.URL)
 			}
 		} else {
@@ -116,20 +116,29 @@ func TestSearchFiltersOmitted(t *testing.T) {
 	}
 }
 
-func TestSearchFiltersInvalidTimestampOffset(t *testing.T) {
-	handler := httpadapter.New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, httpadapter.Options{Token: "secret"})
-	server := httptest.NewServer(handler)
+func TestSearchFiltersTimestampUTC(t *testing.T) {
+	var want time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, key := range []string{"modifiedAfter", "modifiedBefore"} {
+			if raw := r.URL.Query().Get(key); raw != "" {
+				got, err := time.Parse(time.RFC3339Nano, raw)
+				if err != nil || !got.Equal(want) || !strings.HasSuffix(raw, "Z") {
+					t.Errorf("%s=%q: parsed %v, want %v: %v", key, raw, got, want, err)
+				}
+			}
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
 	t.Cleanup(server.Close)
 	client, err := New(server.URL, "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, offset := range []int{-24 * 60 * 60, 24 * 60 * 60} {
-		at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("offset", offset))
+	for _, offset := range []int{-24 * 60 * 60, -3621, 3621, 24 * 60 * 60} {
+		at := time.Date(2026, 1, 1, 0, 0, 0, 123456789, time.FixedZone("offset", offset))
+		want = at
 		for _, opts := range []ListingOptions{{ModifiedAfter: &at}, {ModifiedBefore: &at}} {
-			_, err := client.Root("files").Search(context.Background(), "", ".", opts)
-			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_argument" || apiErr.Message == "" {
+			if _, err := client.Root("files").Search(context.Background(), "", ".", opts); err != nil {
 				t.Fatalf("offset=%d filters=%+v: %v", offset, opts, err)
 			}
 		}

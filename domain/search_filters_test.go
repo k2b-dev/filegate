@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 func filterSize(v int64) *int64         { return &v }
@@ -17,12 +20,12 @@ func filterTime(v time.Time) *time.Time { return &v }
 
 func TestSearchFiltersNormalize(t *testing.T) {
 	at := time.Date(2026, 1, 1, 1, 0, 0, 123, time.FixedZone("offset", 3600))
-	original := []string{"PDF", "gz", "pdf", "DOCX"}
+	original := []string{" PDF ", "gz", "pdf", "\tDOCX\n"}
 	opts, err := normalizeListing(ListingOptions{Ext: original, MinSize: filterSize(0), MaxSize: filterSize(0), ModifiedAfter: &at, ModifiedBefore: &at})
 	if err != nil || !reflect.DeepEqual(opts.Ext, []string{"docx", "gz", "pdf"}) || opts.ModifiedAfter.Location() != time.UTC || opts.ModifiedBefore.Location() != time.UTC || !opts.ModifiedAfter.Equal(at) {
 		t.Fatalf("normalization: %+v %v", opts, err)
 	}
-	if !reflect.DeepEqual(original, []string{"PDF", "gz", "pdf", "DOCX"}) {
+	if !reflect.DeepEqual(original, []string{" PDF ", "gz", "pdf", "\tDOCX\n"}) {
 		t.Fatal("mutated caller extensions")
 	}
 	equivalent, err := normalizeListing(ListingOptions{Ext: []string{"gz", "docx", "pdf"}, MinSize: filterSize(0), MaxSize: filterSize(0), ModifiedAfter: filterTime(at.UTC()), ModifiedBefore: filterTime(at.UTC())})
@@ -30,12 +33,38 @@ func TestSearchFiltersNormalize(t *testing.T) {
 		t.Fatal("equivalent filters have different fingerprints")
 	}
 	for _, invalid := range []ListingOptions{
-		{Ext: []string{""}}, {Ext: []string{".pdf"}}, {Ext: []string{"pdf", ""}},
+		{Ext: []string{""}}, {Ext: []string{".pdf"}}, {Ext: []string{"tar.gz"}},
+		{Ext: []string{"pdf."}}, {Ext: []string{"pdf", ""}}, {Ext: []string{" \t "}},
 		{MinSize: filterSize(-1)}, {MaxSize: filterSize(-1)}, {MinSize: filterSize(2), MaxSize: filterSize(1)},
 	} {
 		if _, err := normalizeListing(invalid); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("accepted %+v: %v", invalid, err)
 		}
+	}
+}
+
+func TestSearchFiltersExtensionNormalization(t *testing.T) {
+	inputs := []string{"", "pdf", "PDF", "PdF", "SS", "ß", "Σ", "ς", "É", "E\u0301", "PDFß", "K", "ſ"}
+	for b := byte(0); b < 128; b++ {
+		inputs = append(inputs, "A"+string(b)+"Z")
+	}
+	for _, ext := range inputs {
+		want := norm.NFC.String(cases.Fold().String(norm.NFC.String(ext)))
+		if got := normalizeSearchExtension(ext); got != want {
+			t.Errorf("normalize %q = %q, want %q", ext, got, want)
+		}
+	}
+	for _, pair := range [][2]string{{"SS", "ß"}, {"K", "K"}, {"S", "ſ"}} {
+		if normalizeSearchExtension(pair[0]) != normalizeSearchExtension(pair[1]) {
+			t.Errorf("ASCII and Unicode equivalents differ: %q", pair)
+		}
+	}
+	var got string
+	if allocs := testing.AllocsPerRun(100, func() { got = normalizeSearchExtension("pdf") }); allocs != 0 {
+		t.Errorf("lowercase ASCII normalization allocated %v times", allocs)
+	}
+	if got != "pdf" {
+		t.Fatalf("normalized lowercase ASCII: %q", got)
 	}
 }
 

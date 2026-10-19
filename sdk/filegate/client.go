@@ -240,6 +240,7 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 
 // Search matches descendant basenames using o.Match (exact by default, or fuzzy).
 // Ext, size and modification-time filters also work with an empty query.
+// Ext values are trimmed and case-folded; use extensions without dots.
 // Size bounds are inclusive; ModifiedAfter is inclusive, ModifiedBefore exclusive.
 // The server rejects raw queries over 8 KiB or more than eight whitespace-separated
 // tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
@@ -260,10 +261,10 @@ func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Pa
 		q.Set("maxSize", strconv.FormatInt(*o.MaxSize, 10))
 	}
 	if o.ModifiedAfter != nil {
-		q.Set("modifiedAfter", o.ModifiedAfter.Format(time.RFC3339Nano))
+		q.Set("modifiedAfter", o.ModifiedAfter.UTC().Format(time.RFC3339Nano))
 	}
 	if o.ModifiedBefore != nil {
-		q.Set("modifiedBefore", o.ModifiedBefore.Format(time.RFC3339Nano))
+		q.Set("modifiedBefore", o.ModifiedBefore.UTC().Format(time.RFC3339Nano))
 	}
 	err := r.client.call(ctx, "GET", r.endpoint("/search"), q, nil, &page)
 	return page, err

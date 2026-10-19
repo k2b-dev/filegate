@@ -23,7 +23,7 @@ func searchOptions(r *http.Request) (domain.ListingOptions, error) {
 	o := listingOptions(r)
 	q := r.URL.Query()
 	if q.Has("ext") {
-		o.Ext = strings.Split(q.Get("ext"), ",")
+		o.Ext = strings.Split(strings.Join(q["ext"], ","), ",")
 	}
 	for _, bound := range []struct {
 		name string
