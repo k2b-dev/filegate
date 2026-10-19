@@ -7,6 +7,7 @@ import (
 
 type Node = domain.Node
 type Page = domain.Page
+type MatchRange = domain.MatchRange
 type RootInfo = domain.RootInfo
 type Version = domain.Version
 type Session = domain.Session

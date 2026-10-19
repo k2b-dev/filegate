@@ -322,7 +322,7 @@ existing versions; it does not schedule snapshots.
 
 ## Browsing and statistics
 
-ListingOptions: sort=`path|name|size|modified` (default path), order=`asc|desc`
+ListingOptions: sort=`path|name|size|modified|relevance` (default path), order=`asc|desc`
 (default asc), type=`all|files|directories` (default all), limit 1–1000 (default 100),
 match=`exact|fuzzy` (default exact), maxEntries 1–100000 (default 100000), opaque
 after. Stable path ties follow the same order. Filter/sort precedes pagination. List returns immediate children; search walks
@@ -339,16 +339,36 @@ adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for 8–32
 tokens outside 4–32 runes use exact and loose matching only.
 Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
-A node's tier is its worst token. For every supported sort, tier 3 appears only
-if the complete path/type-filtered selection has no tier 1/2 hit. Fuzzy always
-collects/sorts one snapshot, preserving sort/order. Exact keeps ordinary paging.
+A node's tier is its worst token. Relevance always includes tier 3 after tiers
+1/2. Other sorts include tier 3 only if the complete path/type-filtered selection
+has no tier 1/2 hit. Fuzzy and relevance always collect/sort one snapshot.
+Relevance requires non-empty q (otherwise 400 invalid_argument), is search-only,
+and ignores order. Rank by worst tier, then summed sub-ranks of tokens in that
+tier: exact equal=0/prefix=1/word=2/substring=3; typo edit distance; loose fewer
+non-word starts, then summed spans. Ties: no accent folding, shorter basename in
+runes, fewer path segments, path byte order.
+Relevance retains only best K hits, default 1000, server YAML `search.topK`
+(integer 1–100000). Only retained hits are pageable. Other sorts have no top-K.
+Search pages from complete snapshot selections include total (before top-K) and
+truncated (whether top-K dropped hits), including empty-query searches. Keyset
+exact pages omit both. Every search page with non-empty q includes matches,
+aligned with items: per item an array of [start,end) original basename rune
+ranges, not bytes/UTF-16. Exact highlights matched runes; typo the approximate
+substring; loose individual runes. Merge adjacent/overlapping ranges. Example:
+q=tst matches testtest.ods with [[0,1],[2,4]]. Full folds/composed accents map
+back to original rune offsets. Node is unchanged; directory pages stay items/next.
 
 Indexed exact scans can seek forward; an empty page can still have next.
-Filesystem and fuzzy scans sort one bounded observation: 60-second lifetime, 16 snapshots / 32 MiB per root,
-100000 entries max. Exceeded budget returns 413, not a globally sorted partial
-result. Scoped Unix listing and search use live filesystem observations even on
-indexed roots. A new query sees external NFS changes without an index rebuild;
-continuations retain their original observation. An unreadable subtree during
+Filesystem, fuzzy and relevance scans use a bounded observation: 60-second
+lifetime, 16 snapshots / 32 MiB per root. Live scans and indexed non-relevance
+scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit the complete subtree, retaining at most K;
+maxEntries caps retained hits instead of scanned keys on this path. A tighter
+request budget fails with 413 rather than reducing K. Cancellation still applies.
+Exceeded visit/memory budget returns 413, not a globally sorted partial result.
+Scoped Unix listing and search use live filesystem observations even on indexed
+roots. Live relevance pages load current metadata for retained paths per page;
+membership/order stay fixed. A new query sees external NFS changes without an
+index rebuild; continuations retain their original observation. An unreadable subtree during
 recursive search fails the whole query even if it would not match. Every page
 checks its base, traversal to each returned entry and parent read permissions.
 External deletion of a returned entry fails the whole page with 404; revoked
@@ -476,6 +496,8 @@ auth:
 state_dir: /var/lib/filegate
 uploads:
   max_file_size: 10GiB
+search:
+  topK: 1000
 roots:
   - name: documents
     path: /srv/filegate/documents

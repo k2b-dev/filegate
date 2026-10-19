@@ -62,7 +62,9 @@ export class RootClient {
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
   /** Match descendant basenames using options.match (exact by default, or fuzzy).
    * The server rejects raw queries over 8 KiB (UTF-8) or more than eight whitespace
-   * tokens with 400 invalid_argument. Search does not retry automatically. On 429
+   * tokens with 400 invalid_argument. Relevance requires non-empty q, ignores
+   * order and retains the best K. matches uses basename rune offsets; complete
+   * snapshot pages also report total/truncated. Search does not retry automatically. On 429
    * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages
    * retain their captured observation during concurrent writes; cursors remain
    * bound to that observation. Discard previous pages and restart on 409 cursor_invalid. */

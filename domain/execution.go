@@ -74,7 +74,7 @@ func (r *Root) WithExecution(ctx context.Context, identity *ExecutionIdentity) (
 		close()
 		return nil, nil, fmt.Errorf("%w: execution adapter cannot enforce metadata permissions", ErrDisabled)
 	}
-	view := &Root{rootShared: base.rootShared, Config: base.Config, Files: files, State: base.State, MaxBytes: base.MaxBytes, control: base, execution: identity}
+	view := &Root{rootShared: base.rootShared, Config: base.Config, Files: files, State: base.State, MaxBytes: base.MaxBytes, SearchTopK: base.SearchTopK, control: base, execution: identity}
 	return view, close, nil
 }
 

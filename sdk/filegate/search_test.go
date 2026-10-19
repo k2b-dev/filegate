@@ -56,3 +56,38 @@ func TestSearchQueryByteLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchRelevancePageDecoding(t *testing.T) {
+	for _, body := range []string{
+		`{"items":[{"path":"Müller.pdf"}],"total":42,"truncated":true,"matches":[[[0,6]]],"next":"cursor"}`,
+		`{"items":[],"total":0,"truncated":false,"matches":[]}`,
+		`{"items":[],"matches":[]}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if q := r.URL.Query(); q.Get("sort") != "relevance" || q.Get("order") != "desc" {
+				t.Errorf("query: %v", q)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		}))
+		client, err := New(server.URL, "secret")
+		if err != nil {
+			server.Close()
+			t.Fatal(err)
+		}
+		page, err := client.Root("docs").Search(context.Background(), "muller", ".", ListingOptions{Sort: "relevance", Order: "desc"})
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Matches == nil || (page.Total != nil) != strings.Contains(body, `"total"`) || (page.Truncated != nil) != strings.Contains(body, `"truncated"`) {
+			t.Fatalf("%s: %+v", body, page)
+		}
+		if len(page.Items) > 0 && (len(*page.Matches) != 1 || (*page.Matches)[0][0] != (MatchRange{0, 6}) || *page.Total != 42 || !*page.Truncated || page.Next != "cursor") {
+			t.Fatalf("decoded: %+v", page)
+		}
+		if len(page.Items) == 0 && page.Total != nil && (*page.Total != 0 || *page.Truncated) {
+			t.Fatalf("empty: %+v", page)
+		}
+	}
+}

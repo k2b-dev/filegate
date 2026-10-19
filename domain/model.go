@@ -61,9 +61,18 @@ type Node struct {
 	UID       uint32    `json:"uid"`
 	GID       uint32    `json:"gid"`
 }
+
+// MatchRange is a half-open range of original basename rune offsets.
+type MatchRange = [2]int
+
 type Page struct {
 	Items []Node `json:"items"`
 	Next  string `json:"next,omitempty"`
+	// Total and Truncated are set only for complete search observations.
+	Total     *int  `json:"total,omitempty"`
+	Truncated *bool `json:"truncated,omitempty"`
+	// Matches is present for non-empty search queries, including empty pages.
+	Matches *[][]MatchRange `json:"matches,omitempty"`
 }
 type Keep struct {
 	Last    int `json:"last" yaml:"last"`

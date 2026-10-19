@@ -36,3 +36,25 @@ func TestSearchMatchInvalidHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchRelevanceHTTPParsing(t *testing.T) {
+	req := httptest.NewRequest("GET", "/v1/roots/files/search?q=report&sort=relevance&order=desc&limit=2", nil)
+	o := listingOptions(req)
+	if o.Sort != "relevance" || o.Order != "desc" || o.Limit != 2 {
+		t.Fatal(o)
+	}
+	h := New([]*domain.Root{{Config: domain.RootConfig{Name: "files"}}}, Options{Token: "secret"})
+	for _, route := range []string{"/search?sort=relevance", "/search?sort=relevance&q=+++", "/entries?sort=relevance"} {
+		req := httptest.NewRequest("GET", "/v1/roots/files"+route, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var body api.Error
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 400 || body.Error != "invalid_argument" {
+			t.Fatalf("%s: %d %+v", route, w.Code, body)
+		}
+	}
+}

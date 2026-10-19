@@ -17,6 +17,7 @@ import (
 
 type Node = api.Node
 type Page = api.Page
+type MatchRange = api.MatchRange
 type RootInfo = api.RootInfo
 type WriteOptions = api.WriteOptions
 type Precondition = api.Precondition
@@ -238,6 +239,8 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 }
 
 // Search matches descendant basenames using o.Match (exact by default, or fuzzy).
+// Sort relevance requires non-empty text, ignores Order and retains the best K.
+// Matches uses original basename rune offsets; Total/Truncated are optional.
 // The server rejects raw queries over 8 KiB or more than eight whitespace-separated
 // tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
 // retry after the Retry-After: 1 delay. Indexed first pages retain their captured

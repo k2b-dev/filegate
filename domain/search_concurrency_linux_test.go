@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -82,6 +83,7 @@ func newSearchRoot(t *testing.T) (*domain.Root, *searchState) {
 			t.Fatal(err)
 		}
 	}
+	t.Cleanup(r.CloseListings)
 	return r, s
 }
 
@@ -400,5 +402,70 @@ func TestSearchStateSnapshotConsistent(t *testing.T) {
 	var missing string
 	if err := snapshot.Get("test/c", &missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("new row leaked into snapshot: %v", err)
+	}
+}
+
+func TestSearchRelevanceCapturedObservationAndReaderLifetime(t *testing.T) {
+	for _, mutate := range []bool{false, true} {
+		t.Run(fmt.Sprint(mutate), func(t *testing.T) {
+			r, state := newSearchRoot(t)
+			for _, p := range []string{"folder/report", "folder/report.pdf"} {
+				if _, err := r.Mkdir(p, domain.DirectoryOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			blocked, release := make(chan struct{}), make(chan struct{})
+			state.block = func() { close(blocked); <-release }
+			unblock := sync.OnceFunc(func() { close(release) })
+			opts := domain.ListingOptions{Sort: "relevance", Limit: 1}
+			done := make(chan searchResult, 1)
+			go func() {
+				defer close(done)
+				p, err := r.Search(context.Background(), "report", ".", opts)
+				done <- searchResult{p, err}
+			}()
+			t.Cleanup(func() { unblock(); awaitSearchValue(t, done) })
+			awaitSearchValue(t, blocked)
+			if mutate {
+				written := make(chan error, 1)
+				go func() { defer close(written); written <- r.Remove("folder/report", false) }()
+				t.Cleanup(func() { unblock(); awaitSearchValue(t, written) })
+				if err := awaitSearchValue(t, written); err != nil {
+					t.Fatal(err)
+				}
+			}
+			unblock()
+			result := awaitSearchValue(t, done)
+			if result.err != nil || len(result.page.Items) != 1 || result.page.Items[0].Path != "folder/report" || result.page.Next == "" {
+				t.Fatalf("captured first page: %+v", result)
+			}
+			opts.After = result.page.Next
+			if mutate {
+				if state.closed.Load() != 1 {
+					t.Fatal("stale reader retained")
+				}
+				if _, err := r.Search(context.Background(), "report", ".", opts); !errors.Is(err, domain.ErrCursorInvalid) {
+					t.Fatalf("stale cursor: %v", err)
+				}
+			} else {
+				if state.closed.Load() != 0 {
+					t.Fatal("reader closed before continuation")
+				}
+				state.block = nil
+				p, err := r.Search(context.Background(), "report", ".", opts)
+				if err != nil || len(p.Items) != 1 || p.Items[0].Path != "folder/report.pdf" || p.Next != "" {
+					t.Fatalf("continuation: %+v %v", p, err)
+				}
+				if state.closed.Load() != 0 {
+					t.Fatal("continuation opened another reader")
+				}
+				if err := r.Remove("folder/report", false); err != nil {
+					t.Fatal(err)
+				}
+				if state.closed.Load() != 1 {
+					t.Fatal("invalidation leaked reader")
+				}
+			}
+		})
 	}
 }

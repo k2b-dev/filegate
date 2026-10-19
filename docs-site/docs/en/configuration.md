@@ -22,6 +22,8 @@ auth:
 state_dir: /var/lib/filegate
 uploads:
   max_file_size: 10GiB
+search:
+  topK: 1000
 roots:
   - name: documents
     path: /srv/filegate/documents
@@ -47,6 +49,7 @@ roots:
 | `auth.token_file` | Absolute path to a token of 32–4096 bytes, with optional surrounding whitespace. |
 | `state_dir` | Required absolute directory outside every root; one active daemon owns it. |
 | `uploads.max_file_size` | Defaults to `10GiB`; integer bytes or `B`, `KiB`, `MiB`, `GiB`. Applies to every upload method. |
+| `search.topK` | Maximum retained hits for `sort=relevance`, 1–100000; default 1000. Applies to every root and Unix execution identity. Search pages report the full `total` and whether hits were `truncated`. |
 | `roots[].name` | Unique name: letters, digits, `_` and `-`; first character alphanumeric; at most 64 characters. |
 | `roots[].path` | Existing absolute directory. Canonical root paths cannot overlap each other or state. |
 | `roots[].managed` | Defaults to false. All content and namespace writes must go through Filegate. Enables conditional publication and recoverable cross-root moves; with indexing, also enables stable IDs. |

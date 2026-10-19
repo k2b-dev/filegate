@@ -45,10 +45,11 @@ type nameQuery struct {
 	compactStarts, foldedCompactStarts    []bool
 }
 
-// Scores retain each token's best tier and sub-rank for future relevance sorting.
+// Scores retain each token's best tier and sub-rank for relevance sorting.
 // Exact sub-ranks and typo distances sort ascending. Loose word starts precede
 // smaller spans; avoiding accent folding wins otherwise equal scores. The node's
-// tier is the worst token tier. No ranges are retained.
+// tier is the worst token tier. Ranges are recovered only for retained or
+// returned hits.
 type nameTokenMatch struct {
 	tier, exactRank, distance, span int
 	wordStart, accentFolded         bool

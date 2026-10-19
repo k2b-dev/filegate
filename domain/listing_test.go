@@ -16,11 +16,13 @@ import (
 
 type listingState struct {
 	State
-	rows   map[string][]byte
-	keys   []string
-	visits int
-	scans  int
-	onScan func()
+	rows    map[string][]byte
+	keys    []string
+	visits  int
+	scans   int
+	closed  int
+	onClose func()
+	onScan  func()
 }
 
 // These fixtures only mutate rows between requests. Production snapshot
@@ -30,7 +32,13 @@ type listingReadSnapshot struct{ *listingState }
 func (s *listingState) Snapshot() (StateSnapshot, error) {
 	return &listingReadSnapshot{s}, nil
 }
-func (s *listingReadSnapshot) Close() error { return nil }
+func (s *listingReadSnapshot) Close() error {
+	s.closed++
+	if s.onClose != nil {
+		s.onClose()
+	}
+	return nil
+}
 
 func (s *listingState) Get(key string, out any) error {
 	b, ok := s.rows[key]
@@ -282,17 +290,18 @@ func TestIndexedSubtreeSearchCursorInvalidation(t *testing.T) {
 }
 
 func TestIndexedSubtreeSearchDoesNotCacheStaleObservation(t *testing.T) {
-	for _, mode := range []string{"exact", "fuzzy"} {
+	for _, route := range []struct{ mode, base, sort string }{{"exact", "fresh", "name"}, {"fuzzy", "fresh", "name"}, {"fuzzy", ".", "path"}} {
+		mode := route.mode
 		for _, change := range []string{"mutation", "generation", "instance"} {
-			t.Run(mode+"/"+change, func(t *testing.T) {
+			t.Run(mode+"/"+route.base+"/"+change, func(t *testing.T) {
 				r := indexedListingRoot(t, []Node{{Path: "fresh/a"}, {Path: "fresh/b"}})
 				r.listingInstance = "instance"
-				opts, err := normalizeListing(ListingOptions{Match: mode, Sort: "name", Limit: 1})
+				opts, err := normalizeListing(ListingOptions{Match: mode, Sort: route.sort, Limit: 1})
 				if err != nil {
 					t.Fatal(err)
 				}
 				captured := listingCursor{
-					Query:    queryFingerprint("fresh", "", true, opts, nil),
+					Query:    queryFingerprint(route.base, "", true, opts, nil),
 					Instance: r.listingInstance, Epoch: r.listingEpoch, Generation: r.generation,
 				}
 				r.State.(*listingState).onScan = func() {
@@ -307,7 +316,7 @@ func TestIndexedSubtreeSearchDoesNotCacheStaleObservation(t *testing.T) {
 						r.listingInstance = "restarted"
 					}
 				}
-				page, err := r.Search(context.Background(), "", "fresh", opts)
+				page, err := r.Search(context.Background(), "", route.base, opts)
 				if err != nil || len(page.Items) != 1 || page.Items[0].Path != "fresh/a" || page.Next == "" {
 					t.Fatalf("initial snapshot page: %+v %v", page, err)
 				}
@@ -320,7 +329,7 @@ func TestIndexedSubtreeSearchDoesNotCacheStaleObservation(t *testing.T) {
 					t.Fatalf("cursor lost captured binding: %+v %v", cursor, err)
 				}
 				opts.After = page.Next
-				if _, err := r.Search(context.Background(), "", "fresh", opts); !errors.Is(err, ErrCursorInvalid) {
+				if _, err := r.Search(context.Background(), "", route.base, opts); !errors.Is(err, ErrCursorInvalid) {
 					t.Fatalf("stale cursor accepted: %v", err)
 				}
 			})

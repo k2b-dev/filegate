@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -37,13 +38,20 @@ type ListingOptions struct {
 	Order      string `json:"order,omitempty"`
 	Type       string `json:"type,omitempty"`
 	Match      string `json:"match,omitempty"`
+	topK       int
+	search     bool
 }
 
 type listingSnapshot struct {
-	query   string
-	created time.Time
-	entries []Node
-	bytes   int64
+	query      string
+	created    time.Time
+	entries    []Node
+	bytes      int64
+	hits       []searchHit
+	total      int
+	reader     StateSnapshot
+	generation string
+	timer      *time.Timer
 }
 type listingCursor struct {
 	Query      string `json:"q"`
@@ -80,7 +88,7 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	if o.Limit < 1 || o.Limit > 1000 || o.MaxEntries < 1 || o.MaxEntries > 100000 || len(o.After) > 16384 {
 		return o, ErrInvalid
 	}
-	if o.Sort != "path" && o.Sort != "name" && o.Sort != "size" && o.Sort != "modified" {
+	if o.Sort != "path" && o.Sort != "name" && o.Sort != "size" && o.Sort != "modified" && o.Sort != "relevance" {
 		return o, ErrInvalid
 	}
 	if o.Order != "asc" && o.Order != "desc" {
@@ -89,11 +97,17 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	if o.Type != "all" && o.Type != "files" && o.Type != "directories" {
 		return o, ErrInvalid
 	}
+	if o.Sort == "relevance" {
+		o.Order = "asc"
+	}
 	return o, nil
 }
 
 func (r *Root) invalidateListings() {
 	r.listingEpoch++
+	for _, s := range r.listings {
+		s.close()
+	}
 	r.listings = nil
 	r.listingBytes = 0
 }
@@ -170,7 +184,18 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	if err != nil {
 		return Page{}, err
 	}
+	o.search = recursive
 	matcher.fuzzy = o.Match == "fuzzy"
+	if o.Sort == "relevance" && (!recursive || len(matcher.tokens) == 0) {
+		return Page{}, ErrInvalid
+	}
+	o.topK = r.SearchTopK
+	if o.topK == 0 {
+		o.topK = DefaultSearchTopK
+	}
+	if o.topK < 1 {
+		return Page{}, ErrInvalid
+	}
 	if recursive {
 		if err := r.admitSearch(ctx); err != nil {
 			return Page{}, err
@@ -212,30 +237,57 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 			return Page{}, ErrInvalid
 		}
 	}
-	matches := func(n Node) int {
+	matches := func(n Node) nameMatch {
 		if n.Path == p {
-			return 0
+			return nameMatch{}
 		}
 		if recursive {
 			if p != "." && !strings.HasPrefix(n.Path, p+"/") {
-				return 0
+				return nameMatch{}
 			}
 		} else if path.Dir(n.Path) != p {
-			return 0
+			return nameMatch{}
 		}
 		if o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
-			return 0
+			return nameMatch{}
 		}
 		matched, score := matcher.match(path.Base(n.Path))
 		if !matched {
-			return 0
+			return nameMatch{}
 		}
-		return score.tier
+		return score
 	}
+	var out Page
 	if r.Config.Index && r.execution == nil {
-		return r.indexedListing(ctx, p, recursive, o, cursor, matches)
+		out, err = r.indexedListing(ctx, p, recursive, o, cursor, matches, matcher)
+	} else {
+		out, err = r.liveListing(ctx, p, recursive, o, cursor, matches, matcher)
 	}
-	return r.liveListing(ctx, p, recursive, o, cursor, matches)
+	if err != nil {
+		return Page{}, err
+	}
+	if recursive && len(matcher.tokens) > 0 && out.Matches == nil {
+		highlight := func() error {
+			ranges := make([][]MatchRange, 0, len(out.Items))
+			for _, n := range out.Items {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				ranges = append(ranges, matcher.highlights(path.Base(n.Path)))
+			}
+			out.Matches = &ranges
+			return nil
+		}
+		if r.Config.Index && r.execution == nil {
+			err = r.scanListing(ctx, cursor, o.After != "", highlight)
+		} else {
+			err = highlight()
+		}
+		if err != nil {
+			return Page{}, err
+		}
+	}
+	return out, nil
 }
 
 func (r *Root) listingCurrent(c listingCursor) bool {
@@ -272,13 +324,22 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	}
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
-func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
+func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (Page, error) {
+	if o.Sort == "relevance" && c.Snapshot != "" {
+		return r.snapshotListing(ctx, p, o, c, matches, nil, matcher, nil)
+	}
 	state, err := r.State.Snapshot()
 	if err != nil {
 		return Page{}, err
 	}
-	defer state.Close()
-	if recursive && (o.Match == "fuzzy" || p != "." && o.Sort != "path") {
+	if o.Sort != "relevance" {
+		defer state.Close()
+	}
+	if recursive && (o.Sort == "relevance" || o.Match == "fuzzy" || p != "." && o.Sort != "path") {
+		var retainedReader StateSnapshot
+		if o.Sort == "relevance" {
+			retainedReader = state
+		}
 		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 			scanned := 0
 			prefix := "i/" + c.Generation + "/"
@@ -290,7 +351,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 					return err
 				}
 				scanned++
-				if scanned > o.MaxEntries {
+				if o.Sort != "relevance" && scanned > o.MaxEntries {
 					return ErrLimit
 				}
 				var n Node
@@ -299,7 +360,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 				}
 				return visit(n)
 			})
-		})
+		}, matcher, retainedReader)
 	}
 	prefix := "i/" + c.Generation + "/"
 	primary := recursive && o.Sort == "path"
@@ -339,7 +400,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 				return err
 			}
 		}
-		if matches(n) != 0 {
+		if matches(n).tier != 0 {
 			out.Items = append(out.Items, n)
 		}
 		return nil
@@ -364,24 +425,30 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	return out, nil
 }
 
-func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
+func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (Page, error) {
 	return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, visit)
-	})
+	}, matcher, nil)
 }
 
-func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) int, scan func(func(Node) error) error) (Page, error) {
+func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) nameMatch, scan func(func(Node) error) error, matcher *nameQuery, reader StateSnapshot) (Page, error) {
+	// A relevance reader belongs to this request until admitted to the cache.
+	retained := false
+	defer func() {
+		if reader != nil && !retained {
+			reader.Close()
+		}
+	}()
 	now := r.now()
 	for id, s := range r.listings {
 		if !now.Before(s.created.Add(listingLifetime)) {
-			delete(r.listings, id)
-			r.listingBytes -= s.bytes
+			r.removeListing(id)
 		}
 	}
 	var snapshot *listingSnapshot
 	if c.Snapshot != "" {
 		snapshot = r.listings[c.Snapshot]
-		if snapshot == nil || snapshot.query != c.Query || c.Last != "" || c.Offset < 0 || c.Offset > len(snapshot.entries) {
+		if snapshot == nil || snapshot.query != c.Query || c.Last != "" || c.Offset < 0 || c.Offset > snapshot.len() {
 			return Page{}, ErrCursorInvalid
 		}
 	} else {
@@ -389,7 +456,11 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			return Page{}, ErrCursorInvalid
 		}
 		collect := func() (err error) {
-			snapshot, err = collectListing(ctx, o, c.Query, matches, scan)
+			if o.Sort == "relevance" {
+				snapshot, err = collectRelevance(ctx, o, c.Query, matches, scan, matcher)
+			} else {
+				snapshot, err = collectListing(ctx, o, c.Query, matches, scan)
+			}
 			return err
 		}
 		var err error
@@ -406,7 +477,9 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		// The lease starts after collection and sorting; slow filesystems must
 		// not consume the usable lifetime before the first page is returned.
 		snapshot.created = r.now()
-		if len(snapshot.entries) > o.Limit {
+		snapshot.reader = reader
+		snapshot.generation = c.Generation
+		if snapshot.len() > o.Limit {
 			c.Snapshot = newID()
 		}
 		// A concurrent write can make this initial observation stale. Return
@@ -420,16 +493,57 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			}
 			r.listings[c.Snapshot] = snapshot
 			r.listingBytes += snapshot.bytes
+			retained = reader != nil
+			if reader != nil {
+				id := c.Snapshot
+				snapshot.timer = time.AfterFunc(listingLifetime, func() {
+					r.mu.Lock()
+					defer r.mu.Unlock()
+					if r.listings[id] == snapshot {
+						r.removeListing(id)
+					}
+				})
+			}
 		}
 	}
-	end := min(c.Offset+o.Limit, len(snapshot.entries))
-	out := Page{Items: append([]Node{}, snapshot.entries[c.Offset:end]...)}
+	end := min(c.Offset+o.Limit, snapshot.len())
+	out := Page{Items: []Node{}}
+	if o.Sort == "relevance" {
+		ranges := make([][]MatchRange, 0, end-c.Offset)
+		for _, h := range snapshot.hits[c.Offset:end] {
+			if err := ctx.Err(); err != nil {
+				return Page{}, err
+			}
+			var n Node
+			var err error
+			if snapshot.reader != nil {
+				err = snapshot.reader.Get("i/"+snapshot.generation+"/"+h.path, &n)
+			} else {
+				n, err = r.node(h.path, true)
+			}
+			if err != nil {
+				return Page{}, err
+			}
+			out.Items = append(out.Items, n)
+			ranges = append(ranges, slices.Clone(h.ranges))
+		}
+		out.Matches = &ranges
+	} else {
+		out.Items = append(out.Items, snapshot.entries[c.Offset:end]...)
+	}
+	// Directories retain their existing envelope; only search observations have totals.
+	if o.search {
+		total := snapshot.total
+		truncated := total > snapshot.len()
+		out.Total = &total
+		out.Truncated = &truncated
+	}
 	if r.execution != nil {
 		if err := r.checkListingAccess(ctx, p, out.Items); err != nil {
 			return Page{}, err
 		}
 	}
-	if end < len(snapshot.entries) {
+	if end < snapshot.len() {
 		c.Offset = end
 		out.Next = encodeListingCursor(c)
 	}
@@ -440,7 +554,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 // updated after collection, under mu, so concurrent scans cannot race eviction.
 // Admission bounds indexed listing data per root to the 32 MiB cache plus two
 // in-flight collections of at most 32 MiB each, including provisional loose hits.
-func collectListing(ctx context.Context, o ListingOptions, query string, matches func(Node) int, scan func(func(Node) error) error) (*listingSnapshot, error) {
+func collectListing(ctx context.Context, o ListingOptions, query string, matches func(Node) nameMatch, scan func(func(Node) error) error) (*listingSnapshot, error) {
 	snapshot := &listingSnapshot{query: query, entries: []Node{}}
 	strong := false
 	looseOverflow := false
@@ -448,7 +562,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, matches
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tier := matches(n)
+		tier := matches(n).tier
 		if tier == 0 || tier == nameLoose && (strong || looseOverflow) {
 			return nil
 		}
@@ -495,6 +609,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, matches
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	snapshot.total = len(snapshot.entries)
 	return snapshot, nil
 }
 
@@ -644,8 +759,7 @@ func (r *Root) evictListing() {
 		}
 	}
 	if oldest != "" {
-		r.listingBytes -= r.listings[oldest].bytes
-		delete(r.listings, oldest)
+		r.removeListing(oldest)
 	}
 }
 
@@ -687,3 +801,28 @@ func (r *Root) checkListingAccess(ctx context.Context, base string, nodes []Node
 	}
 	return nil
 }
+
+func (s *listingSnapshot) len() int {
+	if s.hits != nil {
+		return len(s.hits)
+	}
+	return len(s.entries)
+}
+func (s *listingSnapshot) close() {
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	if s.reader != nil {
+		s.reader.Close()
+		s.reader = nil
+	}
+}
+func (r *Root) removeListing(id string) {
+	s := r.listings[id]
+	r.listingBytes -= s.bytes
+	delete(r.listings, id)
+	s.close()
+}
+
+// CloseListings releases captured index readers after requests have drained.
+func (r *Root) CloseListings() { r.mu.Lock(); defer r.mu.Unlock(); r.invalidateListings() }
