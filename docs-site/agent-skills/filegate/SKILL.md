@@ -404,8 +404,10 @@ lifetime, 16 snapshots / 32 MiB per root. Live scans and indexed non-relevance
 scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit
 the complete subtree, retaining at most K; maxEntries caps retained hits instead
 of scanned keys on this path. A tighter request budget fails with 413 rather
-than reducing K. Indexed relevance scans also have a server-owned 10-second time
-budget. Cancellation still applies. Exceeded visit/memory/scan-time budgets
+than reducing K. Every recursive search scan has a server-owned 10-second time
+budget, for all sorts and match modes on indexed and live paths. Directory
+listings are unaffected. Client cancellation and deadlines remain cancellation
+or deadline errors. Exceeded visit/memory/scan-time budgets
 return 413 (limit_exceeded), not a globally sorted partial result. Failed first
 pages leave no cached observation. Narrow the search path or query before retrying.
 Scoped Unix listing and search use live filesystem observations even on indexed

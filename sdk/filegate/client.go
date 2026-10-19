@@ -248,6 +248,8 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 // Matches uses original basename rune offsets by default. With In: "path",
 // offsets refer to Node.Path relative to p, without a leading slash.
 // Total/Truncated are optional.
+// Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
+// Client cancellation and deadlines remain context errors.
 // Ext, size and modification-time filters also work with an empty query.
 // Ext values are trimmed and case-folded; use extensions without dots.
 // Size bounds are inclusive; ModifiedAfter is inclusive, ModifiedBefore exclusive.

@@ -381,3 +381,60 @@ func BenchmarkSearchPathEarlyMiss(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkSearchPathShortSegments(b *testing.B) {
+	for _, tc := range []struct{ label, segment string }{
+		{"short", "x/"},
+		{"adversarial", "abcdefghij/"},
+	} {
+		b.Run(tc.label, func(b *testing.B) {
+			q, err := compileSearchQuery("abcdefghik abcdefghil abcdefghim abcdefghin abcdefghio abcdefghip abcdefghiq abcdefghir", true)
+			if err != nil {
+				b.Fatal(err)
+			}
+			q.fuzzy = true
+			candidate := strings.Repeat(tc.segment, 372) + "scan.pdf"
+			q.match(candidate)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				_, nameQueryBenchmarkScore = q.match(candidate)
+			}
+		})
+	}
+}
+
+func TestSearchPathSegmentSkipEquivalence(t *testing.T) {
+	for _, tc := range []struct{ query, candidate string }{
+		{"tsettest quartalsberihct", strings.Repeat("a/b/c/", 50) + "testtest/Quartals_Bericht/scan.pdf"},
+		{"testtest", "x/tesst/y/scan.pdf"},  // Just below the six-rune typo bound.
+		{"testtest", "x/tsttst/y/scan.pdf"}, // At the two-deletion bound.
+		{"tst", "t/e/s/testtest/scan.pdf"},
+		{"tsettest", "a/b/c/scan.pdf"},                 // No hit.
+		{"report tsettest", "report/a/b/testtest.pdf"}, // Basename owns the score.
+		{"sssx", "a/ßß/scan.pdf"},                      // Folding expands raw runes.
+		{"ffff", "x/ﬃ/scan.pdf"},                       // Ligature expands from one to three runes.
+		{"각x", "x/각/scan.pdf"},                       // Accent folding decomposes Hangul.
+		{"a-bcdefgh", "x/abcdefg/scan.pdf"},            // Compact query has a shorter bound.
+		{"a\u0301bcdefgh", "x/abcdef/scan.pdf"},
+		{"abcdefghik abcdefghil abcdefghim abcdefghin", strings.Repeat("x/", 372) + "abcdefghij/scan.pdf"},
+	} {
+		q, err := compileSearchQuery(tc.query, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q.fuzzy = true
+		ok, got := q.match(tc.candidate)
+		ranges := q.highlights(tc.candidate)
+		// A zero lower bound disables only the segment skip, preserving the
+		// original exhaustive segment traversal as the reference.
+		for i := range q.tokens {
+			q.tokens[i].minFuzzyRunes = 0
+		}
+		wantOK, want := q.match(tc.candidate)
+		wantRanges := q.highlights(tc.candidate)
+		if ok != wantOK || got != want || !reflect.DeepEqual(ranges, wantRanges) {
+			t.Fatalf("q=%q path=%q: skipped=(%v,%+v,%v) exhaustive=(%v,%+v,%v)", tc.query, tc.candidate, ok, got, ranges, wantOK, want, wantRanges)
+		}
+	}
+}

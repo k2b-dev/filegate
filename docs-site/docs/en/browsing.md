@@ -220,8 +220,10 @@ and indexed scans with other sorts accept at most `maxEntries` visited entries
 (default and maximum: 100000). Indexed relevance scans visit the complete subtree
 and retain at most K hits; `maxEntries` caps retained hits on this path instead
 of visited entries. Setting it below K can return 413 if too many hits need to
-be retained. Indexed relevance scans also have a server-owned 10-second time
-budget. Cancellation still stops the scan. Exceeding a visit, memory or scan-time
+be retained. Every recursive search scan has a server-owned 10-second time
+budget, for all sorts and match modes on indexed and live paths. Directory
+listings are unaffected. Client cancellation and deadlines still stop the scan
+and remain cancellation or deadline errors. Exceeding a visit, memory or scan-time
 budget returns 413 (`limit_exceeded`) instead of a partially sorted result;
 failed first pages leave no cached observation. Narrow the search path or query
 before retrying.

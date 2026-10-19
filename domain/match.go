@@ -30,6 +30,7 @@ const (
 )
 
 type nameToken struct {
+	minFuzzyRunes                                        int
 	text, compact, folded, foldedCompact                 []byte
 	runes, compactRunes, foldedRunes, foldedCompactRunes []rune
 }
@@ -85,6 +86,10 @@ func compileSearchQuery(query string, pathSearch bool) (*nameQuery, error) {
 		token.compactRunes = []rune(string(token.compact))
 		token.foldedRunes = []rune(string(token.folded))
 		token.foldedCompactRunes = []rune(string(token.foldedCompact))
+		token.minFuzzyRunes = len(token.runes)
+		for _, form := range [][]rune{token.runes, token.compactRunes, token.foldedRunes, token.foldedCompactRunes} {
+			token.minFuzzyRunes = min(token.minFuzzyRunes, len(form)-nameTypoBudget(len(form)))
+		}
 		q.tokens = append(q.tokens, token)
 	}
 	return q, nil
@@ -111,19 +116,21 @@ func (q *nameQuery) subject(p string) string {
 	return p
 }
 
+func asciiName(name string) bool {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
 func (q *nameQuery) normalize(name string) {
 	q.plain, q.compact = q.plain[:0], q.compact[:0]
 	q.compactStarts = q.compactStarts[:0]
 	wordStart := true
 	// Most names are ASCII: full folding and NFC are equivalent to this loop.
-	ascii := true
-	for i := 0; i < len(name); i++ {
-		if name[i] >= utf8.RuneSelf {
-			ascii = false
-			break
-		}
-	}
-	if ascii {
+	if asciiName(name) {
 		for i := 0; i < len(name); i++ {
 			c := name[i]
 			if c >= 'A' && c <= 'Z' {
@@ -197,6 +204,7 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 	}
 	q.normalize(name)
 	needsFuzzy := false
+	minSegmentRunes := 0
 	for i, token := range q.tokens {
 		if q.pathSearch {
 			// Exact forms may span separators; fuzzy forms never do.
@@ -208,6 +216,9 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 			if !q.pathSearch || !q.fuzzy {
 				return false, nameMatch{}
 			}
+			if !needsFuzzy || token.minFuzzyRunes < minSegmentRunes {
+				minSegmentRunes = token.minFuzzyRunes
+			}
 			needsFuzzy = true
 		}
 	}
@@ -216,7 +227,10 @@ func (q *nameQuery) match(name string) (bool, nameMatch) {
 		for segment := range strings.SplitSeq(name, "/") {
 			end := start + len(segment)
 			basename := end == len(name)
-			if !basename && !needsFuzzy {
+			// ASCII normalization cannot add runes. Skip parents too short for
+			// every unresolved token, accounting for all forms and typo budgets.
+			// Unicode can expand (ß, ﬃ, Hangul), so raw length cannot reject it.
+			if !basename && (!needsFuzzy || len(segment) < minSegmentRunes && asciiName(segment)) {
 				start = end + 1
 				continue
 			}
@@ -384,6 +398,16 @@ func exactNameToken(name, token []byte, starts []bool) nameTokenMatch {
 	return best
 }
 
+func nameTypoBudget(length int) int {
+	if length > nameTypoRuneLimit || length < 4 {
+		return 0
+	}
+	if length >= 8 {
+		return 2
+	}
+	return 1
+}
+
 func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
 	q.runes = q.runes[:0]
 	var present uint64
@@ -393,14 +417,7 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTok
 		q.runes = append(q.runes, r)
 		present |= 1 << (uint32(r) % 64)
 	}
-	budget := 0
-	if len(token) <= nameTypoRuneLimit {
-		if len(token) >= 8 {
-			budget = 2
-		} else if len(token) >= 4 {
-			budget = 1
-		}
-	}
+	budget := nameTypoBudget(len(token))
 	if len(token) > len(q.runes)+budget {
 		return nameTokenMatch{}
 	}

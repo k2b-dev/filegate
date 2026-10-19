@@ -68,6 +68,8 @@ export class RootClient {
    * tokens with 400 invalid_argument. Relevance requires non-empty q, ignores
    * order and retains the best K. matches uses basename rune offsets by default,
    * or with in: "path", Node.path relative to options.path without a leading slash.
+   * Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
+   * Client cancellation and deadlines remain cancellation or deadline errors.
    * Complete snapshot pages also report total/truncated. Search does not retry automatically. On 429
    * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages
    * retain their captured observation during concurrent writes; cursors remain
