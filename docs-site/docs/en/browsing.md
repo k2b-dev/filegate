@@ -91,12 +91,10 @@ Each token uses the strongest matching tier:
    and the span from the first to the last matched rune must be at most three
    times the token length. `tst` finds `testtest.ods` this way.
 
-With `in: "path"`, typo and loose matching run only on normalized path forms
-of at most 256 runes. Longer forms use exact matching only, including hits near
-the end of the path. The cap applies separately to each form (with or without
-accents and word gaps); the 32-rune typo token cap and 8 KiB query cap still apply.
-This means `in: "path"` can find fewer fuzzy hits than `in: "name"` for deep
-paths. Use `in: "name"` when only basename typo or abbreviation matching matters.
+With `in: "path"`, exact matching covers the whole relative path, so `taxform`
+finds `tax/form.pdf`. Typo and loose matching run within individual path segments,
+including the basename, regardless of path depth or total length.
+Fuzzy matches across `/`, such as `taxfrom` matching `tax/form.pdf`, are excluded.
 
 A result's tier is its weakest token's tier. With `sort: "relevance"`, loose
 hits always appear after exact and typo hits. With other sorts, loose hits appear
@@ -109,19 +107,22 @@ only the first tier.
 Use `sort: "relevance"` with a non-empty `q`. Filegate orders results by:
 
 1. Tier: exact, then typo, then loose.
-2. Sub-rank, summed across tokens in the result's weakest tier. Exact uses
+2. With `in: "path"`, fewer tokens without a basename hit at their selected
+   tier. Count all tokens, including those in stronger tiers. A weaker basename
+   hit does not promote a stronger parent hit.
+3. Sub-rank, summed across tokens in the result's weakest tier. Exact uses
    equality (0), prefix (1), word start (2), substring (3); typo sums edit
    distances. Loose first prefers fewer tokens that start inside a word, then
    the smaller sum of matched spans.
-3. With `in: "path"`, fewer tokens without a basename hit at their selected
-   tier or better. Count all tokens, including those in stronger tiers. A weaker
-   basename hit does not promote a stronger parent hit.
 4. No accent folding needed, then accent folding needed.
 5. Shorter basename in runes, fewer path segments, then path in byte order.
 
-Exact equality and prefix refer to the whole selected string: the basename by
-default, or the relative path with `in: "path"`. A first-folder prefix can
-therefore outrank a basename word-start hit, because sub-rank is compared first.
+When a basename hit qualifies at the selected tier, its sub-rank, accent
+requirement and highlight occurrence apply. Thus `rechnung` ranks
+`Archiv/Alte Rechnung.pdf` before `Rechnungen/x.pdf`, and `report` ranks
+`x/report.pdf` before `report/z/myreport.pdf`.
+Exact equality and prefix refer to the basename for these hits; otherwise they
+refer to the whole relative path.
 
 `order` is ignored for relevance; results always run from best to worst.
 An empty or whitespace-only `q` with relevance returns 400 (`invalid_argument`).
@@ -234,9 +235,11 @@ after such a change returns `409 cursor_invalid`. Continuation pages also return
 this error if the root changes while they scan. Indexed scans allow writes to
 proceed. Relevance pages also return `409 cursor_invalid` if a retained hit is
 missing, has changed between a file and a directory, or no longer satisfies the
-search filters. This includes external deletion or rename. Live filesystem scans
-retain the root lock to coordinate identity and revision updates with permission
-checks.
+search filters. This includes external deletion or rename. On index-free roots
+and roots using Unix execution identities, even the first relevance page can
+return this error if a hit changes between scanning and serving the page. Retry
+without a cursor to restart the query. Live filesystem scans retain the root lock
+to coordinate identity and revision updates with permission checks.
 Filesystem observations are not atomic snapshots of external writers.
 
 Each root admits at most two searches at once, shared across Unix execution

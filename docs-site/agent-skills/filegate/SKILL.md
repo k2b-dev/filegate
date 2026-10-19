@@ -339,11 +339,10 @@ leading slash; never include the base prefix. `/` is a word gap, also removed
 in compact forms. All tokens must match but may hit different segments.
 Example: search("rechnung 2026", {in:"path",path:"docs"}) finds
 `docs/Rechnungen/2026/scan01.pdf`. Go: ListingOptions{In: "path"}.
-Typo/loose matching skips normalized path forms longer than 256 runes; exact
-matching remains available throughout long paths. The cap applies separately to
-each form, including forms without word gaps or accents. The 32-rune typo token
-and 8 KiB query caps still apply. Path mode can find fewer fuzzy hits than name
-mode for deep paths; use name mode for basename-only typo/abbreviation matching.
+Exact matching covers the whole relative path (`taxform` finds `tax/form.pdf`).
+Typo/loose matching runs within individual segments, including the basename,
+regardless of path depth or total length. Fuzzy matches across `/`, such as
+`taxfrom` matching `tax/form.pdf`, are excluded.
 in is part of the cursor fingerprint.
 Exact uses tier 1: equal > prefix > word start > substring. Fuzzy
 adds tier 2: approximate substring, OSA distance 1 for 4–7 runes, 2 for 8–32;
@@ -352,15 +351,18 @@ Tier 3: subsequence, token >=2 runes, span <=3x
 length. `tsettest` and `tete` find `testtest.ods` by typo; `tst` by loose matching.
 A node's tier is its worst token. Relevance always includes tier 3 after tiers
 1/2. Other sorts include tier 3 only if the complete filtered selection
-has no tier 1/2 hit. Fuzzy and relevance always collect/sort one snapshot.
+has no tier 1/2 hit. Fuzzy searches keep the requested sort and order for
+non-relevance sorts. Fuzzy and relevance always collect/sort one snapshot.
 Relevance requires non-empty q (otherwise 400 invalid_argument), is search-only,
-and ignores order. Rank by worst tier, then summed sub-ranks of tokens in that
-tier: exact equal=0/prefix=1/word=2/substring=3; typo edit distance; loose fewer
-non-word starts, then summed spans. With in=path, next prefer fewer tokens
-without a basename hit at their selected tier or better, counting all tokens.
-Weaker basename tiers do not promote stronger parent hits. Exact equality/prefix
-refer to the whole relative path; a first-folder prefix can outrank a basename
-word-start hit because sub-rank comes first.
+and ignores order. Rank by worst tier; with in=path, next prefer fewer tokens
+without a basename hit at their selected tier, counting all tokens. Weaker
+basename tiers do not promote stronger parent hits. Next sum sub-ranks of tokens
+in the worst tier: exact equal=0/prefix=1/word=2/substring=3; typo edit distance;
+loose fewer non-word starts, then summed spans.
+Qualifying basename hits supply their own sub-rank, accent requirement and
+highlight occurrence. `rechnung`: Archiv/Alte Rechnung.pdf before Rechnungen/x.pdf;
+`report`: x/report.pdf before report/z/myreport.pdf. Exact equality/prefix refer
+to the basename for these hits, otherwise to the whole relative path.
 Ties: no accent folding, shorter basename in
 runes, fewer path segments, path byte order.
 Relevance retains only best K hits, default 1000, server YAML `search.topK`

@@ -79,14 +79,13 @@ search base (`path`), without a leading slash. For `path=docs` and
 Search `in` accepts `name` (default) or `path`; unknown values return 400
 (`invalid_argument`). Path matching uses the path relative to the search base,
 excludes the base prefix and treats `/` as a word gap. All tokens must match,
-but may hit different segments. With relevance, after tier sub-ranks and before
-accent folding, fewer tokens without a basename hit at their selected tier or
-better ranks first (counting all tokens). Exact equality/prefix refer to the
-whole relative path, so a first-folder prefix can outrank a basename word start.
-Typo and loose matching skip normalized
-path forms longer than 256 runes; exact matching remains available throughout
-the path. This cap applies per form, including forms without word gaps or accents.
-Consequently, path mode can find fewer fuzzy hits than name mode for deep paths.
+but may hit different segments. Relevance compares tier, then the number of
+parent-only tokens, then sub-ranks. A basename hit at a token's selected tier
+supplies its sub-rank, accent requirement and highlight occurrence.
+Exact matching covers the whole relative path, including gapless forms
+(`taxform` finds `tax/form.pdf`). Typo and loose matching run within individual
+segments, including the basename, regardless of total path length.
+Fuzzy matches across `/`, such as `taxfrom` matching `tax/form.pdf`, are excluded.
 The 32-rune typo token and 8 KiB query caps still apply. `in` is cursor-bound.
 
 Listing revisions may be absent or stale; use current stat or current-content
