@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Node = api.Node
@@ -241,17 +242,35 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 // Search matches descendant basenames using o.Match (exact by default, or fuzzy).
 // Sort relevance requires non-empty text, ignores Order and retains the best K.
 // Matches uses original basename rune offsets; Total/Truncated are optional.
+// Ext, size and modification-time filters also work with an empty query.
+// Ext values are trimmed and case-folded; use extensions without dots.
+// Size bounds are inclusive; ModifiedAfter is inclusive, ModifiedBefore exclusive.
 // The server rejects raw queries over 8 KiB or more than eight whitespace-separated
 // tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
 // retry after the Retry-After: 1 delay. Indexed first pages retain their captured
 // observation during concurrent writes; their cursors remain bound to it.
-// Retained relevance hits that disappear or change file/directory type also
-// return 409 cursor_invalid.
+// Retained relevance hits that disappear, change file/directory type or no longer
+// satisfy the search filters also return 409 cursor_invalid.
 // On 409 cursor_invalid, discard previous pages and restart the query.
 func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
 	var page Page
 	q := listingQuery(p, o)
 	q.Set("q", text)
+	if len(o.Ext) > 0 {
+		q.Set("ext", strings.Join(o.Ext, ","))
+	}
+	if o.MinSize != nil {
+		q.Set("minSize", strconv.FormatInt(*o.MinSize, 10))
+	}
+	if o.MaxSize != nil {
+		q.Set("maxSize", strconv.FormatInt(*o.MaxSize, 10))
+	}
+	if o.ModifiedAfter != nil {
+		q.Set("modifiedAfter", o.ModifiedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if o.ModifiedBefore != nil {
+		q.Set("modifiedBefore", o.ModifiedBefore.UTC().Format(time.RFC3339Nano))
+	}
 	err := r.client.call(ctx, "GET", r.endpoint("/search"), q, nil, &page)
 	return page, err
 }

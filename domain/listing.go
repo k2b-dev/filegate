@@ -41,6 +41,12 @@ type ListingOptions struct {
 	Match      string `json:"match,omitempty"`
 	topK       int
 	search     bool
+	// Search-only metadata filters. Pointers distinguish an omitted bound from zero.
+	Ext            []string   `json:"ext,omitempty"`
+	MinSize        *int64     `json:"minSize,omitempty"`
+	MaxSize        *int64     `json:"maxSize,omitempty"`
+	ModifiedAfter  *time.Time `json:"modifiedAfter,omitempty"`
+	ModifiedBefore *time.Time `json:"modifiedBefore,omitempty"`
 }
 
 type listingSnapshot struct {
@@ -98,7 +104,7 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	if o.Sort == "relevance" {
 		o.Order = "asc"
 	}
-	return o, nil
+	return normalizeSearchFilters(o)
 }
 
 func (r *Root) invalidateListings() {
@@ -131,6 +137,7 @@ func encodeListingCursor(c listingCursor) string {
 // List selects only the immediate children of p. Actor views use a live
 // filesystem snapshot so indexed metadata never bypasses directory permissions.
 func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, error) {
+	o.Ext, o.MinSize, o.MaxSize, o.ModifiedAfter, o.ModifiedBefore = nil, nil, nil, nil, nil
 	return r.queryListing(ctx, p, "", false, o)
 }
 
@@ -249,6 +256,9 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 			return nameMatch{}
 		}
 		if o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
+			return nameMatch{}
+		}
+		if recursive && !o.matchesSearchFilters(n) {
 			return nameMatch{}
 		}
 		matched, score := matcher.match(path.Base(n.Path))
@@ -499,7 +509,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			if err != nil {
 				return Page{}, err
 			}
-			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
+			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory || !o.matchesSearchFilters(n) {
 				return Page{}, ErrCursorInvalid
 			}
 			out.Items = append(out.Items, n)

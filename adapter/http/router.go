@@ -357,7 +357,11 @@ func (h *Handler) routes() {
 		return e
 	})
 	h.route("GET /v1/roots/{root}/search", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
-		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), listingOptions(r))
+		o, e := searchOptions(r)
+		if e != nil {
+			return e
+		}
+		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), o)
 		if e == nil {
 			h.sendRoot(w, root, 200, v)
 		}

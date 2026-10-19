@@ -163,7 +163,12 @@ Both methods retain the client's execution scope and authentication. See
 [stable IDs and migration](/docs/en/stable-ids).
 
 `List(ctx, path, ListingOptions)` and `Search(ctx, query, path, ListingOptions)`
-accept sorting, order, type filters and bounded opaque-cursor pagination. Use
+accept sorting, order, type filters and bounded opaque-cursor pagination. Search
+also accepts `Ext` (`[]string`), `MinSize`/`MaxSize` (`*int64`) and
+`ModifiedAfter`/`ModifiedBefore` (`*time.Time`), including with an empty query.
+Use `Ext` values without dots; the server trims whitespace and case-folds them
+(`ß` = `ss`). Times are sent in UTC. Omit bounds with `nil`; size bounds can
+include zero. Use
 `SessionSegments(ctx, id, after, limit)` or `DirectSession.Segments` for chunk
 receipts; status itself contains only counts. See [browsing](/docs/en/browsing)
 and [sessions](/docs/en/uploads-downloads#recover-session-creation-and-segments).

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	httpadapter "github.com/k2b-dev/filegate/v7/adapter/http"
 	"github.com/k2b-dev/filegate/v7/domain"
@@ -88,6 +89,93 @@ func TestSearchRelevancePageDecoding(t *testing.T) {
 		}
 		if len(page.Items) == 0 && page.Total != nil && (*page.Total != 0 || *page.Truncated) {
 			t.Fatalf("empty: %+v", page)
+		}
+	}
+}
+
+func TestSearchFiltersForwarding(t *testing.T) {
+	after := time.Date(2026, 1, 1, 1, 0, 0, 123456789, time.FixedZone("offset", 3621))
+	before := after.Add(time.Hour).In(time.FixedZone("negative offset", -3621))
+	minSize, maxSize := int64(0), int64(9223372036854775807)
+	opts := ListingOptions{Ext: []string{"PDF", "docx"}, MinSize: &minSize, MaxSize: &maxSize, ModifiedAfter: &after, ModifiedBefore: &before}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query()
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			if !q.Has("q") || q.Get("q") != "" || q.Get("ext") != "PDF,docx" || q.Get("minSize") != "0" || q.Get("maxSize") != "9223372036854775807" || q.Get("modifiedAfter") != after.UTC().Format(time.RFC3339Nano) || q.Get("modifiedBefore") != before.UTC().Format(time.RFC3339Nano) {
+				t.Errorf("unexpected filters: %s", r.URL)
+			}
+		} else {
+			for _, key := range []string{"ext", "minSize", "maxSize", "modifiedAfter", "modifiedBefore"} {
+				if q.Has(key) {
+					t.Errorf("directory listing sent search filter %s", key)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").Search(context.Background(), "", ".", opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").List(context.Background(), ".", opts); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestSearchFiltersOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, key := range []string{"ext", "minSize", "maxSize", "modifiedAfter", "modifiedBefore"} {
+			if r.URL.Query().Has(key) {
+				t.Errorf("sent absent filter %s", key)
+			}
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").Search(context.Background(), "", ".", ListingOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchFiltersTimestampUTC(t *testing.T) {
+	var want time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, key := range []string{"modifiedAfter", "modifiedBefore"} {
+			if raw := r.URL.Query().Get(key); raw != "" {
+				got, err := time.Parse(time.RFC3339Nano, raw)
+				if err != nil || !got.Equal(want) || !strings.HasSuffix(raw, "Z") {
+					t.Errorf("%s=%q: parsed %v, want %v: %v", key, raw, got, want, err)
+				}
+			}
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offset := range []int{-24 * 60 * 60, -3621, 3621, 24 * 60 * 60} {
+		at := time.Date(2026, 1, 1, 0, 0, 0, 123456789, time.FixedZone("offset", offset))
+		want = at
+		for _, opts := range []ListingOptions{{ModifiedAfter: &at}, {ModifiedBefore: &at}} {
+			if _, err := client.Root("files").Search(context.Background(), "", ".", opts); err != nil {
+				t.Fatalf("offset=%d filters=%+v: %v", offset, opts, err)
+			}
 		}
 	}
 }

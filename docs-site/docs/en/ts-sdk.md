@@ -123,12 +123,16 @@ with `Node.id`, which is present for files and directories on those roots.
 history. See [stable IDs and migration](/docs/en/stable-ids).
 
 List and search accept `ListingOptions`: `sort`, `order`, `type`, `after`,
-`limit`, `maxEntries` and `match`. Search also supports `sort: "relevance"` with
-non-empty `q`; it ignores `order` and returns the best K matches. Search pages
-include rune-based `matches` for non-empty `q`, and optional `total`/`truncated`
-for complete snapshot selections. Keep every option unchanged while following
-`next`, including through empty indexed pages. Indexed first pages retain their captured
-observation during concurrent writes; following their cursor after a mutation
+`limit`, `maxEntries` and `match`. Search also accepts `ext` (comma-separated
+extensions without dots; whitespace is trimmed and values are case-folded,
+`ß` = `ss`), `minSize`, `maxSize`, `modifiedAfter` and `modifiedBefore`
+(timestamp strings), including with an empty query. Search supports
+`sort: "relevance"` with non-empty `q`; it ignores `order` and returns the best K
+matches after filtering. Search pages include rune-based `matches` for non-empty
+`q`, and optional `total`/`truncated` for complete snapshot selections. Keep every
+option unchanged while following `next`, including through empty indexed pages.
+Indexed first pages retain their captured observation during concurrent writes;
+following their cursor after a mutation
 returns `409 cursor_invalid`. Restart on that error. Searches are not retried
 automatically. On `429 search_busy`, retry the same request after the
 `Retry-After: 1` delay. See

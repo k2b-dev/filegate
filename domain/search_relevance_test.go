@@ -96,6 +96,30 @@ func TestSearchRelevanceTopKPages(t *testing.T) {
 		t.Fatal("rescanned relevance pages")
 	}
 }
+func TestSearchRelevanceFiltersBeforeTopK(t *testing.T) {
+	r := indexedListingRoot(t, []Node{
+		{Path: "report.txt"}, // Shorter, better-ranked hit with the wrong extension.
+		{Path: "report.pdf", Directory: true},
+		{Path: "report-a.pdf"},
+		{Path: "report-b.pdf"},
+		{Path: "report-c.pdf"},
+	})
+	r.now = func() time.Time { return time.Unix(1000, 0) }
+	r.SearchTopK = 2
+	opts := ListingOptions{Sort: "relevance", Ext: []string{" PDF ", "pdf"}, Limit: 1}
+	for i, want := range []string{"report-a.pdf", "report-b.pdf"} {
+		page, err := r.Search(context.Background(), "report", ".", opts)
+		if err != nil || len(page.Items) != 1 || page.Items[0].Path != want || page.Total == nil || *page.Total != 3 || page.Truncated == nil || !*page.Truncated {
+			t.Fatalf("page %d: %+v %v", i, page, err)
+		}
+		if (page.Next != "") != (i == 0) {
+			t.Fatalf("page %d continuation: %q", i, page.Next)
+		}
+		opts.After = page.Next
+		opts.Ext = []string{"pdf"} // Equivalent normalized filters retain the cursor.
+	}
+}
+
 func TestSearchPageFields(t *testing.T) {
 	for _, tc := range []struct {
 		label, query, base string
@@ -416,9 +440,14 @@ func TestSearchRelevanceContinuationInvalidatesChangedPrimaryRow(t *testing.T) {
 func TestSearchRelevanceLiveContinuationInvalidatesChangedHit(t *testing.T) {
 	for _, execution := range []bool{false, true} {
 		for _, filter := range []string{"all", "files", "directories"} {
-			for _, change := range []string{"delete", "rename", "kind"} {
+			for _, change := range []string{"delete", "rename", "kind", "size", "modified"} {
+				if filter == "directories" && change == "size" {
+					continue // Size filters exclude directories at collection.
+				}
 				t.Run(fmt.Sprintf("execution=%v/%s/%s", execution, filter, change), func(t *testing.T) {
+					at := time.Unix(1000, 0).UTC()
 					r := indexedListingRoot(t, nil)
+					r.now = func() time.Time { return at }
 					f := &searchAccessFiles{listingFiles: &listingFiles{base: t.TempDir()}, checked: map[string]int{}}
 					r.Files = f
 					r.Config.Index = execution
@@ -431,10 +460,15 @@ func TestSearchRelevanceLiveContinuationInvalidatesChangedHit(t *testing.T) {
 						if directory {
 							err = os.Mkdir(filepath.Join(f.base, name), 0700)
 						} else {
-							err = os.WriteFile(filepath.Join(f.base, name), nil, 0600)
+							err = os.WriteFile(filepath.Join(f.base, name), []byte("data"), 0600)
 						}
 						if err != nil {
 							t.Fatal(err)
+						}
+						if change == "modified" {
+							if err := os.Chtimes(filepath.Join(f.base, name), at, at); err != nil {
+								t.Fatal(err)
+							}
 						}
 						value, _ := json.Marshal(claim{Device: 1, Inode: 1, Path: name})
 						if err := r.State.Batch([]Change{{Key: "identity/" + name, Value: value}}); err != nil {
@@ -442,12 +476,21 @@ func TestSearchRelevanceLiveContinuationInvalidatesChangedHit(t *testing.T) {
 						}
 					}
 					opts := ListingOptions{Sort: "relevance", Type: filter, Limit: 1}
+					if change == "size" {
+						opts.MinSize = filterSize(1)
+					} else if change == "modified" {
+						opts.ModifiedBefore = filterTime(at.Add(time.Second))
+					}
 					page, err := r.Search(context.Background(), "report", ".", opts)
 					if err != nil || page.Next == "" || len(page.Items) != 1 || page.Items[0].Path != "report-a" {
 						t.Fatalf("first: %+v %v", page, err)
 					}
 					p := filepath.Join(f.base, "report-b")
-					if change == "rename" {
+					if change == "size" {
+						err = os.WriteFile(p, nil, 0600)
+					} else if change == "modified" {
+						err = os.Chtimes(p, at.Add(time.Second), at.Add(time.Second))
+					} else if change == "rename" {
 						err = os.Rename(p, filepath.Join(f.base, "renamed"))
 					} else {
 						err = os.Remove(p)
