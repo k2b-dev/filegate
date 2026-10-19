@@ -228,14 +228,21 @@ func listingQuery(p string, o ListingOptions) url.Values {
 	}
 	return q
 }
+
+// List returns immediate children without consuming search capacity.
+// On 409 cursor_invalid, discard previous pages and restart.
 func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, error) {
 	var page Page
 	err := r.client.call(ctx, "GET", r.endpoint("/entries"), listingQuery(p, o), nil, &page)
 	return page, err
 }
 
-// Search matches descendant basenames. The server rejects raw queries over 8 KiB
-// or more than eight whitespace-separated tokens with a 400 invalid_argument.
+// Search matches descendant basenames using o.Match (exact by default, or fuzzy).
+// The server rejects raw queries over 8 KiB or more than eight whitespace-separated
+// tokens with a 400 invalid_argument. APIError preserves 429 search_busy; callers
+// retry after the Retry-After: 1 delay. Indexed first pages retain their captured
+// observation during concurrent writes; their cursors remain bound to it.
+// On 409 cursor_invalid, discard previous pages and restart the query.
 func (r *Root) Search(ctx context.Context, text, p string, o ListingOptions) (Page, error) {
 	var page Page
 	q := listingQuery(p, o)

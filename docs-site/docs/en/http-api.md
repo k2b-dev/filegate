@@ -349,6 +349,13 @@ invalid input, 401 for authentication/lease failure, 403 for permissions,
 404 for missing files or receipts, and 409 for conflicts/closed sessions/disabled
 features. Expired sessions return 410; limits return 413. Unsupported POSIX ACLs
 or storage layouts return 501; concurrent transfer capacity returns 503.
+Search capacity returns `429 search_busy` with `Retry-After: 1`: each root admits
+two searches and waits up to 200 ms for a slot. Directory listings do not consume
+search slots. Retry after the indicated delay. Indexed first pages return their
+captured observation even if a Filegate mutation or rebuild occurs during the
+scan. Their cursors remain bound to that observation. Indexed continuation pages
+return `409 cursor_invalid` if the root changed before or during the scan;
+restart the query.
 
 Do not retry a mutation blindly after an ambiguous transport failure. Session
 commits are idempotent while their receipts are retained; ordinary mutations

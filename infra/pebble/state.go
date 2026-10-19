@@ -19,7 +19,10 @@ func Open(path string) (*State, error) {
 	return &State{db}, nil
 }
 func (s *State) Get(k string, v any) error {
-	b, c, e := s.db.Get([]byte(k))
+	return get(s.db, k, v)
+}
+func get(r pebble.Reader, k string, v any) error {
+	b, c, e := r.Get([]byte(k))
 	if errors.Is(e, pebble.ErrNotFound) {
 		return os.ErrNotExist
 	}
@@ -60,7 +63,10 @@ func (s *State) Scan(prefix string, fn func(string, []byte) error) error {
 // ScanAfter seeks directly to the first key strictly after after, within prefix.
 // The callback sees each remaining key once; returning an error stops iteration.
 func (s *State) ScanAfter(prefix, after string, fn func(string, []byte) error) error {
-	i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
+	return scanAfter(s.db, prefix, after, fn)
+}
+func scanAfter(r pebble.Reader, prefix, after string, fn func(string, []byte) error) error {
+	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
 	if e != nil {
 		return e
 	}
@@ -85,7 +91,10 @@ func (s *State) ScanAfter(prefix, after string, fn func(string, []byte) error) e
 // ScanBefore seeks to the first key strictly before before and walks backwards.
 // An empty before starts with the last key in prefix.
 func (s *State) ScanBefore(prefix, before string, fn func(string, []byte) error) error {
-	i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
+	return scanBefore(s.db, prefix, before, fn)
+}
+func scanBefore(r pebble.Reader, prefix, before string, fn func(string, []byte) error) error {
+	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
 	if e != nil {
 		return e
 	}
@@ -104,3 +113,17 @@ func (s *State) ScanBefore(prefix, before string, fn func(string, []byte) error)
 	return i.Error()
 }
 func (s *State) Close() error { return s.db.Close() }
+
+type snapshot struct{ reader *pebble.Snapshot }
+
+func (s *State) Snapshot() (domain.StateSnapshot, error) {
+	return &snapshot{reader: s.db.NewSnapshot()}, nil
+}
+func (s *snapshot) Get(k string, v any) error { return get(s.reader, k, v) }
+func (s *snapshot) ScanAfter(prefix, after string, fn func(string, []byte) error) error {
+	return scanAfter(s.reader, prefix, after, fn)
+}
+func (s *snapshot) ScanBefore(prefix, before string, fn func(string, []byte) error) error {
+	return scanBefore(s.reader, prefix, before, fn)
+}
+func (s *snapshot) Close() error { return s.reader.Close() }

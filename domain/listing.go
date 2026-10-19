@@ -19,10 +19,12 @@ import (
 const currentIndexFormat = 2
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
+const searchAdmissionWait = 200 * time.Millisecond
 
 var listingMemoryLimit int64 = 32 << 20
 
 var ErrCursorInvalid = errors.New("listing cursor is invalid or expired; restart the query")
+var ErrSearchBusy = errors.New("root search capacity exhausted; retry the query")
 var errListingStop = errors.New("listing complete")
 
 // ListingOptions applies ordering and filtering to the complete selection before
@@ -126,6 +128,35 @@ func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions)
 	return r.queryListing(ctx, base, query, true, o)
 }
 
+// Admission is independent of mu so a live walk holding the root lock cannot
+// prevent excess requests from observing the bounded capacity wait. Request
+// views share these slots with their service root.
+func (r *Root) admitSearch(ctx context.Context) error {
+	return r.admitSearchWithin(ctx, searchAdmissionWait)
+}
+
+func (r *Root) admitSearchWithin(ctx context.Context, wait time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.searchOnce.Do(func() { r.searches = make(chan struct{}, 2) })
+	select {
+	case r.searches <- struct{}{}:
+		return nil
+	default:
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case r.searches <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ErrSearchBusy
+	}
+}
+
 func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool, o ListingOptions) (Page, error) {
 	p, err := CleanPath(p)
 	if err != nil {
@@ -140,6 +171,12 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 		return Page{}, err
 	}
 	matcher.fuzzy = o.Match == "fuzzy"
+	if recursive {
+		if err := r.admitSearch(ctx); err != nil {
+			return Page{}, err
+		}
+		defer func() { <-r.searches }()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.guard(); err != nil {
@@ -155,7 +192,7 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	cursor := listingCursor{Query: fingerprint, Instance: r.listingInstance, Epoch: r.listingEpoch, Generation: r.generation}
 	if o.After != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(o.After)
-		if e != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Query != fingerprint || cursor.Instance != r.listingInstance || cursor.Epoch != r.listingEpoch || cursor.Generation != r.generation {
+		if e != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Query != fingerprint || !r.listingCurrent(cursor) {
 			return Page{}, ErrCursorInvalid
 		}
 	}
@@ -201,6 +238,34 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	return r.liveListing(ctx, p, recursive, o, cursor, matches)
 }
 
+func (r *Root) listingCurrent(c listingCursor) bool {
+	return c.Instance == r.listingInstance && c.Epoch == r.listingEpoch && c.Generation == r.generation
+}
+
+// scanListing releases the lock only for read-only indexed work. The caller
+// owns the lock on entry and return. Initial pages keep their captured
+// observation; continuation pages must still match the current root state.
+func (r *Root) scanListing(ctx context.Context, c listingCursor, continuation bool, scan func() error) error {
+	err := func() error {
+		r.mu.Unlock()
+		defer r.mu.Lock()
+		return scan()
+	}()
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.guard(); err != nil {
+		return err
+	}
+	if continuation && !r.listingCurrent(c) {
+		return ErrCursorInvalid
+	}
+	return nil
+}
+
 func directoryIndexPrefix(generation, p, sortBy string) string {
 	if sortBy == "name" {
 		sortBy = "path"
@@ -208,14 +273,19 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
 func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
+	state, err := r.State.Snapshot()
+	if err != nil {
+		return Page{}, err
+	}
+	defer state.Close()
 	if recursive && (o.Match == "fuzzy" || p != "." && o.Sort != "path") {
 		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 			scanned := 0
-			prefix := "i/" + r.generation + "/"
+			prefix := "i/" + c.Generation + "/"
 			if p != "." {
 				prefix += p + "/"
 			}
-			return r.State.ScanAfter(prefix, "", func(_ string, b []byte) error {
+			return state.ScanAfter(prefix, "", func(_ string, b []byte) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -231,12 +301,12 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 			})
 		})
 	}
-	prefix := "i/" + r.generation + "/"
+	prefix := "i/" + c.Generation + "/"
 	primary := recursive && o.Sort == "path"
 	if !recursive {
-		prefix = directoryIndexPrefix(r.generation, p, o.Sort)
+		prefix = directoryIndexPrefix(c.Generation, p, o.Sort)
 	} else if !primary {
-		prefix = "q/" + r.generation + "/a/" + o.Sort + "/"
+		prefix = "q/" + c.Generation + "/a/" + o.Sort + "/"
 	} else if p != "." {
 		prefix += p + "/"
 	}
@@ -265,7 +335,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 			if err := json.Unmarshal(b, &p); err != nil {
 				return err
 			}
-			if err := r.State.Get("i/"+r.generation+"/"+p, &n); err != nil {
+			if err := state.Get("i/"+c.Generation+"/"+p, &n); err != nil {
 				return err
 			}
 		}
@@ -274,18 +344,24 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		}
 		return nil
 	}
-	var err error
-	if o.Order == "desc" {
-		err = r.State.ScanBefore(prefix, c.Last, visit)
-	} else {
-		err = r.State.ScanAfter(prefix, c.Last, visit)
+	err = r.scanListing(ctx, c, o.After != "", func() error {
+		var err error
+		if o.Order == "desc" {
+			err = state.ScanBefore(prefix, c.Last, visit)
+		} else {
+			err = state.ScanAfter(prefix, c.Last, visit)
+		}
+		if errors.Is(err, errListingStop) {
+			c.Last = last
+			out.Next = encodeListingCursor(c)
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return Page{}, err
 	}
-	if errors.Is(err, errListingStop) {
-		c.Last = last
-		out.Next = encodeListingCursor(c)
-		err = nil
-	}
-	return out, err
+	return out, nil
 }
 
 func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
@@ -312,65 +388,36 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		if c.Last != "" || c.Offset != 0 || o.After != "" {
 			return Page{}, ErrCursorInvalid
 		}
-		snapshot = &listingSnapshot{query: c.Query, entries: []Node{}}
-		strong := false
-		looseOverflow := false
-		err := scan(func(n Node) error {
-			tier := matches(n)
-			if tier == 0 || tier == nameLoose && (strong || looseOverflow) {
-				return nil
-			}
-			// Once any exact/typo hit exists, loose hits cannot enter this
-			// selection. Drop earlier loose hits before sorting or pagination.
-			if !strong && tier < nameLoose {
-				strong = true
-				snapshot.entries = nil // Release discarded nodes and their backing array.
-				snapshot.bytes = 0
-			}
-			encoded, e := json.Marshal(n)
-			if e != nil {
-				return e
-			}
-			snapshot.bytes += int64(len(encoded) + 128)
-			if snapshot.bytes > listingMemoryLimit {
-				if strong {
-					return ErrLimit
-				}
-				// Loose hits are provisional: a later exact/typo hit can
-				// suppress them all. Release storage but finish the scan.
-				looseOverflow = true
-				snapshot.entries = nil
-				snapshot.bytes = 0
-				return nil
-			}
-			snapshot.entries = append(snapshot.entries, n)
-			return nil
-		})
+		collect := func() (err error) {
+			snapshot, err = collectListing(ctx, o, c.Query, matches, scan)
+			return err
+		}
+		var err error
+		if r.Config.Index && r.execution == nil {
+			err = r.scanListing(ctx, c, false, collect)
+		} else {
+			// Live metadata collection can assign identities and revisions. Keep
+			// it serialized with publication and execution permission rechecks.
+			err = collect()
+		}
 		if err != nil {
 			return Page{}, err
 		}
-		if looseOverflow && !strong {
-			return Page{}, ErrLimit
-		}
-		sort.Slice(snapshot.entries, func(i, j int) bool {
-			a, b := snapshot.entries[i], snapshot.entries[j]
-			comparison := compareListing(a, b, o.Sort)
-			if o.Order == "desc" {
-				return comparison > 0
-			}
-			return comparison < 0
-		})
 		// The lease starts after collection and sorting; slow filesystems must
 		// not consume the usable lifetime before the first page is returned.
 		snapshot.created = r.now()
 		if len(snapshot.entries) > o.Limit {
+			c.Snapshot = newID()
+		}
+		// A concurrent write can make this initial observation stale. Return
+		// its page and bound cursor without retaining an unusable cache entry.
+		if c.Snapshot != "" && r.listingCurrent(c) {
 			if r.listings == nil {
 				r.listings = make(map[string]*listingSnapshot)
 			}
 			for len(r.listings) >= listingSnapshotLimit || r.listingBytes+snapshot.bytes > listingMemoryLimit {
 				r.evictListing()
 			}
-			c.Snapshot = newID()
 			r.listings[c.Snapshot] = snapshot
 			r.listingBytes += snapshot.bytes
 		}
@@ -387,6 +434,68 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		out.Next = encodeListingCursor(c)
 	}
 	return out, nil
+}
+
+// Collection and sorting touch request-local data only. The per-root cache is
+// updated after collection, under mu, so concurrent scans cannot race eviction.
+// Admission bounds indexed listing data per root to the 32 MiB cache plus two
+// in-flight collections of at most 32 MiB each, including provisional loose hits.
+func collectListing(ctx context.Context, o ListingOptions, query string, matches func(Node) int, scan func(func(Node) error) error) (*listingSnapshot, error) {
+	snapshot := &listingSnapshot{query: query, entries: []Node{}}
+	strong := false
+	looseOverflow := false
+	err := scan(func(n Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tier := matches(n)
+		if tier == 0 || tier == nameLoose && (strong || looseOverflow) {
+			return nil
+		}
+		// Once any exact/typo hit exists, loose hits cannot enter this
+		// selection. Drop earlier loose hits before sorting or pagination.
+		if !strong && tier < nameLoose {
+			strong = true
+			snapshot.entries = nil // Release discarded nodes and their backing array.
+			snapshot.bytes = 0
+		}
+		encoded, e := json.Marshal(n)
+		if e != nil {
+			return e
+		}
+		snapshot.bytes += int64(len(encoded) + 128)
+		if snapshot.bytes > listingMemoryLimit {
+			if strong {
+				return ErrLimit
+			}
+			// Loose hits are provisional: a later exact/typo hit can
+			// suppress them all. Release storage but finish the scan.
+			looseOverflow = true
+			snapshot.entries = nil
+			snapshot.bytes = 0
+			return nil
+		}
+		snapshot.entries = append(snapshot.entries, n)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if looseOverflow && !strong {
+		return nil, ErrLimit
+	}
+	sort.Slice(snapshot.entries, func(i, j int) bool {
+		a, b := snapshot.entries[i], snapshot.entries[j]
+		comparison := compareListing(a, b, o.Sort)
+		if o.Order == "desc" {
+			return comparison > 0
+		}
+		return comparison < 0
+	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 func compareListing(a, b Node, sortBy string) int {
@@ -475,6 +584,9 @@ func (r *Root) scanDirectory(ctx context.Context, p string, recursive bool, maxE
 	scanned := 0
 	var walk func(string, int) error
 	walk = func(dir string, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if depth > 128 {
 			return ErrLimit
 		}
@@ -489,6 +601,9 @@ func (r *Root) scanDirectory(ctx context.Context, p string, recursive bool, maxE
 			}
 			entries, err := d.ReadDir(256)
 			for _, entry := range entries {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				scanned++
 				if scanned > maxEntries {
 					return ErrLimit

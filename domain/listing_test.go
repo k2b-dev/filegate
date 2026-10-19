@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +20,17 @@ type listingState struct {
 	keys   []string
 	visits int
 	scans  int
+	onScan func()
 }
+
+// These fixtures only mutate rows between requests. Production snapshot
+// isolation and concurrent mutations are covered with Pebble in search tests.
+type listingReadSnapshot struct{ *listingState }
+
+func (s *listingState) Snapshot() (StateSnapshot, error) {
+	return &listingReadSnapshot{s}, nil
+}
+func (s *listingReadSnapshot) Close() error { return nil }
 
 func (s *listingState) Get(key string, out any) error {
 	b, ok := s.rows[key]
@@ -47,6 +58,9 @@ func (s *listingState) Batch(cs []Change) error {
 	return nil
 }
 func (s *listingState) ScanAfter(prefix, after string, fn func(string, []byte) error) error {
+	if s.onScan != nil {
+		s.onScan()
+	}
 	s.scans++
 	start := sort.SearchStrings(s.keys, prefix)
 	if after != "" {
@@ -264,6 +278,53 @@ func TestIndexedSubtreeSearchCursorInvalidation(t *testing.T) {
 				t.Fatalf("cursor accepted %s: %v", change, err)
 			}
 		})
+	}
+}
+
+func TestIndexedSubtreeSearchDoesNotCacheStaleObservation(t *testing.T) {
+	for _, mode := range []string{"exact", "fuzzy"} {
+		for _, change := range []string{"mutation", "generation", "instance"} {
+			t.Run(mode+"/"+change, func(t *testing.T) {
+				r := indexedListingRoot(t, []Node{{Path: "fresh/a"}, {Path: "fresh/b"}})
+				r.listingInstance = "instance"
+				opts, err := normalizeListing(ListingOptions{Match: mode, Sort: "name", Limit: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				captured := listingCursor{
+					Query:    queryFingerprint("fresh", "", true, opts, nil),
+					Instance: r.listingInstance, Epoch: r.listingEpoch, Generation: r.generation,
+				}
+				r.State.(*listingState).onScan = func() {
+					r.mu.Lock()
+					defer r.mu.Unlock()
+					switch change {
+					case "mutation":
+						r.invalidateListings()
+					case "generation":
+						r.generation = "rebuilt"
+					case "instance":
+						r.listingInstance = "restarted"
+					}
+				}
+				page, err := r.Search(context.Background(), "", "fresh", opts)
+				if err != nil || len(page.Items) != 1 || page.Items[0].Path != "fresh/a" || page.Next == "" {
+					t.Fatalf("initial snapshot page: %+v %v", page, err)
+				}
+				if len(r.listings) != 0 || r.listingBytes != 0 {
+					t.Fatalf("stale observation cached: entries=%d bytes=%d", len(r.listings), r.listingBytes)
+				}
+				raw, err := base64.RawURLEncoding.DecodeString(page.Next)
+				var cursor listingCursor
+				if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Query != captured.Query || cursor.Instance != captured.Instance || cursor.Epoch != captured.Epoch || cursor.Generation != captured.Generation || cursor.Snapshot == "" {
+					t.Fatalf("cursor lost captured binding: %+v %v", cursor, err)
+				}
+				opts.After = page.Next
+				if _, err := r.Search(context.Background(), "", "fresh", opts); !errors.Is(err, ErrCursorInvalid) {
+					t.Fatalf("stale cursor accepted: %v", err)
+				}
+			})
+		}
 	}
 }
 

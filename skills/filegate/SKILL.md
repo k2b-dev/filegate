@@ -357,6 +357,17 @@ A visible name and metadata do not grant content read access; download checks it
 separately.
 Keep query parameters unchanged. Mutations/rebuild/restart/query change/
 expiry/eviction can return 409 cursor_invalid: discard pages and restart.
+Indexed first pages return their captured observation even if a Filegate
+mutation/rebuild occurs during the scan. Their cursors stay bound to that
+observation; following one after the change returns 409 cursor_invalid.
+Continuation pages also fail if the root changes while they scan. Indexed scans
+allow writes; live scans retain the root lock for identity/revision and permission
+coordination. Each root admits two searches across all execution identities;
+directory listings do not consume search slots. A further search waits up to
+200 ms, then returns 429 search_busy with Retry-After: 1. Retry the same request
+after that delay. Active scans check cancellation between entries and release
+their slots on exit. A search waiting for the root lock retains its slot until
+that lock becomes available.
 
 RecursiveStats performs one subtree walk; includes the selected directory count.
 Inspect `complete`, `freshness`, `source`, `started`, `completed`, `path` and optional

@@ -147,6 +147,16 @@ type State interface {
 	Scan(string, func(string, []byte) error) error
 	ScanAfter(string, string, func(string, []byte) error) error
 	ScanBefore(string, string, func(string, []byte) error) error
+	Snapshot() (StateSnapshot, error)
+	Close() error
+}
+
+// StateSnapshot reads one immutable state observation until Close. Index keys
+// and their referenced primary rows must come from the same observation.
+type StateSnapshot interface {
+	Get(string, any) error
+	ScanAfter(string, string, func(string, []byte) error) error
+	ScanBefore(string, string, func(string, []byte) error) error
 	Close() error
 }
 
