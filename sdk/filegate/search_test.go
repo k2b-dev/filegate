@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	httpadapter "github.com/k2b-dev/filegate/v7/adapter/http"
 	"github.com/k2b-dev/filegate/v7/domain"
@@ -54,5 +55,63 @@ func TestSearchQueryByteLimit(t *testing.T) {
 				t.Fatalf("mode=%s oversized raw query: %v", mode, err)
 			}
 		}
+	}
+}
+
+func TestSearchFiltersForwarding(t *testing.T) {
+	after := time.Date(2026, 1, 1, 1, 0, 0, 123456789, time.FixedZone("offset", 3600))
+	before := after.Add(time.Hour)
+	minSize, maxSize := int64(0), int64(9223372036854775807)
+	opts := ListingOptions{Ext: []string{"PDF", "docx"}, MinSize: &minSize, MaxSize: &maxSize, ModifiedAfter: &after, ModifiedBefore: &before}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query()
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			if !q.Has("q") || q.Get("q") != "" || q.Get("ext") != "PDF,docx" || q.Get("minSize") != "0" || q.Get("maxSize") != "9223372036854775807" || q.Get("modifiedAfter") != after.Format(time.RFC3339Nano) || q.Get("modifiedBefore") != before.Format(time.RFC3339Nano) {
+				t.Errorf("unexpected filters: %s", r.URL)
+			}
+		} else {
+			for _, key := range []string{"ext", "minSize", "maxSize", "modifiedAfter", "modifiedBefore"} {
+				if q.Has(key) {
+					t.Errorf("directory listing sent search filter %s", key)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").Search(context.Background(), "", ".", opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").List(context.Background(), ".", opts); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestSearchFiltersOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, key := range []string{"ext", "minSize", "maxSize", "modifiedAfter", "modifiedBefore"} {
+			if r.URL.Query().Has(key) {
+				t.Errorf("sent absent filter %s", key)
+			}
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Root("files").Search(context.Background(), "", ".", ListingOptions{}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -25,7 +25,7 @@ Use `GET /resolve?id=ID` to find a file or directory's current path on those roo
 | `GET /stat` | `path` | Node. |
 | `GET /resolve` | `id` | Current Node; requires `stableIds`. |
 | `GET /entries` | `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | `{items,next?}`. |
-| `GET /search` | `q`, `path`, `sort`, `order`, `type`, `after`, `limit`, `maxEntries` | Filename substring matches. |
+| `GET /search` | `q`, `path`, `match`, `sort`, `order`, `type`, `ext`, `minSize`, `maxSize`, `modifiedAfter`, `modifiedBefore`, `after`, `limit`, `maxEntries` | Filtered filename matches; `q` may be omitted. |
 | `GET /content` | Exactly one of `path` or `fileId`; optional `fileName` | File bytes, Range/HEAD supported. ID reads require `stableIds`. |
 | `GET /thumbnail` | `path`, `width`, `height` | JPEG preview. |
 | `POST /directories` | `{path,ownership?,acl?:{access?,default?}}` | Created Node; parent must exist. |
