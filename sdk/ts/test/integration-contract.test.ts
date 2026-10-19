@@ -26,13 +26,14 @@ test("query options, conditional publication, and signed download names stay typ
  const request:typeof fetch=async(input,init)=>{calls.push({url:String(input),body:init?.body?JSON.parse(String(init.body)):undefined});return Response.json({});};
  const root=new Filegate({baseUrl:"https://api.test",token:"backend",fetch:request}).root("test");
  await root.list("folder",{sort:"size",order:"desc",type:"directories",limit:20});
- await root.search("note",{path:"folder",sort:"modified",order:"asc",type:"files",after:"cursor"});
+ await root.search("note",{match:"fuzzy",path:"folder",sort:"modified",order:"asc",type:"files",after:"cursor"});
  await root.directUpload("file",3,{onConflict:"overwrite",precondition:{ifMatch:"revision"}});
  await root.directDownload("file",{fileName:"Grüße.txt",expiresIn:30});
  await root.directVersionDownload("file","version",{fileName:"Previous.txt"});
  await root.recursiveStats("folder",12);
  expect(new URL(calls[0].url).searchParams.get("type")).toBe("directories");
  expect(new URL(calls[1].url).searchParams.get("sort")).toBe("modified");
+ expect(new URL(calls[1].url).searchParams.get("match")).toBe("fuzzy");
  expect(calls[2].body).toMatchObject({precondition:{ifMatch:"revision"}});
  expect(calls[3].body).toEqual({path:"file",fileName:"Grüße.txt",expiresIn:30});
  expect(calls[4].body).toEqual({path:"file",fileName:"Previous.txt"});

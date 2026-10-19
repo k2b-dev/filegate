@@ -2,80 +2,85 @@ package domain
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestNameQueryMatch(t *testing.T) {
 	for _, tc := range []struct {
-		label, query, name string
-		matched            bool
-		distance           int
-		boundary           bool
+		label, query, name         string
+		fuzzy                      bool
+		tier, rank, distance, span int
+		word, accent               bool
 	}{
-		{"exact", "testtest", "testtest.ods", true, 0, true},
-		{"partial", "testt", "testtest.ods", true, 0, true},
-		{"case", "TESTTEST", "testtest.ods", true, 0, true},
-		{"insertion", "testest", "testtest.ods", true, 1, true},
-		{"transpose first", "tsettest", "testtest.ods", true, 1, true},
-		{"transpose last", "testtets", "testtest.ods", true, 1, true},
-		{"terms", "bericht 2026", "Quartalsbericht 2026.pdf", true, 0, true},
-		{"reordered terms", "2026 bericht", "Quartalsbericht 2026.pdf", true, 0, true},
-		{"unicode whitespace", "\tbericht\u2003\n2026\u00a0", "Quartalsbericht 2026.pdf", true, 0, true},
-		{"all terms required", "bericht 2027 missing", "Quartalsbericht 2026.pdf", false, 0, false},
-		{"sum distances", "tsettest 2027", "testtest_2026.pdf", true, 2, true},
-		{"composed query", "Ä", "A\u0308pfel.txt", true, 0, true},
-		{"decomposed query", "A\u0308", "äpfel.txt", true, 0, true},
-		{"unicode lowercase", "ДОКУМЕНТ", "Документ.pdf", true, 0, true},
-		{"simple lowercase", "strasse", "Straße.pdf", false, 0, false},
-		{"short exact", "abc", "abc.txt", true, 0, true},
-		{"short substitution", "abc", "abd", false, 0, false},
-		{"short transposition", "abc", "acb", false, 0, false},
-		{"short runes not bytes", "äöü", "äöx", false, 0, false},
-		{"unicode fuzzy", "äöüß", "äöxß.txt", true, 1, true},
-		{"substitution", "abcd", "abxd.txt", true, 1, true},
-		{"deletion", "abcde", "abde.txt", true, 1, true},
-		{"delete first", "xabcd", "abcd.txt", true, 1, true},
-		{"delete last", "abcdx", "abcd", true, 1, true},
-		{"insert first", "abcd", "xabcd", true, 0, false},
-		{"insert inside", "abcd", "abxcd.txt", true, 1, true},
-		{"two substitutions", "abcd", "axyd", false, 0, false},
-		{"two transpositions", "abcdefgh", "bacdefhg", false, 0, false},
-		{"noncontiguous", "abcd", "a---b---c---d", false, 0, false},
-		{"empty query", "", "anything", true, 0, false},
-		{"whitespace query", "\u2003 \t\n", "anything", true, 0, false},
-		{"empty both", "", "", true, 0, false},
-		{"empty name", "abcd", "", false, 0, false},
-		{"too short name", "abcd", "ab", false, 0, false},
-		{"interior", "bericht", "Quartalsbericht.pdf", true, 0, false},
-		{"space boundary", "test", "my test.pdf", true, 0, true},
-		{"hyphen boundary", "test", "my-test.pdf", true, 0, true},
-		{"underscore boundary", "test", "my_test.pdf", true, 0, true},
-		{"dot boundary", "test", "my.test.pdf", true, 0, true},
-		{"unicode boundary", "test", "my\u2003test.pdf", true, 0, true},
-		{"camel case optional", "test", "myTest.pdf", true, 0, false},
-		{"later exact boundary", "test", "mytest-test.pdf", true, 0, true},
-		{"overlapping exact boundary", "--", "x---", true, 0, true},
-		{"fuzzy boundary", "tset", "my_test.pdf", true, 1, true},
-		{"fuzzy interior", "tset", "mytest.pdf", true, 1, false},
-		{"later fuzzy boundary", "tset", "mytest_test.pdf", true, 1, true},
-		{"exact takes precedence", "test", "mytest_tset.pdf", true, 0, false},
-		{"64 rune fuzzy", strings.Repeat("ä", 63) + "b", strings.Repeat("ä", 63) + "c", true, 1, true},
-		{"long exact", strings.Repeat("ä", 65), strings.Repeat("Ä", 65), true, 0, true},
-		{"long substring only", strings.Repeat("ä", 64) + "b", strings.Repeat("ä", 64) + "c", false, 0, false},
+		{label: "equal", query: "TEST", name: "test", tier: 1, word: true},
+		{label: "prefix", query: "test", name: "testtest.ods", tier: 1, rank: exactPrefix, word: true},
+		{label: "word", query: "test", name: "my_test.pdf", tier: 1, rank: exactWord, word: true},
+		{label: "substring", query: "bericht", name: "Quartalsbericht.pdf", tier: 1, rank: exactSubstring},
+		{label: "later word", query: "test", name: "mytest_test.pdf", tier: 1, rank: exactWord, word: true},
+		{label: "order", query: "2026 bericht", name: "Quartalsbericht 2026.pdf", tier: 1, rank: exactWord, word: true},
+		{label: "all required", query: "2026 missing", name: "Quartalsbericht 2026.pdf"},
+		{label: "unicode whitespace", query: "\t2026\u2003bericht\n", name: "Quartalsbericht_2026.pdf", tier: 1, rank: exactWord, word: true},
+		{label: "NFC", query: "Ä", name: "A\u0308pfel.txt", tier: 1, rank: exactPrefix, word: true},
+		{label: "decomposed query", query: "A\u0308", name: "Äpfel.txt", tier: 1, rank: exactPrefix, word: true},
+		{label: "full fold", query: "strasse", name: "Straße.pdf", tier: 1, rank: exactPrefix, word: true},
+		{label: "unicode case", query: "ДОКУМЕНТ", name: "Документ.pdf", tier: 1, rank: exactPrefix, word: true},
+		{label: "accent", query: "muller", name: "Müller.docx", tier: 1, rank: exactPrefix, word: true, accent: true},
+		{label: "accent query", query: "müller", name: "Muller.docx", tier: 1, rank: exactPrefix, word: true, accent: true},
+		{label: "same accent", query: "müller", name: "Müller.docx", tier: 1, rank: exactPrefix, word: true},
+		{label: "prefix outranks unaccented word", query: "muller", name: "Müller_muller.docx", tier: 1, rank: exactPrefix, word: true, accent: true},
+		{label: "unaccented same rank", query: "muller", name: "x_Müller_muller.docx", tier: 1, rank: exactWord, word: true},
+		{label: "gapless", query: "quartalsbericht", name: "Quartals_Bericht.xlsx", tier: 1, rank: exactPrefix, word: true},
+		{label: "all gaps", query: "quartalsbericht", name: "Quartals - .\t\u2003Bericht.xlsx", tier: 1, rank: exactPrefix, word: true},
+		{label: "query separator", query: "quartals-bericht", name: "Quartals_Bericht.xlsx", tier: 1, rank: exactPrefix, word: true},
+		{label: "separator token", query: "--", name: "x---", tier: 1, rank: exactWord, word: true},
+		{label: "exact no typo", query: "tsettest", name: "testtest.ods"},
+		{label: "transpose first", query: "tsettest", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "transpose last", query: "testtets", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "insertion", query: "testest", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "delete first", query: "xabcd", name: "abcd.txt", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "delete last", query: "abcdx", name: "abcd", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "substitution", query: "abcd", name: "abxd.txt", fuzzy: true, tier: 2, distance: 1, word: true},
+		{label: "two edits eight runes", query: "abcdefgh", name: "bacdefhg", fuzzy: true, tier: 2, distance: 2, word: true},
+		{label: "two substitutions eight", query: "abcdefgh", name: "abxdefxh", fuzzy: true, tier: 2, distance: 2, word: true},
+		{label: "two edits seven runes", query: "abcdefg", name: "abxdefx", fuzzy: true},
+		{label: "three edits eight runes", query: "abcdefgh", name: "abxdyfxh", fuzzy: true},
+		{label: "short no substitution", query: "abc", name: "abd", fuzzy: true},
+		{label: "short no transpose", query: "abc", name: "acb", fuzzy: true},
+		{label: "short no insertion", query: "abc", name: "axbc", fuzzy: true, tier: 3, span: 4, word: true},
+		{label: "typo example tete", query: "tete", name: "testtest.ods", fuzzy: true, tier: 2, distance: 1},
+		{label: "loose example tst", query: "tst", name: "testtest.ods", fuzzy: true, tier: 3, span: 4, word: true},
+		{label: "loose one rune exact only", query: "a", name: "b", fuzzy: true},
+		{label: "loose two runes", query: "ab", name: "axxxxb", fuzzy: true, tier: 3, span: 6, word: true},
+		{label: "loose span limit", query: "ab", name: "axxxxxb", fuzzy: true},
+		{label: "loose word preferred", query: "ab", name: "xaxb_aqqb", fuzzy: true, tier: 3, span: 4, word: true},
+		{label: "loose best word span", query: "ab", name: "xaxb_aqqb_axb", fuzzy: true, tier: 3, span: 3, word: true},
+		{label: "loose smaller interior span", query: "ab", name: "xaxxxbxaxb", fuzzy: true, tier: 3, span: 3},
+		{label: "empty query", name: "anything", tier: 1},
+		{label: "empty name", query: "abcd", fuzzy: true},
+		{label: "long typo", query: strings.Repeat("ä", 64) + "b", name: strings.Repeat("Ä", 64) + "c", fuzzy: true, tier: 2, distance: 1, word: true},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			q, err := compileNameQuery(tc.query)
 			if err != nil {
 				t.Fatal(err)
 			}
-			matched, score := q.match(tc.name)
-			if matched != tc.matched || score != (nameMatch{distance: tc.distance, boundary: tc.boundary}) {
-				t.Fatalf("match(%q, %q) = %v, %+v; want %v, distance=%d boundary=%v", tc.query, tc.name, matched, score, tc.matched, tc.distance, tc.boundary)
+			q.fuzzy = tc.fuzzy
+			got, score := q.match(tc.name)
+			want := nameTokenMatch{tier: tc.tier, exactRank: tc.rank, distance: tc.distance, span: tc.span, wordStart: tc.word, accentFolded: tc.accent}
+			if got != (tc.tier != 0) || score.tier != tc.tier || len(q.tokens) > 0 && score.tokens[0] != want {
+				t.Fatalf("match(%q, %q) = %v, %+v; want tier=%d token=%+v", tc.query, tc.name, got, score, tc.tier, want)
 			}
 		})
+	}
+}
+
+func TestNameQueryWorstTier(t *testing.T) {
+	q, _ := compileNameQuery("2026 tst")
+	q.fuzzy = true
+	ok, score := q.match("testtest_2026.ods")
+	if !ok || score.tier != nameLoose || score.tokens[0].tier != nameExact || score.tokens[1].tier != nameLoose {
+		t.Fatalf("%v %+v", ok, score)
 	}
 }
 
@@ -84,38 +89,38 @@ func TestNameQueryTokenLimit(t *testing.T) {
 		q, err := compileNameQuery(strings.Repeat("word\u2003", count))
 		if count > nameQueryTokenLimit {
 			if q != nil || !errors.Is(err, ErrInvalid) {
-				t.Fatalf("%d tokens: query=%v error=%v; want nil, ErrInvalid", count, q, err)
+				t.Fatalf("%d: %v %v", count, q, err)
 			}
 		} else if err != nil || len(q.tokens) != count {
-			t.Fatalf("%d tokens: query=%v error=%v", count, q, err)
+			t.Fatalf("%d: %v %v", count, q, err)
 		}
 	}
 }
 
 func TestNameQueryBufferReuse(t *testing.T) {
-	q, err := compileNameQuery("tset 2026")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"long_test_2026.pdf", "x", "test_2026.pdf", "", "TEST_2026.PDF"} {
-		fresh, err := compileNameQuery("tset 2026")
-		if err != nil {
-			t.Fatal(err)
+	for _, query := range []string{"tset 2026", "muller", "tst"} {
+		q, _ := compileNameQuery(query)
+		q.fuzzy = true
+		for _, name := range []string{"long_test_2026.pdf", "Müller.docx", "x", "test_2026.pdf", "", "TEST_2026.PDF"} {
+			fresh, _ := compileNameQuery(query)
+			fresh.fuzzy = true
+			got, score := q.match(name)
+			want, wantScore := fresh.match(name)
+			if got != want || score != wantScore {
+				t.Fatalf("reused %q: %v %+v; want %v %+v", name, got, score, want, wantScore)
+			}
 		}
-		got, score := q.match(name)
-		want, wantScore := fresh.match(name)
-		if got != want || score != wantScore {
-			t.Fatalf("reused buffers for %q: %v, %+v; want %v, %+v", name, got, score, want, wantScore)
+		for _, name := range []string{"test_2026.pdf", "Müller.docx", "Mu\u0308ller.docx"} {
+			q.match(name)
+			if allocations := testing.AllocsPerRun(100, func() { q.match(name) }); allocations != 0 {
+				t.Fatalf("warm match for %q allocated %g", name, allocations)
+			}
 		}
-	}
-	if allocations := testing.AllocsPerRun(100, func() { q.match("test_2026.pdf") }); allocations != 0 {
-		t.Fatalf("warm ASCII fuzzy match allocated %g times", allocations)
 	}
 }
 
-// Compare the optimized single-edit check against full OSA distance on every
-// contiguous fragment. Exhaustive small strings exercise repeated characters,
-// alignments at either end, and all four edits without sharing matcher logic.
+// Compare both edit budgets to full OSA over every contiguous fragment. This
+// bypasses tier 1/3 and normalization so they cannot conceal a typo error.
 func TestNameQueryAgainstOSA(t *testing.T) {
 	names := []string{""}
 	level := []string{""}
@@ -129,37 +134,27 @@ func TestNameQueryAgainstOSA(t *testing.T) {
 		names = append(names, next...)
 		level = next
 	}
-	for length := 4; length <= 5; length++ {
+	for length := 2; length <= 5; length++ {
 		for bits := 0; bits < 1<<length; bits++ {
 			token := make([]rune, length)
 			for i := range token {
 				token[i] = rune('a' + (bits>>i)&1)
 			}
-			q, err := compileNameQuery(string(token))
-			if err != nil {
-				t.Fatal(err)
-			}
 			for _, name := range names {
 				runes := []rune(name)
-				best, boundary := 2, false
+				best := length
 				for start := 0; start < len(runes); start++ {
 					for end := start + 1; end <= len(runes); end++ {
-						distance := nameQueryOSADistance(token, runes[start:end])
-						atBoundary := start == 0 || runes[start-1] == '_'
-						if distance < best {
-							best, boundary = distance, atBoundary
-						} else if distance == best {
-							boundary = boundary || atBoundary
-						}
+						best = min(best, nameQueryOSADistance(token, runes[start:end]))
 					}
 				}
-				matched, score := q.match(name)
-				want := nameMatch{}
-				if best <= 1 {
-					want = nameMatch{distance: best, boundary: boundary}
-				}
-				if matched != (best <= 1) || score != want {
-					t.Fatalf("query=%q name=%q: got %v, %+v; want %v, %+v", string(token), name, matched, score, best <= 1, want)
+				for _, budget := range []int{1, 2} {
+					score := typoNameToken(runes, token, budget)
+					// An empty fragment is irrelevant for real tokens (length >= 4, budget <= 2).
+					want := best <= budget && len(runes) > 0
+					if (score.tier != 0) != want || want && score.distance != best {
+						t.Fatalf("budget=%d query=%q name=%q: %+v; want hit=%v distance=%d", budget, string(token), name, score, want, best)
+					}
 				}
 			}
 		}
@@ -167,7 +162,7 @@ func TestNameQueryAgainstOSA(t *testing.T) {
 }
 
 func nameQueryOSADistance(a, b []rune) int {
-	var d [6][6]int
+	var d [12][12]int
 	for i := 0; i <= len(a); i++ {
 		d[i][0] = i
 	}
@@ -189,32 +184,33 @@ func nameQueryOSADistance(a, b []rune) int {
 	return d[len(a)][len(b)]
 }
 
-var nameQueryBenchmarkMatches int
+var nameQueryBenchmarkScore nameMatch
 
-func BenchmarkNameQuery(b *testing.B) {
-	names := make([]string, 3000)
-	for i := range names {
-		stem := []string{"Quartalsbericht", "Quartalsberihct", "Inventarliste"}[i%3]
-		names[i] = fmt.Sprintf("%s_%04d_2026.pdf", stem, i)
-	}
-	q, err := compileNameQuery("bericht 2026")
-	if err != nil {
-		b.Fatal(err)
-	}
-	for _, name := range names {
-		q.match(name)
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	start := time.Now()
-	matches := 0
-	for i := 0; i < b.N; i++ {
-		for _, name := range names {
-			if matched, _ := q.match(name); matched {
-				matches++
+func BenchmarkNameQueryTiers(b *testing.B) {
+	for _, tc := range []struct {
+		label, query, name string
+		tier               int
+	}{
+		{"exact", "bericht 2026", "Quartalsbericht_0123_2026.pdf", 1},
+		{"accent", "muller", "Müller.docx", 1},
+		{"typo1", "quartalsberihct", "Quartalsbericht_0123_2026.pdf", 2},
+		{"typo2", "quatralsberihct", "Quartalsbericht_0123_2026.pdf", 2},
+		{"loose", "tata", "t1a2t3a.ods", 3},
+		{"loose-short", "tst", "testtest.ods", 3},
+		{"miss", "inventarliste", "Quartalsbericht_0123_2026.pdf", 0},
+	} {
+		b.Run(tc.label, func(b *testing.B) {
+			q, _ := compileNameQuery(tc.query)
+			q.fuzzy = true
+			_, score := q.match(tc.name)
+			if score.tier != tc.tier {
+				b.Fatalf("tier=%d want=%d", score.tier, tc.tier)
 			}
-		}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, nameQueryBenchmarkScore = q.match(tc.name)
+			}
+		})
 	}
-	b.ReportMetric(float64(time.Since(start).Nanoseconds())/float64(b.N*len(names)), "ns/name")
-	nameQueryBenchmarkMatches = matches
 }

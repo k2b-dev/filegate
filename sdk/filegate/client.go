@@ -223,6 +223,9 @@ func listingQuery(p string, o ListingOptions) url.Values {
 	if o.Type != "" {
 		q.Set("type", o.Type)
 	}
+	if o.Match != "" {
+		q.Set("match", o.Match)
+	}
 	return q
 }
 func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, error) {

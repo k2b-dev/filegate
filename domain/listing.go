@@ -33,6 +33,7 @@ type ListingOptions struct {
 	Sort       string `json:"sort,omitempty"`
 	Order      string `json:"order,omitempty"`
 	Type       string `json:"type,omitempty"`
+	Match      string `json:"match,omitempty"`
 }
 
 type listingSnapshot struct {
@@ -63,6 +64,12 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	}
 	if o.Order == "" {
 		o.Order = "asc"
+	}
+	if o.Match == "" {
+		o.Match = "exact"
+	}
+	if o.Match != "exact" && o.Match != "fuzzy" {
+		return o, ErrInvalid
 	}
 	if o.Type == "" {
 		o.Type = "all"
@@ -110,11 +117,11 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 	return r.queryListing(ctx, p, "", false, o)
 }
 
-// Search selects descendants of base, matching the case-insensitive basename.
+// Search selects descendants of base using normalized basename matching.
 // Indexed subtree searches with non-path ordering sort a bounded snapshot.
 // Execution views scan the live filesystem and bind snapshots to their identity.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {
-	return r.queryListing(ctx, base, strings.ToLower(query), true, o)
+	return r.queryListing(ctx, base, query, true, o)
 }
 
 func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool, o ListingOptions) (Page, error) {
@@ -126,6 +133,11 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	if err != nil {
 		return Page{}, err
 	}
+	matcher, err := compileNameQuery(query)
+	if err != nil {
+		return Page{}, err
+	}
+	matcher.fuzzy = o.Match == "fuzzy"
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.guard(); err != nil {
@@ -161,21 +173,25 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 			return Page{}, ErrInvalid
 		}
 	}
-	matches := func(n Node) bool {
+	matches := func(n Node) int {
 		if n.Path == p {
-			return false
+			return 0
 		}
 		if recursive {
 			if p != "." && !strings.HasPrefix(n.Path, p+"/") {
-				return false
+				return 0
 			}
 		} else if path.Dir(n.Path) != p {
-			return false
+			return 0
 		}
 		if o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
-			return false
+			return 0
 		}
-		return strings.Contains(strings.ToLower(path.Base(n.Path)), query)
+		matched, score := matcher.match(path.Base(n.Path))
+		if !matched {
+			return 0
+		}
+		return score.tier
 	}
 	if r.Config.Index && r.execution == nil {
 		return r.indexedListing(ctx, p, recursive, o, cursor, matches)
@@ -189,11 +205,15 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	}
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
-func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) bool) (Page, error) {
-	if recursive && p != "." && o.Sort != "path" {
+func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
+	if o.Match == "fuzzy" || recursive && p != "." && o.Sort != "path" {
 		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 			scanned := 0
-			return r.State.ScanAfter("i/"+r.generation+"/"+p+"/", "", func(_ string, b []byte) error {
+			prefix := "i/" + r.generation + "/"
+			if p != "." {
+				prefix += p + "/"
+			}
+			return r.State.ScanAfter(prefix, "", func(_ string, b []byte) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -247,7 +267,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 				return err
 			}
 		}
-		if matches(n) {
+		if matches(n) != 0 {
 			out.Items = append(out.Items, n)
 		}
 		return nil
@@ -266,13 +286,13 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	return out, err
 }
 
-func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) bool) (Page, error) {
+func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) int) (Page, error) {
 	return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
 		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, visit)
 	})
 }
 
-func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) bool, scan func(func(Node) error) error) (Page, error) {
+func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) int, scan func(func(Node) error) error) (Page, error) {
 	now := r.now()
 	for id, s := range r.listings {
 		if !now.Before(s.created.Add(listingLifetime)) {
@@ -291,9 +311,18 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			return Page{}, ErrCursorInvalid
 		}
 		snapshot = &listingSnapshot{query: c.Query, entries: []Node{}}
+		strong := false
 		err := scan(func(n Node) error {
-			if !matches(n) {
+			tier := matches(n)
+			if tier == 0 || tier == nameLoose && strong {
 				return nil
+			}
+			// Once any exact/typo hit exists, loose hits cannot enter this
+			// selection. Drop earlier loose hits before sorting or pagination.
+			if !strong && tier < nameLoose {
+				strong = true
+				snapshot.entries = nil // Release discarded nodes and their backing array.
+				snapshot.bytes = 0
 			}
 			encoded, e := json.Marshal(n)
 			if e != nil {

@@ -7,162 +7,356 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
 
 const nameQueryTokenLimit = 8
-const nameQueryFuzzyLimit = 64
+const (
+	nameExact = 1
+	nameTypo  = 2
+	nameLoose = 3
+)
+const (
+	exactEqual = iota
+	exactPrefix
+	exactWord
+	exactSubstring
+)
 
 type nameToken struct {
-	text  string
-	runes []rune // Only populated for fuzzy-eligible tokens (4–64 runes).
+	text, compact, folded, foldedCompact string
+	runes, foldedRunes                   []rune
 }
 
-// nameQuery is compiled once and reused for basenames. It owns normalization and
-// rune buffers, so it is not safe for concurrent use. Buffers grow as needed;
-// matching reuses their capacity rather than allocating for every name.
+// nameQuery is compiled once per selection. Its scratch buffers are reused per
+// basename; a query must not be shared by concurrent scans.
 type nameQuery struct {
-	tokens     []nameToken
-	normalized []byte
-	lower      []byte
-	runes      []rune
+	tokens                                []nameToken
+	fuzzy                                 bool
+	folder                                cases.Caser
+	nfc, cased                            []byte
+	normalizer                            norm.Iter
+	plain, compact, folded, foldedCompact []byte
+	runes                                 []rune
 }
 
-// nameMatch scores the best distance for each token. Distance is their sum
-// (0–8); boundary means any token has a best-distance match at the name's start
-// or after Unicode whitespace, '-', '_' or '.'. A failed match has a zero score.
+// Scores retain each token's best tier and sub-rank for future relevance sorting.
+// Lower ranks, distances and spans are better; word starts and unaccented matches
+// win ties. The node's tier is the worst token tier. No ranges are retained.
+type nameTokenMatch struct {
+	tier, exactRank, distance, span int
+	wordStart, accentFolded         bool
+}
 type nameMatch struct {
-	distance int
-	boundary bool
+	tier   int
+	tokens [nameQueryTokenLimit]nameTokenMatch
 }
 
-// compileNameQuery rejects more than eight Unicode-whitespace-separated tokens
-// with ErrInvalid, rather than silently broadening the query by dropping terms.
-// Empty queries match every name with a zero score. Tokens longer than 64 runes
-// remain exact-substring-only to bound fuzzy work per name.
 func compileNameQuery(query string) (*nameQuery, error) {
-	q := &nameQuery{}
+	q := &nameQuery{folder: cases.Fold()}
 	for field := range strings.FieldsSeq(query) {
 		if len(q.tokens) == nameQueryTokenLimit {
 			return nil, fmt.Errorf("%w: name query must have at most %d tokens", ErrInvalid, nameQueryTokenLimit)
 		}
-		text := string(q.normalize(field))
-		token := nameToken{text: text}
-		if n := utf8.RuneCountInString(text); n >= 4 && n <= nameQueryFuzzyLimit {
-			token.runes = []rune(text)
-		}
+		q.normalize(field)
+		token := nameToken{text: string(q.plain), compact: string(q.compact), folded: string(q.folded), foldedCompact: string(q.foldedCompact)}
+		token.runes = []rune(token.text)
+		token.foldedRunes = []rune(token.folded)
 		q.tokens = append(q.tokens, token)
 	}
 	return q, nil
 }
 
-// normalize uses simple Unicode lowercase, preserving the existing search's
-// case semantics (e.g. sharp s is not expanded to "ss"). NFC before and after
-// lowercasing keeps canonically equivalent input identical and the result NFC.
-func (q *nameQuery) normalize(name string) []byte {
-	q.normalized = norm.NFC.AppendString(q.normalized[:0], name)
-	q.lower = q.lower[:0]
-	for _, r := range string(q.normalized) {
-		q.lower = utf8.AppendRune(q.lower, unicode.ToLower(r))
+func nameBoundary(r rune) bool {
+	return unicode.IsSpace(r) || r == '-' || r == '_' || r == '.'
+}
+
+func (q *nameQuery) normalize(name string) {
+	q.plain, q.compact = q.plain[:0], q.compact[:0]
+	// Most names are ASCII: full folding and NFC are equivalent to this loop.
+	ascii := true
+	for i := 0; i < len(name); i++ {
+		if name[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
 	}
-	q.normalized = norm.NFC.Append(q.normalized[:0], q.lower...)
-	return q.normalized
+	if ascii {
+		for i := 0; i < len(name); i++ {
+			c := name[i]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if nameBoundary(rune(c)) {
+				q.plain = append(q.plain, ' ')
+			} else {
+				q.plain = append(q.plain, c)
+				q.compact = append(q.compact, c)
+			}
+		}
+		q.folded = append(q.folded[:0], q.plain...)
+		q.foldedCompact = append(q.foldedCompact[:0], q.compact...)
+		return
+	}
+	q.normalizer.InitString(norm.NFC, name)
+	q.nfc = q.nfc[:0]
+	for !q.normalizer.Done() {
+		q.nfc = append(q.nfc, q.normalizer.Next()...)
+	}
+	// Fold accepts all input; Append grows and reuses cased when folding expands.
+	q.cased, _, _ = transform.Append(&q.folder, q.cased[:0], q.nfc)
+	q.normalizer.Init(norm.NFC, q.cased)
+	q.nfc = q.nfc[:0]
+	for !q.normalizer.Done() {
+		q.nfc = append(q.nfc, q.normalizer.Next()...)
+	}
+	for _, r := range string(q.nfc) {
+		if nameBoundary(r) {
+			q.plain = append(q.plain, ' ')
+		} else {
+			q.plain = utf8.AppendRune(q.plain, r)
+			q.compact = utf8.AppendRune(q.compact, r)
+		}
+	}
+	q.normalizer.Init(norm.NFD, q.plain)
+	q.folded, q.foldedCompact = q.folded[:0], q.foldedCompact[:0]
+	for !q.normalizer.Done() {
+		for _, r := range string(q.normalizer.Next()) {
+			if unicode.Is(unicode.M, r) {
+				continue
+			}
+			q.folded = utf8.AppendRune(q.folded, r)
+			if r != ' ' {
+				q.foldedCompact = utf8.AppendRune(q.foldedCompact, r)
+			}
+		}
+	}
 }
 
 func (q *nameQuery) match(name string) (bool, nameMatch) {
+	score := nameMatch{tier: nameExact}
 	if len(q.tokens) == 0 {
-		return true, nameMatch{}
+		return true, score
 	}
-	nameBytes := q.normalize(name)
-	q.runes = q.runes[:0]
-	score := nameMatch{}
-	for _, token := range q.tokens {
-		found, boundary := exactNameToken(nameBytes, token.text)
-		if !found {
-			if len(token.runes) == 0 {
-				return false, nameMatch{}
-			}
-			if len(q.runes) == 0 {
-				for _, r := range string(nameBytes) {
-					q.runes = append(q.runes, r)
-				}
-			}
-			found, boundary = fuzzyNameToken(q.runes, token.runes)
-			if !found {
-				return false, nameMatch{}
-			}
-			score.distance++
+	q.normalize(name)
+	for i, token := range q.tokens {
+		best := exactNameToken(q.plain, token.text)
+		best = betterNameMatch(best, exactNameToken(q.compact, token.compact))
+		accent := !bytes.Equal(q.plain, q.folded) || token.text != token.folded
+		if accent {
+			folded := betterNameMatch(exactNameToken(q.folded, token.folded), exactNameToken(q.foldedCompact, token.foldedCompact))
+			folded.accentFolded = true
+			best = betterNameMatch(best, folded)
 		}
-		score.boundary = score.boundary || boundary
+		if best.tier == 0 && q.fuzzy {
+			best = q.fuzzyToken(q.plain, token.runes)
+			if accent {
+				folded := q.fuzzyToken(q.folded, token.foldedRunes)
+				folded.accentFolded = true
+				best = betterNameMatch(best, folded)
+			}
+		}
+		if best.tier == 0 {
+			return false, nameMatch{}
+		}
+		score.tokens[i] = best
+		score.tier = max(score.tier, best.tier)
 	}
 	return true, score
 }
 
-func nameBoundary(previous rune) bool {
-	return unicode.IsSpace(previous) || previous == '-' || previous == '_' || previous == '.'
+func betterNameMatch(a, b nameTokenMatch) nameTokenMatch {
+	if b.tier == 0 {
+		return a
+	}
+	if a.tier == 0 {
+		return b
+	}
+	if a.tier != b.tier {
+		if b.tier < a.tier {
+			return b
+		}
+		return a
+	}
+	switch a.tier {
+	case nameExact:
+		if a.exactRank != b.exactRank {
+			if b.exactRank < a.exactRank {
+				return b
+			}
+			return a
+		}
+	case nameTypo:
+		if a.distance != b.distance {
+			if b.distance < a.distance {
+				return b
+			}
+			return a
+		}
+	case nameLoose:
+		if a.wordStart != b.wordStart {
+			if b.wordStart {
+				return b
+			}
+			return a
+		}
+		if a.span != b.span {
+			if b.span < a.span {
+				return b
+			}
+			return a
+		}
+	}
+	if a.accentFolded && !b.accentFolded {
+		return b
+	}
+	return a
 }
 
-func exactNameToken(name []byte, token string) (bool, bool) {
-	found := false
+func exactNameToken(name []byte, token string) nameTokenMatch {
+	if token == "" {
+		return nameTokenMatch{}
+	}
+	if bytes.Equal(name, []byte(token)) {
+		return nameTokenMatch{tier: nameExact, exactRank: exactEqual, wordStart: true}
+	}
+	if bytes.HasPrefix(name, []byte(token)) {
+		return nameTokenMatch{tier: nameExact, exactRank: exactPrefix, wordStart: true}
+	}
+	best := nameTokenMatch{}
 	for offset := 0; offset < len(name); {
 		i := bytes.Index(name[offset:], []byte(token))
 		if i < 0 {
 			break
 		}
 		i += offset
-		if i == 0 {
-			return true, true
-		}
 		previous, _ := utf8.DecodeLastRune(name[:i])
 		if nameBoundary(previous) {
-			return true, true
+			return nameTokenMatch{tier: nameExact, exactRank: exactWord, wordStart: true}
 		}
-		found = true
-		// Advance one byte to retain overlapping occurrences; UTF-8 token starts
-		// cannot match continuation bytes in a normalized name.
+		best = nameTokenMatch{tier: nameExact, exactRank: exactSubstring}
 		offset = i + 1
 	}
-	return found, false
+	return best
 }
 
-// fuzzyNameToken tests contiguous fragments in O(m*n), with m bounded to 64.
-// After the first mismatch, the remaining suffix must match exactly under one
-// deletion, insertion, substitution or adjacent transposition (OSA distance 1).
-// The caller has already ruled out exact matches, so every hit costs one edit.
-func fuzzyNameToken(name, token []rune) (bool, bool) {
-	found := false
+func (q *nameQuery) fuzzyToken(name []byte, token []rune) nameTokenMatch {
+	q.runes = q.runes[:0]
+	var present uint64
+	for _, r := range string(name) {
+		q.runes = append(q.runes, r)
+		present |= 1 << (uint32(r) % 64)
+	}
+	budget := 0
+	if len(token) >= 8 {
+		budget = 2
+	} else if len(token) >= 4 {
+		budget = 1
+	}
+	if len(token) > len(q.runes)+budget {
+		return nameTokenMatch{}
+	}
+	// Missing-rune count is a safe lower bound on edits. Hash collisions only
+	// admit extra work; they never reject a possible match.
+	missing := 0
+	for _, r := range token {
+		if present&(1<<(uint32(r)%64)) == 0 {
+			missing++
+		}
+		if missing > budget {
+			return nameTokenMatch{}
+		}
+	}
+	if budget > 0 {
+		if score := typoNameToken(q.runes, token, budget); score.tier != 0 {
+			return score
+		}
+	}
+	if missing != 0 {
+		return nameTokenMatch{}
+	}
+	return looseNameToken(q.runes, token)
+}
+
+// Each start explores at most four edit choices at each of at most two edits.
+// Matching prefixes are consumed without branching. O(n*m*4^k), k <= 2, constant
+// stack space, no matrix or per-name allocations. Long tokens are not truncated.
+func typoNameToken(name, token []rune, budget int) nameTokenMatch {
+	best := nameTokenMatch{}
 	for start := 0; start < len(name); start++ {
-		i, j := start, 0
-		for i < len(name) && j < len(token) && name[i] == token[j] {
-			i++
-			j++
+		if len(name)-start < len(token)-budget {
+			break
 		}
-		matched := j == len(token) || runePrefix(name[i:], token[j+1:]) // Delete a query rune.
-		if !matched && i < len(name) {
-			matched = runePrefix(name[i+1:], token[j:]) || // Insert a name rune.
-				runePrefix(name[i+1:], token[j+1:]) // Substitute a rune.
-			if !matched && i+1 < len(name) && j+1 < len(token) && name[i] == token[j+1] && name[i+1] == token[j] {
-				matched = runePrefix(name[i+2:], token[j+2:])
+		distance := osaPrefix(name[start:], token, budget)
+		if distance <= budget {
+			candidate := nameTokenMatch{tier: nameTypo, distance: distance, wordStart: start == 0 || nameBoundary(name[start-1])}
+			best = betterNameMatch(best, candidate)
+			if distance == 0 {
+				break
 			}
-		}
-		if matched {
-			if start == 0 || nameBoundary(name[start-1]) {
-				return true, true
-			}
-			found = true
 		}
 	}
-	return found, false
+	return best
 }
 
-func runePrefix(name, prefix []rune) bool {
-	if len(prefix) > len(name) {
-		return false
+// osaPrefix computes the distance to any prefix of name. Consuming both runes
+// on transposition prevents editing them again (optimal string alignment).
+func osaPrefix(name, token []rune, budget int) int {
+	for len(name) > 0 && len(token) > 0 && name[0] == token[0] {
+		name, token = name[1:], token[1:]
 	}
-	for i, r := range prefix {
-		if name[i] != r {
-			return false
+	if len(token) == 0 {
+		return 0
+	}
+	if len(name) == 0 {
+		return len(token)
+	}
+	if budget == 0 || len(token) > len(name)+budget {
+		return budget + 1
+	}
+	best := budget + 1
+	if len(name) > 1 && len(token) > 1 && name[0] == token[1] && name[1] == token[0] {
+		best = 1 + osaPrefix(name[2:], token[2:], budget-1)
+		if best == 1 {
+			return best
 		}
 	}
-	return true
+	best = min(best, 1+osaPrefix(name, token[1:], budget-1)) // Delete query rune.
+	if best == 1 {
+		return best
+	}
+	best = min(best, 1+osaPrefix(name[1:], token, budget-1)) // Insert name rune.
+	if best == 1 {
+		return best
+	}
+	best = min(best, 1+osaPrefix(name[1:], token[1:], budget-1))
+	return best
+}
+
+// Greedy completion gives the smallest span for each start. The span cap bounds
+// each attempt to 3*m runes; a short name or missing rune fails without branching.
+func looseNameToken(name, token []rune) nameTokenMatch {
+	if len(token) < 2 || len(token) > len(name) {
+		return nameTokenMatch{}
+	}
+	best := nameTokenMatch{}
+	for start, r := range name {
+		if r != token[0] {
+			continue
+		}
+		j := 1
+		for end := start + 1; end < len(name) && end-start < 3*len(token); end++ {
+			if name[end] != token[j] {
+				continue
+			}
+			j++
+			if j == len(token) {
+				best = betterNameMatch(best, nameTokenMatch{tier: nameLoose, wordStart: start == 0 || nameBoundary(name[start-1]), span: end - start + 1})
+				break
+			}
+		}
+	}
+	return best
 }
