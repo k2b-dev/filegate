@@ -210,6 +210,10 @@ func TestNameQueryAgainstOSA(t *testing.T) {
 				}
 				for _, budget := range []int{1, 2} {
 					score := typoNameToken(runes, token, budget, 0, nil)
+					dp := sellersOSADistance(runes, token, budget, 0)
+					if len(runes) > 0 && (dp <= budget) != (best <= budget) || len(runes) > 0 && best <= budget && dp != best {
+						t.Fatalf("DP budget=%d query=%q name=%q: distance=%d want=%d", budget, string(token), name, dp, best)
+					}
 					// An empty fragment is irrelevant for real tokens (length >= 4, budget <= 2).
 					want := best <= budget && len(runes) > 0
 					if (score.tier != 0) != want || want && score.distance != best {

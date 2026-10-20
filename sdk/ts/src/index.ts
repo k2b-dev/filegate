@@ -70,6 +70,8 @@ export class RootClient {
    * or with in: "path", Node.path relative to options.path without a leading slash.
    * Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
    * Client cancellation and deadlines remain cancellation or deadline errors.
+   * maxEntries caps retained hits on indexed searches and visited entries on live scans.
+   * Indexed exact seek pages return at most min(limit, maxEntries) matches.
    * Complete snapshot pages also report total/truncated. Search does not retry automatically. On 429
    * search_busy, callers retry after the Retry-After: 1 delay. Indexed first pages
    * retain their captured observation during concurrent writes; cursors remain

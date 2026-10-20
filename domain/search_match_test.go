@@ -95,8 +95,9 @@ func TestSearchMatchRootSnapshotAndBudget(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "z-taxa" || page.Next != "" {
 		t.Fatalf("root selection: %+v %v", page, err)
 	}
-	if _, err := r.Search(context.Background(), "tata", ".", ListingOptions{Match: "fuzzy", MaxEntries: 1}); !errors.Is(err, ErrLimit) {
-		t.Fatalf("budget: %v", err)
+	page, err = r.Search(context.Background(), "tata", ".", ListingOptions{Match: "fuzzy", MaxEntries: 1})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "z-taxa" || page.Next != "" {
+		t.Fatalf("retained budget: %+v %v", page, err)
 	}
 }
 
@@ -397,5 +398,15 @@ func TestSearchHighlightContinuationHoldsRootLock(t *testing.T) {
 				t.Fatalf("continuation: %+v err=%v checks=%d", page, err, checks)
 			}
 		})
+	}
+}
+
+func TestSearchMatchRetainedBudget(t *testing.T) {
+	for _, paths := range [][]string{{"a-tata", "b-tata"}, {"a-t1a2t3a", "b-t1a2t3a"}} {
+		r := indexedListingRoot(t, []Node{{Path: paths[0]}, {Path: paths[1]}})
+		page, err := r.Search(context.Background(), "tata", ".", ListingOptions{Match: "fuzzy", MaxEntries: 1})
+		if !errors.Is(err, ErrLimit) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 {
+			t.Fatalf("%v: page=%+v err=%v", paths, page, err)
+		}
 	}
 }

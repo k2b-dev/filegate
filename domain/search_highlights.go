@@ -95,7 +95,7 @@ func (q *nameQuery) highlights(name string) []MatchRange {
 			if target.tier == nameExact {
 				score = exactNameToken(form.text, token, form.starts)
 			} else {
-				score = q.fuzzyToken(form.text, []rune(string(token)), form.starts)
+				score = q.fuzzyToken(form.text, []rune(string(token)), t.masks[f], form.starts)
 			}
 			score.accentFolded = f >= 2
 			if score != target {

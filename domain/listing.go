@@ -51,6 +51,13 @@ type ListingOptions struct {
 	ModifiedBefore *time.Time `json:"modifiedBefore,omitempty"`
 }
 
+// listingCandidate carries one computed match through collection; indexed scans
+// can omit node metadata until a retained page needs it.
+type listingCandidate struct {
+	node  Node
+	match nameMatch
+}
+
 type listingSnapshot struct {
 	query   string
 	created time.Time
@@ -153,6 +160,8 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 // or scope-relative path matching with In: "path".
 // The raw query must be at most 8 KiB and contain at most eight whitespace tokens.
 // Indexed subtree searches with non-path ordering sort a bounded snapshot.
+// MaxEntries caps retained indexed hits; live scans cap visited entries instead.
+// Indexed exact seek pages return at most min(Limit, MaxEntries) matches.
 // Execution views scan the live filesystem and bind snapshots to their identity.
 // Every search scan has a 10-second server budget; expiry returns ErrLimit.
 func (r *Root) Search(ctx context.Context, query, base string, o ListingOptions) (Page, error) {
@@ -255,28 +264,31 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 			return Page{}, ErrInvalid
 		}
 	}
-	matches := func(n Node) nameMatch {
-		if n.Path == p {
+	matchesPath := func(candidate string) nameMatch {
+		if candidate == p {
 			return nameMatch{}
 		}
 		if recursive {
-			if p != "." && !strings.HasPrefix(n.Path, p+"/") {
+			if p != "." && !strings.HasPrefix(candidate, p+"/") {
 				return nameMatch{}
 			}
-		} else if path.Dir(n.Path) != p {
+		} else if path.Dir(candidate) != p {
 			return nameMatch{}
 		}
-		if o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory {
+		if recursive && !o.matchesSearchExtension(candidate) {
 			return nameMatch{}
 		}
-		if recursive && !o.matchesSearchFilters(n) {
-			return nameMatch{}
-		}
-		matched, score := matcher.match(matcher.subject(n.Path))
+		matched, score := matcher.match(matcher.subject(candidate))
 		if !matched {
 			return nameMatch{}
 		}
 		return score
+	}
+	matches := func(n Node) nameMatch {
+		if !o.matchesNode(n) {
+			return nameMatch{}
+		}
+		return matchesPath(n.Path)
 	}
 	if recursive {
 		budget := r.searchScanTimeout
@@ -293,7 +305,7 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 		}()
 	}
 	if r.Config.Index && r.execution == nil {
-		out, err = r.indexedListing(ctx, p, recursive, o, cursor, matches, matcher)
+		out, err = r.indexedListing(ctx, p, recursive, o, cursor, matchesPath, matcher)
 	} else {
 		out, err = r.liveListing(ctx, p, recursive, o, cursor, matches, matcher)
 	}
@@ -354,9 +366,9 @@ func directoryIndexPrefix(generation, p, sortBy string) string {
 	}
 	return "q/" + generation + "/d/" + hex.EncodeToString([]byte(p)) + "/" + sortBy + "/"
 }
-func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (out Page, err error) {
-	if o.Sort == "relevance" && c.Snapshot != "" {
-		return r.snapshotListing(ctx, p, o, c, matches, nil, matcher, nil)
+func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(string) nameMatch, matcher *nameQuery) (out Page, err error) {
+	if c.Snapshot != "" {
+		return r.snapshotListing(ctx, p, o, c, nil, matcher, nil)
 	}
 	state, err := r.State.Snapshot()
 	if err != nil {
@@ -364,25 +376,32 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	}
 	defer state.Close()
 	if recursive && (o.Sort == "relevance" || o.Match == "fuzzy" || p != "." && o.Sort != "path") {
-		return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
-			scanned := 0
-			prefix := "i/" + c.Generation + "/"
+		return r.snapshotListing(ctx, p, o, c, func(visit func(listingCandidate) error) error {
+			primaryPrefix := "i/" + c.Generation + "/"
+			prefix := primaryPrefix
 			if p != "." {
 				prefix += p + "/"
 			}
-			return state.ScanAfter(prefix, "", func(_ string, b []byte) error {
+			return state.ScanAfter(prefix, "", func(k string, b []byte) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				scanned++
-				if o.Sort != "relevance" && scanned > o.MaxEntries {
-					return ErrLimit
+				candidate := listingCandidate{node: Node{Path: k[len(primaryPrefix):]}}
+				candidate.match = matches(candidate.node.Path)
+				if candidate.match.tier == 0 {
+					return nil
 				}
-				var n Node
-				if err := json.Unmarshal(b, &n); err != nil {
-					return err
+				// Relevance retains paths and scores only. Other sorts retain
+				// nodes; metadata predicates also require the primary value.
+				if o.Sort != "relevance" || o.needsSearchMetadata() {
+					if err := json.Unmarshal(b, &candidate.node); err != nil {
+						return err
+					}
+					if !o.matchesNode(candidate.node) {
+						return nil
+					}
 				}
-				return visit(n)
+				return visit(candidate)
 			})
 		}, matcher, state)
 	}
@@ -405,26 +424,35 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if scanned >= o.MaxEntries || len(out.Items) >= o.Limit {
+		if !recursive && scanned >= o.MaxEntries || len(out.Items) >= min(o.Limit, o.MaxEntries) {
 			return errListingStop
 		}
 		scanned++
 		last = k
+		candidatePath := k[len(prefix):]
+		switch {
+		case o.Sort == "name" && recursive:
+			candidatePath = candidatePath[strings.IndexByte(candidatePath, 0)+1:]
+		case o.Sort == "size":
+			candidatePath = candidatePath[17:]
+		case o.Sort == "modified":
+			candidatePath = candidatePath[25:]
+		}
+		if recursive && primary && p != "." {
+			candidatePath = p + "/" + candidatePath
+		}
+		if matches(candidatePath).tier == 0 {
+			return nil
+		}
 		var n Node
 		if primary {
 			if err := json.Unmarshal(b, &n); err != nil {
 				return err
 			}
-		} else {
-			var p string
-			if err := json.Unmarshal(b, &p); err != nil {
-				return err
-			}
-			if err := state.Get("i/"+c.Generation+"/"+p, &n); err != nil {
-				return err
-			}
+		} else if err := state.Get("i/"+c.Generation+"/"+candidatePath, &n); err != nil {
+			return err
 		}
-		if matches(n).tier != 0 {
+		if o.matchesNode(n) {
 			out.Items = append(out.Items, n)
 		}
 		return nil
@@ -450,12 +478,14 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 }
 
 func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (Page, error) {
-	return r.snapshotListing(ctx, p, o, c, matches, func(visit func(Node) error) error {
-		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, visit)
+	return r.snapshotListing(ctx, p, o, c, func(visit func(listingCandidate) error) error {
+		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, func(n Node) error {
+			return visit(listingCandidate{node: n, match: matches(n)})
+		})
 	}, matcher, nil)
 }
 
-func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, matches func(Node) nameMatch, scan func(func(Node) error) error, matcher *nameQuery, reader StateSnapshot) (Page, error) {
+func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, c listingCursor, scan func(func(listingCandidate) error) error, matcher *nameQuery, reader StateSnapshot) (Page, error) {
 	now := r.now()
 	for id, s := range r.listings {
 		if !now.Before(s.created.Add(listingLifetime)) {
@@ -474,9 +504,24 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		collect := func() (err error) {
 			if o.Sort == "relevance" {
-				snapshot, err = collectRelevance(ctx, o, c.Query, matches, scan, matcher)
+				snapshot, err = collectRelevance(ctx, o, c.Query, scan, matcher)
+				if err == nil && reader != nil && !o.needsSearchMetadata() {
+					// Preserve continuation kind checks even without metadata filters.
+					// Read only final top-K hits, never every matching primary row.
+					for i := range snapshot.hits {
+						if err = ctx.Err(); err != nil {
+							break
+						}
+						var n Node
+						err = reader.Get("i/"+c.Generation+"/"+snapshot.hits[i].path, &n)
+						if err != nil {
+							break
+						}
+						snapshot.hits[i].directory = n.Directory
+					}
+				}
 			} else {
-				snapshot, err = collectListing(ctx, o, c.Query, matches, scan)
+				snapshot, err = collectListing(ctx, o, c.Query, scan)
 			}
 			return err
 		}
@@ -578,15 +623,16 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 // updated after collection, under mu, so concurrent scans cannot race eviction.
 // Admission bounds indexed listing data per root to the 32 MiB cache plus two
 // in-flight collections of at most 32 MiB each, including provisional loose hits.
-func collectListing(ctx context.Context, o ListingOptions, query string, matches func(Node) nameMatch, scan func(func(Node) error) error) (*listingSnapshot, error) {
+func collectListing(ctx context.Context, o ListingOptions, query string, scan func(func(listingCandidate) error) error) (*listingSnapshot, error) {
 	snapshot := &listingSnapshot{query: query, entries: []Node{}}
 	strong := false
 	looseOverflow := false
-	err := scan(func(n Node) error {
+	err := scan(func(candidate listingCandidate) error {
+		n := candidate.node
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tier := matches(n).tier
+		tier := candidate.match.tier
 		if tier == 0 || tier == nameLoose && (strong || looseOverflow) {
 			return nil
 		}
@@ -602,7 +648,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, matches
 			return e
 		}
 		snapshot.bytes += int64(len(encoded) + 128)
-		if snapshot.bytes > listingMemoryLimit {
+		if snapshot.bytes > listingMemoryLimit || len(snapshot.entries) >= o.MaxEntries {
 			if strong {
 				return ErrLimit
 			}
