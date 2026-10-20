@@ -19,8 +19,11 @@ import (
 
 const currentIndexFormat = 2
 
-// Bind the byte-preserving cursor encoding to queries; older cursors must restart.
-const listingCursorFormat = 2
+// Prefix-relative seek keys need at most PATH_MAX-1 + NAME_MAX+1 = 4351
+// bytes on Linux (basename + NUL + path for name sorting). With the SHA-256
+// query, UUID instance/generation and uint64 epoch, double base64 produces at
+// most 7992 characters; snapshot cursors are smaller.
+const listingCursorLimit = 16384
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
 const searchAdmissionWait = 200 * time.Millisecond
@@ -81,7 +84,7 @@ type listingCursor struct {
 	Instance   string `json:"i"`
 	Epoch      uint64 `json:"e"`
 	Generation string `json:"g,omitempty"`
-	Last       []byte `json:"k,omitempty"` // JSON base64 preserves arbitrary key bytes.
+	Last       []byte `json:"k,omitempty"` // Prefix-relative key; JSON base64 preserves arbitrary bytes.
 	Snapshot   string `json:"s,omitempty"`
 	Offset     int    `json:"o,omitempty"`
 }
@@ -114,7 +117,7 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	if o.Type == "" {
 		o.Type = "all"
 	}
-	if o.Limit < 1 || o.Limit > 1000 || o.MaxEntries < 1 || o.MaxEntries > 100000 || len(o.After) > 16384 {
+	if o.Limit < 1 || o.Limit > 1000 || o.MaxEntries < 1 || o.MaxEntries > 100000 || len(o.After) > listingCursorLimit {
 		return o, ErrInvalid
 	}
 	if o.Sort != "path" && o.Sort != "name" && o.Sort != "size" && o.Sort != "modified" && o.Sort != "relevance" {
@@ -147,12 +150,11 @@ func queryFingerprint(p, query string, recursive bool, o ListingOptions, actor *
 	b, _ := json.Marshal(struct {
 		Path      []byte
 		Query     string
-		Format    int
 		Recursive bool
 		Options   ListingOptions
 		Execution *ExecutionIdentity
 		TopK      int
-	}{[]byte(p), query, listingCursorFormat, recursive, o, actor, topK})
+	}{[]byte(p), query, recursive, o, actor, topK})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -427,12 +429,16 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	} else if p != "." {
 		prefix += p + "/"
 	}
-	if c.Snapshot != "" || c.Offset != 0 || len(c.Last) != 0 && !strings.HasPrefix(string(c.Last), prefix) {
+	if c.Snapshot != "" || c.Offset != 0 {
 		return Page{}, ErrCursorInvalid
 	}
 	out = Page{Items: []Node{}}
 	scanned := 0
 	last := string(c.Last)
+	seek := ""
+	if len(c.Last) != 0 {
+		seek = prefix + last
+	}
 	var rawPaths []string
 	visit := func(k string, b []byte) error {
 		if err := ctx.Err(); err != nil {
@@ -442,8 +448,8 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 			return errListingStop
 		}
 		scanned++
-		last = k
-		candidatePath := k[len(prefix):]
+		last = k[len(prefix):]
+		candidatePath := last
 		switch {
 		case o.Sort == "name" && recursive:
 			candidatePath = candidatePath[strings.IndexByte(candidatePath, 0)+1:]
@@ -475,9 +481,9 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	err = r.scanListing(ctx, c, o.After != "", func() error {
 		var err error
 		if o.Order == "desc" {
-			err = state.ScanBefore(prefix, string(c.Last), visit)
+			err = state.ScanBefore(prefix, seek, visit)
 		} else {
-			err = state.ScanAfter(prefix, string(c.Last), visit)
+			err = state.ScanAfter(prefix, seek, visit)
 		}
 		if errors.Is(err, errListingStop) {
 			c.Last = []byte(last)
