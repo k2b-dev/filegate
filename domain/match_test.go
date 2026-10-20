@@ -2,10 +2,75 @@ package domain
 
 import (
 	"errors"
+	"math/bits"
+	"math/rand/v2"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestNameQueryRuneMaskPrefilter(t *testing.T) {
+	random := rand.New(rand.NewPCG(20, 2026))
+	alphabet := []rune("abcxyzáéößЖ界日本🙂🙃\u0301")
+	accepted, rejected := 0, 0
+	for i := 0; i < 10000; i++ {
+		token := make([]rune, 1+random.IntN(40))
+		for j := range token {
+			token[j] = alphabet[random.IntN(len(alphabet))]
+		}
+		q, err := compileNameQuery(string(token))
+		if err != nil {
+			t.Fatal(err)
+		}
+		compiled := q.tokens[0]
+		for form, runes := range [][]rune{compiled.runes, compiled.compactRunes, compiled.foldedRunes, compiled.foldedCompactRunes} {
+			name := make([]rune, random.IntN(80))
+			for j := range name {
+				name[j] = alphabet[random.IntN(len(alphabet))]
+			}
+			if i%2 == 0 {
+				// Near matches, including repeated runes and Unicode hash collisions.
+				name = append(name[:0], runes...)
+				for edits := random.IntN(4); edits > 0 && len(name) > 0; edits-- {
+					name[random.IntN(len(name))] = alphabet[random.IntN(len(alphabet))]
+				}
+			}
+			presentRunes := map[rune]bool{}
+			var present uint64
+			for _, r := range name {
+				presentRunes[r] = true
+				present |= 1 << (uint32(r) % 64)
+			}
+			// Independent, unhashed reference: count every absent token rune,
+			// including repetitions, as the original per-rune prefilter does.
+			missing := 0
+			for _, r := range runes {
+				if !presentRunes[r] {
+					missing++
+				}
+			}
+			budget := nameTypoBudget(len(runes))
+			if missing > budget {
+				rejected++
+				continue
+			}
+			accepted++
+			if bits.OnesCount64(compiled.masks[form]&^present) > budget {
+				t.Fatalf("mask rejected query=%q name=%q budget=%d missing=%d", string(runes), string(name), budget, missing)
+			}
+			// A zero mask bypasses both mask-based rejection stages. Compare
+			// the actual production matcher as well as the direct mask bound.
+			got := q.fuzzyToken([]byte(string(name)), runes, compiled.masks[form], nil)
+			want := q.fuzzyToken([]byte(string(name)), runes, 0, nil)
+			if got != want {
+				t.Fatalf("prefilter changed query=%q name=%q: got %+v, want %+v", string(runes), string(name), got, want)
+			}
+		}
+	}
+	if accepted == 0 || rejected == 0 {
+		t.Fatalf("property needs accepted and rejected pairs: %d/%d", accepted, rejected)
+	}
+}
 
 func TestNameQueryMatch(t *testing.T) {
 	for _, tc := range []struct {
