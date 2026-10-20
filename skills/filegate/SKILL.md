@@ -327,6 +327,9 @@ ListingOptions: sort=`path|name|size|modified|relevance` (default path), order=`
 match=`exact|fuzzy` (default exact), in=`name|path` (default name), maxEntries 1–100000 (default 100000), opaque
 after. Stable path ties follow the same order. Filter/sort precedes pagination. List returns immediate children; search walks
 descendants, excluding its base.
+Opaque cursors are limited to 32 KiB. If a page requires a larger continuation,
+it fails with 413 (limit_exceeded), with no partial page. Narrow the search path
+or increase limit to reduce the need for a continuation.
 
 Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
 (`muller` finds `Müller.docx`). `_ - .` and whitespace are word gaps; tokens also

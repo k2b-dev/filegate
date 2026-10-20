@@ -66,7 +66,7 @@ func (s *State) ScanAfter(prefix, after string, fn func(string, []byte) error) e
 	return scanAfter(s.db, prefix, after, fn)
 }
 func scanAfter(r pebble.Reader, prefix, after string, fn func(string, []byte) error) error {
-	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
+	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: prefixSuccessor(prefix)})
 	if e != nil {
 		return e
 	}
@@ -94,7 +94,7 @@ func (s *State) ScanBefore(prefix, before string, fn func(string, []byte) error)
 	return scanBefore(s.db, prefix, before, fn)
 }
 func scanBefore(r pebble.Reader, prefix, before string, fn func(string, []byte) error) error {
-	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: []byte(prefix + "\xff")})
+	i, e := r.NewIter(&pebble.IterOptions{LowerBound: []byte(prefix), UpperBound: prefixSuccessor(prefix)})
 	if e != nil {
 		return e
 	}
@@ -112,6 +112,20 @@ func scanBefore(r pebble.Reader, prefix, before string, fn func(string, []byte) 
 	}
 	return i.Error()
 }
+
+// prefixSuccessor is the exclusive upper bound for all keys with prefix.
+// An empty or all-0xff prefix has no finite upper bound.
+func prefixSuccessor(prefix string) []byte {
+	end := []byte(prefix)
+	for i := len(end) - 1; i >= 0; i-- {
+		if end[i] != 0xff {
+			end[i]++
+			return end[:i+1]
+		}
+	}
+	return nil
+}
+
 func (s *State) Close() error { return s.db.Close() }
 
 type snapshot struct{ reader *pebble.Snapshot }

@@ -58,7 +58,8 @@ export class RootClient {
   info(): Promise<RootInfo> { return this.client.json("GET", this.prefix); }
   stat(path: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/stat`, { path }); }
   resolve(id: string): Promise<Node> { return this.client.json("GET", `${this.prefix}/resolve`, { id }); }
-  /** List immediate children without consuming search capacity. */
+  /** List immediate children without consuming search capacity.
+   * A required cursor exceeding 32 KiB returns 413 limit_exceeded. */
   list(path = ".", options: ListingOptions = {}): Promise<Page> { return this.client.json("GET", `${this.prefix}/entries`, { path, ...options }); }
   /** Match descendant basenames, or scope-relative paths with in: "path".
    * options.match defaults to exact; fuzzy includes typo and loose matching.
@@ -69,6 +70,7 @@ export class RootClient {
    * order and retains the best K. matches uses basename rune offsets by default,
    * or with in: "path", Node.path relative to options.path without a leading slash.
    * Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
+   * A required cursor exceeding 32 KiB also returns 413 limit_exceeded.
    * Client cancellation and deadlines remain cancellation or deadline errors.
    * maxEntries caps retained hits on indexed searches and visited entries on live scans.
    * Indexed exact seek pages return at most min(limit, maxEntries) matches.

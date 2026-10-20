@@ -26,7 +26,7 @@ func TestListingInvalidUTF8Pagination(t *testing.T) {
 			for _, order := range []string{"asc", "desc"} {
 				t.Run(mode+"/"+sortBy+"/"+order, func(t *testing.T) {
 					at := time.Unix(1000, 0).UTC()
-					names := []string{"a-\xff.pdf", "a-\xfe.pdf", "b.pdf"}
+					names := []string{"a-\xff.pdf", "a-\xfe.pdf", "b.pdf", "\xff.pdf"}
 					nodes := make([]Node, len(names))
 					for i, name := range names {
 						nodes[i] = Node{Path: name, ID: fmt.Sprintf("%x", name), Modified: at}
@@ -65,7 +65,7 @@ func TestListingInvalidUTF8Pagination(t *testing.T) {
 					slices.Sort(names)
 					if relevance {
 						// Equal match ranks prefer shorter basenames, then raw paths.
-						names = []string{"b.pdf", "a-\xfe.pdf", "a-\xff.pdf"}
+						names = []string{"b.pdf", "\xff.pdf", "a-\xfe.pdf", "a-\xff.pdf"}
 					} else if order == "desc" {
 						slices.Reverse(names)
 					}
@@ -138,7 +138,11 @@ func TestListingCursorArbitraryKeyBytes(t *testing.T) {
 		t.Run(fmt.Sprintf("%02x", value), func(t *testing.T) {
 			key := "i/generation/a-" + string([]byte{byte(value)}) + ".pdf"
 			cursor := listingCursor{Last: []byte(key)}
-			raw, err := base64.RawURLEncoding.DecodeString(encodeListingCursor(cursor))
+			encoded, err := encodeListingCursor(cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := base64.RawURLEncoding.DecodeString(encoded)
 			var decoded listingCursor
 			if err != nil || json.Unmarshal(raw, &decoded) != nil || !reflect.DeepEqual(decoded, cursor) {
 				t.Fatalf("cursor lost key bytes: %+v -> %+v (%v)", cursor, decoded, err)
@@ -147,9 +151,9 @@ func TestListingCursorArbitraryKeyBytes(t *testing.T) {
 	}
 }
 
-func TestListingLongestPathPagination(t *testing.T) {
-	// Fifteen NAME_MAX components plus a NAME_MAX child fill PATH_MAX - 1
-	// bytes. Indexed child rows need no on-disk files, only an openable base.
+func TestListingLongPathPagination(t *testing.T) {
+	// This base can be opened by the fixture's os.Open. Filegate's component-wise
+	// traversal also supports longer paths, covered by the deep-path test below.
 	base := strings.TrimSuffix(strings.Repeat(strings.Repeat("d", 254)+"\xff/", 15), "/")
 	files := &listingFiles{base: t.TempDir()}
 	if err := os.MkdirAll(filepath.Join(files.base, base), 0700); err != nil {
@@ -221,34 +225,73 @@ func TestListingLongestPathPagination(t *testing.T) {
 }
 
 func TestListingCursorLengthBound(t *testing.T) {
-	// Maximal relative Linux path and basename, including non-UTF-8 bytes.
-	name := strings.Repeat("\xff", 255)
-	n := Node{Path: strings.Repeat(name+"/", 15) + name}
-	uuid := "00000000-0000-7000-8000-000000000000"
-	for _, kind := range []string{"path", "name", "size", "modified", "snapshot"} {
-		t.Run(kind, func(t *testing.T) {
-			c := listingCursor{
-				Query: strings.Repeat("f", 64), Instance: uuid,
-				Epoch: ^uint64(0), Generation: uuid,
-				Last: []byte(orderedNodeKey(n, kind)),
-			}
-			if kind == "snapshot" {
-				c.Last = nil
-				c.Snapshot = uuid
-				c.Offset = int(^uint(0) >> 1)
-			}
-			after := encodeListingCursor(c)
-			if len(after) > listingCursorLimit {
-				t.Fatalf("cursor length %d exceeds %d", len(after), listingCursorLimit)
-			}
-			if _, err := normalizeListing(ListingOptions{After: after}); err != nil {
-				t.Fatalf("maximum cursor rejected: %v", err)
-			}
-			t.Logf("maximum %s cursor: %d characters (limit %d)", kind, len(after), listingCursorLimit)
-		})
+	if listingCursorLimit != 32<<10 {
+		t.Fatalf("cursor limit = %d, want 32 KiB", listingCursorLimit)
+	}
+	if _, err := normalizeListing(ListingOptions{After: strings.Repeat("a", listingCursorLimit)}); err != nil {
+		t.Fatalf("cursor at limit rejected: %v", err)
 	}
 	if _, err := normalizeListing(ListingOptions{After: strings.Repeat("a", listingCursorLimit+1)}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("oversized cursor accepted: %v", err)
+	}
+}
+
+func TestListingDeepPathPagination(t *testing.T) {
+	for _, components := range []int{40, 80} {
+		base := strings.Repeat(strings.Repeat("d", 254)+"\xff/", components)
+		at := time.Unix(1000, 0).UTC()
+		var nodes []Node
+		for _, letter := range []string{"a", "b", "c"} {
+			nodes = append(nodes, Node{Path: base + "needle-" + letter + strings.Repeat("\xff", 247), ID: letter, Modified: at})
+		}
+		for _, sortBy := range []string{"path", "name", "size", "modified"} {
+			for _, order := range []string{"asc", "desc"} {
+				t.Run(fmt.Sprintf("%d/%s/%s", components, sortBy, order), func(t *testing.T) {
+					r := indexedListingRoot(t, nodes)
+					r.Files = &listingFiles{base: t.TempDir()}
+					r.now = func() time.Time { return at }
+					opts := ListingOptions{Limit: 1, Sort: sortBy, Order: order}
+					if components == 80 {
+						page, err := r.Search(context.Background(), "needle", ".", opts)
+						if !errors.Is(err, ErrLimit) || !reflect.DeepEqual(page, Page{}) {
+							t.Fatalf("oversized continuation: err=%v, next length=%d, items=%d", err, len(page.Next), len(page.Items))
+						}
+						// A terminal page needs no cursor, even for very deep paths.
+						opts.Limit = len(nodes)
+						page, err = r.Search(context.Background(), "needle", ".", opts)
+						if err != nil || len(page.Items) != len(nodes) || page.Next != "" {
+							t.Fatalf("terminal page: err=%v, next length=%d, items=%d", err, len(page.Next), len(page.Items))
+						}
+						return
+					}
+					var ids []string
+					for pages := 0; ; pages++ {
+						if pages >= len(nodes) {
+							t.Fatal("pagination did not terminate")
+						}
+						page, err := r.Search(context.Background(), "needle", ".", opts)
+						if err != nil || len(page.Items) != 1 {
+							t.Fatalf("page %d after %d-character cursor: items=%d err=%v", pages, len(opts.After), len(page.Items), err)
+						}
+						ids = append(ids, page.Items[0].ID)
+						if page.Next == "" {
+							break
+						}
+						if len(page.Next) <= 16384 || len(page.Next) > 32<<10 {
+							t.Fatalf("deep-path cursor length = %d", len(page.Next))
+						}
+						opts.After = page.Next
+					}
+					want := []string{"a", "b", "c"}
+					if order == "desc" {
+						slices.Reverse(want)
+					}
+					if !slices.Equal(ids, want) {
+						t.Fatalf("got IDs %v, want %v", ids, want)
+					}
+				})
+			}
+		}
 	}
 }
 

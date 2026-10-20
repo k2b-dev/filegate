@@ -19,11 +19,10 @@ import (
 
 const currentIndexFormat = 2
 
-// Prefix-relative seek keys need at most PATH_MAX-1 + NAME_MAX+1 = 4351
-// bytes on Linux (basename + NUL + path for name sorting). With the SHA-256
-// query, UUID instance/generation and uint64 epoch, double base64 produces at
-// most 7992 characters; snapshot cursors are smaller.
-const listingCursorLimit = 16384
+// Component-wise traversal supports paths beyond PATH_MAX. Bound encoded
+// cursors to 32 KiB, leaving headroom for the route, other query parameters
+// and headers under the HTTP server's 64 KiB MaxHeaderBytes (cli/serve_linux.go).
+const listingCursorLimit = 32 << 10
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
 const searchAdmissionWait = 200 * time.Millisecond
@@ -37,6 +36,7 @@ var errListingStop = errors.New("listing complete")
 
 // ListingOptions applies ordering and filtering to the complete selection before
 // pagination. After is an opaque cursor bound to every normalized query option.
+// Cursors are limited to 32 KiB; a page requiring a larger cursor fails with ErrLimit.
 type ListingOptions struct {
 	After      string `json:"after,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
@@ -158,9 +158,12 @@ func queryFingerprint(p, query string, recursive bool, o ListingOptions, actor *
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-func encodeListingCursor(c listingCursor) string {
+func encodeListingCursor(c listingCursor) (string, error) {
 	b, _ := json.Marshal(c)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if base64.RawURLEncoding.EncodedLen(len(b)) > listingCursorLimit {
+		return "", fmt.Errorf("%w: listing continuation exceeds %d bytes", ErrLimit, listingCursorLimit)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // List selects only the immediate children of p. Actor views use a live
@@ -487,8 +490,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		}
 		if errors.Is(err, errListingStop) {
 			c.Last = []byte(last)
-			out.Next = encodeListingCursor(c)
-			return nil
+			out.Next, err = encodeListingCursor(c)
 		}
 		return err
 	})
@@ -627,10 +629,20 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
+	if end < snapshot.len() {
+		if c.Snapshot == "" {
+			c.Snapshot = newID()
+		}
+		c.Offset = end
+		var err error
+		out.Next, err = encodeListingCursor(c)
+		if err != nil {
+			return Page{}, err
+		}
+	}
 	// Admit only a successful first page, using the final retained size after
 	// collection and only if the captured observation is still current.
-	if c.Snapshot == "" && snapshot.len() > o.Limit {
-		c.Snapshot = newID()
+	if o.After == "" && snapshot.len() > o.Limit {
 		if r.listingCurrent(c) {
 			if r.listings == nil {
 				r.listings = make(map[string]*listingSnapshot)
@@ -641,10 +653,6 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			r.listings[c.Snapshot] = snapshot
 			r.listingBytes += snapshot.bytes
 		}
-	}
-	if end < snapshot.len() {
-		c.Offset = end
-		out.Next = encodeListingCursor(c)
 	}
 	return out, nil
 }

@@ -235,6 +235,7 @@ func listingQuery(p string, o ListingOptions) url.Values {
 }
 
 // List returns immediate children without consuming search capacity.
+// A required cursor exceeding 32 KiB returns 413 limit_exceeded.
 // On 409 cursor_invalid, discard previous pages and restart.
 func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, error) {
 	var page Page
@@ -248,6 +249,7 @@ func (r *Root) List(ctx context.Context, p string, o ListingOptions) (Page, erro
 // Matches uses original basename rune offsets by default. With In: "path",
 // offsets refer to Node.Path relative to p, without a leading slash.
 // Total/Truncated are optional.
+// A required cursor exceeding 32 KiB returns 413 limit_exceeded.
 // Every search scan has a 10-second server budget; expiry returns 413 limit_exceeded.
 // Client cancellation and deadlines remain context errors.
 // MaxEntries caps retained hits on indexed searches and visited entries on live scans.
