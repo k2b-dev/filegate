@@ -141,3 +141,15 @@ func TestDerivedDownloadLeaseExpiry(t *testing.T) {
 		}
 	}
 }
+
+func TestRawPathCapabilityRoundTrip(t *testing.T) {
+	h := New(nil, Options{Token: "secret"})
+	for _, p := range []string{"\xff.pdf", "mid-\xfe.pdf", "�.pdf", "mid-�.pdf"} {
+		// Fixed far-future expiry: the fixture never depends on today's date.
+		original := capability{Root: "files", Path: p, Purpose: "download", Operations: []string{"read"}, Expires: 253402300799}
+		got, err := h.verify(h.sign(original))
+		if err != nil || got.Path != p {
+			t.Errorf("capability lost %q: %q %v", p, got.Path, err)
+		}
+	}
+}

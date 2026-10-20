@@ -83,10 +83,11 @@ func (r *Root) CreateSession(p string, size int64, o WriteOptions, idempotencyKe
 	}
 	fingerprintBytes, e := json.Marshal(struct {
 		Path      string
+		PathBytes []byte `json:",omitempty"`
 		Size      int64
 		Options   WriteOptions
 		Execution *ExecutionIdentity
-	}{p, size, o, r.Execution()})
+	}{p, pathBytes(p), size, o, r.Execution()})
 	if e != nil {
 		return Session{}, e
 	}
@@ -111,7 +112,7 @@ func (r *Root) CreateSession(p string, size int64, o WriteOptions, idempotencyKe
 		}
 	}
 	s := Session{Execution: r.Execution(), State: SessionOpen, ID: newID(), Root: r.Config.Name, Path: p, Size: size, ChunkSize: ChunkSize, Expires: r.now().UTC().Add(SessionLifetime), Options: o}
-	change, e := encoded("session/"+s.ID, s)
+	change, e := encoded("session/"+s.ID, sessionReceipt{Session: s})
 	if e != nil {
 		return Session{}, e
 	}
@@ -264,7 +265,7 @@ func (r *Root) PutSegment(ctx context.Context, id string, index int, body io.Rea
 	if e != nil {
 		return s, e
 	}
-	compact, e := encoded("session/"+id, s)
+	compact, e := encoded("session/"+id, sessionReceipt{Session: s})
 	if e != nil {
 		return s, e
 	}
@@ -516,15 +517,20 @@ func (r *Root) SessionSegments(id string, after, limit int) (SessionSegmentPage,
 // Existing durable sessions are converted once, atomically. This preserves
 // acknowledged chunks and retained commit results without a legacy wire API.
 func (r *Root) decodeSessionRecord(key string, b []byte) (sessionReceipt, error) {
+	type receiptJSON sessionReceipt
 	var stored struct {
-		sessionReceipt
-		Segments map[int]string `json:"segments"`
+		receiptJSON
+		Segments  map[int]string `json:"segments"`
+		PathBytes []byte         `json:"pathBytes"`
 	}
 	if err := json.Unmarshal(b, &stored); err != nil {
 		return sessionReceipt{}, err
 	}
+	if stored.PathBytes != nil {
+		stored.Session.Path = string(stored.PathBytes)
+	}
 	if stored.Segments == nil {
-		return stored.sessionReceipt, nil
+		return sessionReceipt(stored.receiptJSON), nil
 	}
 	s := &stored.Session
 	if s.ChunkSize <= 0 || s.Size < 0 || s.Size > s.ChunkSize*MaxSegments {
@@ -562,7 +568,7 @@ func (r *Root) decodeSessionRecord(key string, b []byte) (sessionReceipt, error)
 		}
 		s.UploadedSegments = int((s.Received + s.ChunkSize - 1) / s.ChunkSize)
 	}
-	change, err := encoded(key, stored.sessionReceipt)
+	change, err := encoded(key, sessionReceipt(stored.receiptJSON))
 	if err != nil {
 		return sessionReceipt{}, err
 	}
@@ -570,7 +576,7 @@ func (r *Root) decodeSessionRecord(key string, b []byte) (sessionReceipt, error)
 	if err := r.State.Batch(changes); err != nil {
 		return sessionReceipt{}, err
 	}
-	return stored.sessionReceipt, nil
+	return sessionReceipt(stored.receiptJSON), nil
 }
 func (r *Root) loadSessionRecord(key string) (sessionReceipt, error) {
 	var raw json.RawMessage

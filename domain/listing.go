@@ -17,11 +17,11 @@ import (
 	"time"
 )
 
-const currentIndexFormat = 2
+const currentIndexFormat = 3
 
 // Component-wise traversal supports paths beyond PATH_MAX. Bound encoded
-// cursors to 32 KiB, leaving headroom for the route, other query parameters
-// and headers under the HTTP server's 64 KiB MaxHeaderBytes (cli/serve_linux.go).
+// cursors to 32 KiB to bound encoding and decoding work. The HTTP adapter
+// separately bounds the whole continuation request.
 const listingCursorLimit = 32 << 10
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
@@ -410,7 +410,9 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 					if err := json.Unmarshal(b, &candidate.node); err != nil {
 						return err
 					}
-					if !o.matchesNode(candidate.node) {
+					filterNode := candidate.node
+					filterNode.Path = rawPath
+					if !o.matchesNode(filterNode) {
 						return nil
 					}
 					if o.Sort == "relevance" {
@@ -475,7 +477,9 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		} else if err := state.Get("i/"+c.Generation+"/"+candidatePath, &n); err != nil {
 			return err
 		}
-		if o.matchesNode(n) {
+		filterNode := n
+		filterNode.Path = candidatePath
+		if o.matchesNode(filterNode) {
 			out.Items = append(out.Items, n)
 			rawPaths = append(rawPaths, candidatePath)
 		}
@@ -593,7 +597,9 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			if err != nil {
 				return Page{}, err
 			}
-			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory || !o.matchesSearchFilters(n) {
+			filterNode := n
+			filterNode.Path = h.path
+			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory || !o.matchesSearchFilters(filterNode) {
 				return Page{}, ErrCursorInvalid
 			}
 			out.Items = append(out.Items, n)
@@ -708,6 +714,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, scan fu
 	}
 	sort.Slice(snapshot.entries, func(i, j int) bool {
 		a, b := snapshot.entries[i].node, snapshot.entries[j].node
+		a.Path, b.Path = snapshot.entries[i].rawPath, snapshot.entries[j].rawPath
 		comparison := compareListing(a, b, o.Sort)
 		if o.Order == "desc" {
 			return comparison > 0
@@ -773,7 +780,11 @@ func nodeIndexKeys(generation string, n Node) []string {
 func indexChangesFor(generation string, n Node, previous *Node) ([]Change, error) {
 	cs := []Change{}
 	if previous != nil {
-		for _, key := range nodeIndexKeys(generation, *previous) {
+		// Callers load the previous row at n.Path. Restore its key path before
+		// deleting secondary rows; the JSON value may contain replacement runes.
+		old := *previous
+		old.Path = n.Path
+		for _, key := range nodeIndexKeys(generation, old) {
 			cs = append(cs, Change{Key: key, Delete: true})
 		}
 	}

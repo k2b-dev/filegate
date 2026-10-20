@@ -42,9 +42,12 @@ Keep every option unchanged when following a cursor. Continue until `next` is
 absent, including when an indexed page contains no items: a bounded scan may
 find no matches yet still have more entries to examine.
 
-Cursors are limited to 32 KiB. If a page needs a larger cursor for a very deep
-path, the request fails with 413 (`limit_exceeded`) and returns no partial page.
-Narrow the search path or increase `limit` to reduce the need for a continuation.
+Cursors are limited to 32 KiB. The complete continuation request, including the
+URL-encoded path, query parameters and current headers, must fit within 60 KiB;
+Filegate reserves another 4 KiB below the server’s 64 KiB limit for client-added
+headers. If either bound is exceeded, the request fails with 413
+(`limit_exceeded`) and returns no partial page. Increase `limit` to reduce the
+need for a continuation; for searches, narrowing the search path can also help.
 
 ## Find filenames
 

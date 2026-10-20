@@ -320,7 +320,8 @@ func (r *Root) finishTreePublication(p publication) error {
 		if err := json.Unmarshal(b, &record); err != nil {
 			return err
 		}
-		relative, err := validWrite(record.Node.Path)
+		// Manifest keys retain the relative path exactly, unlike Node JSON.
+		relative, err := validWrite(strings.TrimPrefix(key, treeManifestPrefix(p.Temp)))
 		if err != nil {
 			return err
 		}

@@ -312,3 +312,34 @@ func TestListingCursorBindsRawBase(t *testing.T) {
 		})
 	}
 }
+
+func TestRawPathSnapshotSort(t *testing.T) {
+	names := []string{"a-�z.pdf", "a-\xfe.pdf", "a-\xff.pdf"}
+	for _, sortBy := range []string{"path", "name", "size", "modified"} {
+		for _, order := range []string{"asc", "desc"} {
+			t.Run(sortBy+"/"+order, func(t *testing.T) {
+				var nodes []Node
+				for _, name := range names {
+					nodes = append(nodes, Node{Path: "base/" + name, ID: fmt.Sprintf("%x", name), Modified: time.Unix(1000, 0).UTC()})
+				}
+				r := indexedListingRoot(t, nodes)
+				r.now = func() time.Time { return time.Unix(1000, 0) }
+				opts := ListingOptions{Sort: sortBy, Order: order, Match: "fuzzy", Limit: 1}
+				want := slices.Clone(names)
+				if order == "desc" {
+					slices.Reverse(want)
+				}
+				for _, name := range want {
+					page, err := r.Search(context.Background(), "pdf", "base", opts)
+					if err != nil || len(page.Items) != 1 || page.Items[0].ID != fmt.Sprintf("%x", name) {
+						t.Fatalf("raw sort: page=%+v err=%v want=%q", page, err, name)
+					}
+					opts.After = page.Next
+				}
+				if opts.After != "" {
+					t.Fatal("extra page")
+				}
+			})
+		}
+	}
+}

@@ -534,11 +534,11 @@ func (r *Root) publishTransfer(p, temp string, f *os.File, o WriteOptions, force
 		rec.WriteGeneration = newID()
 	}
 	if resultKey != "" {
-		var session Session
-		if e := r.State.Get("session/"+strings.TrimPrefix(resultKey, "done/"), &session); e != nil {
+		session, e := r.loadSessionRecord("session/" + strings.TrimPrefix(resultKey, "done/"))
+		if e != nil {
 			return Node{}, e
 		}
-		receipt := sessionReceipt{Session: terminalSession(session, SessionCommitted, r.now(), &n), CleanupPending: true}
+		receipt := sessionReceipt{Session: terminalSession(session.Session, SessionCommitted, r.now(), &n), CleanupPending: true}
 		rec.Receipt = &receipt
 	}
 	key := "pending/" + newID()

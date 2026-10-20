@@ -1,13 +1,55 @@
 package httpadapter
 
 import (
+	"fmt"
 	"github.com/k2b-dev/filegate/v7/domain"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// MaxHeaderBytes is the daemon's combined request-line and header limit.
+// Listing responses reserve additional space for client-added headers.
+const MaxHeaderBytes = 64 << 10
+const continuationHeaderMargin = 4 << 10
+
+// A cursor can fit its own bound while its URL-escaped base makes page two
+// too large for net/http. Check the complete canonical continuation request
+// before sending any page, including all query parameters and current headers.
+func checkListingContinuation(r *http.Request, next string) error {
+	if next == "" {
+		return nil
+	}
+	query := r.URL.Query()
+	query.Set("after", next)
+	// Preserve the incoming wire encoding too: clients may escape spaces as
+	// %20 or tildes as %7E, which Query.Encode would shorten. Remove the old
+	// cursor so each page is charged for exactly one continuation.
+	rawQuerySize := 0
+	for _, parameter := range strings.Split(r.URL.RawQuery, "&") {
+		name, _, _ := strings.Cut(parameter, "=")
+		decoded, _ := url.QueryUnescape(name)
+		if parameter != "" && decoded != "after" {
+			rawQuerySize += len(parameter) + 1
+		}
+	}
+	rawQuerySize += len("after=") + len(url.QueryEscape(next))
+	querySize := max(len(query.Encode()), rawQuerySize)
+	size := len(r.Method) + 1 + len(r.URL.EscapedPath()) + 1 + querySize + len(" HTTP/1.1\r\n")
+	size += len("Host: ") + len(r.Host) + len("\r\n") + len("\r\n")
+	for name, values := range r.Header {
+		for _, value := range values {
+			size += len(name) + len(": ") + len(value) + len("\r\n")
+		}
+	}
+	if size > MaxHeaderBytes-continuationHeaderMargin {
+		return fmt.Errorf("%w: listing continuation request exceeds %d bytes including headers", domain.ErrLimit, MaxHeaderBytes-continuationHeaderMargin)
+	}
+	return nil
+}
 
 // time.Parse also accepts malformed RFC 3339 hours, offsets and fractions.
 // Check wire syntax first; parsing then validates the calendar date.

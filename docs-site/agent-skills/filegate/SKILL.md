@@ -327,9 +327,11 @@ ListingOptions: sort=`path|name|size|modified|relevance` (default path), order=`
 match=`exact|fuzzy` (default exact), in=`name|path` (default name), maxEntries 1–100000 (default 100000), opaque
 after. Stable path ties follow the same order. Filter/sort precedes pagination. List returns immediate children; search walks
 descendants, excluding its base.
-Opaque cursors are limited to 32 KiB. If a page requires a larger continuation,
-it fails with 413 (limit_exceeded), with no partial page. Narrow the search path
-or increase limit to reduce the need for a continuation.
+Opaque cursors are limited to 32 KiB. The complete continuation request
+(URL-encoded path, query and current headers) must fit within 60 KiB, reserving
+4 KiB below the server’s 64 KiB limit for client-added headers. Exceeding either
+bound returns 413 (limit_exceeded) with no partial page. Increase limit to reduce
+continuations; for searches, narrowing the search path can also help.
 
 Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
 (`muller` finds `Müller.docx`). `_ - .` and whitespace are word gaps; tokens also

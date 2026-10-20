@@ -239,11 +239,14 @@ func (r *Root) finishMutation(key string, m mutation) error {
 			changes = nil
 			return err
 		}
-		apply := func(_ string, b []byte) error {
+		prefix := "i/" + r.generation + "/"
+		apply := func(k string, b []byte) error {
 			var n Node
 			if err := json.Unmarshal(b, &n); err != nil {
 				return err
 			}
+			// The primary key preserves Linux name bytes; Node JSON does not.
+			n.Path = strings.TrimPrefix(k, prefix)
 			changes = append(changes, r.removeIndexChanges(n)...)
 			if m.Kind == "move" {
 				n.Path = m.To + strings.TrimPrefix(n.Path, m.From)
@@ -287,7 +290,6 @@ func (r *Root) finishMutation(key string, m mutation) error {
 			}
 			return nil
 		}
-		prefix := "i/" + r.generation + "/"
 		var top Node
 		if err := r.State.Get(prefix+m.From, &top); err == nil {
 			b, _ := json.Marshal(top)

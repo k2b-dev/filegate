@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Options struct {
@@ -45,6 +46,7 @@ type capability struct {
 	FileID       string                    `json:"fileId,omitempty"`
 	Root         string                    `json:"root"`
 	Path         string                    `json:"path"`
+	PathBytes    []byte                    `json:"pathBytes,omitempty"`
 	Purpose      string                    `json:"purpose"`
 	Session      string                    `json:"session,omitempty"`
 	Size         int64                     `json:"size"`
@@ -352,6 +354,9 @@ func (h *Handler) routes() {
 	h.route("GET /v1/roots/{root}/entries", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.List(r.Context(), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
+			e = checkListingContinuation(r, v.Next)
+		}
+		if e == nil {
 			h.sendRoot(w, root, 200, v)
 		}
 		return e
@@ -362,6 +367,9 @@ func (h *Handler) routes() {
 			return e
 		}
 		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), o)
+		if e == nil {
+			e = checkListingContinuation(r, v.Next)
+		}
 		if e == nil {
 			h.sendRoot(w, root, 200, v)
 		}
@@ -629,6 +637,9 @@ func matchPublicationHeaders(r *http.Request, condition *domain.Precondition) er
 }
 
 func (h *Handler) sign(c capability) string {
+	if !utf8.ValidString(c.Path) {
+		c.PathBytes = []byte(c.Path)
+	}
 	b, _ := json.Marshal(c)
 	payload := base64.RawURLEncoding.EncodeToString(b)
 	mac := hmac.New(sha256.New, []byte(h.opts.Token))
@@ -656,6 +667,9 @@ func (h *Handler) verify(token string) (capability, error) {
 	}
 	if e = json.Unmarshal(b, &c); e != nil {
 		return c, domain.ErrInvalid
+	}
+	if c.PathBytes != nil {
+		c.Path = string(c.PathBytes)
 	}
 	if c.Expires <= time.Now().Unix() {
 		return c, errHTTP{401, "expired_capability"}

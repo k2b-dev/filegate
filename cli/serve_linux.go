@@ -79,7 +79,7 @@ func serve(parent context.Context, c Config) error {
 		roots = append(roots, root)
 	}
 	h := httpadapter.New(roots, httpadapter.Options{Token: token, PublicURL: c.Server.PublicURL, Origins: c.Server.AllowedOrigins, Version: Version})
-	srv := &http.Server{Addr: c.Server.Listen, Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 64 << 10}
+	srv := &http.Server{Addr: c.Server.Listen, Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: httpadapter.MaxHeaderBytes}
 	listener, e := net.Listen("tcp", srv.Addr)
 	if e != nil {
 		return e

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/k2b-dev/filegate/v7/domain"
@@ -45,6 +46,44 @@ type executionRequest struct {
 	PrivateDev uint64          `json:"privateDev,omitempty"`
 	PrivateIno uint64          `json:"privateIno,omitempty"`
 }
+
+// Worker requests carry Linux path bytes, including names loaded from durable
+// identity claims. This private protocol must not sanitize them through JSON.
+type executionRequestJSON executionRequest
+
+func (q executionRequest) MarshalJSON() ([]byte, error) {
+	var source, target []byte
+	if !utf8.ValidString(q.Path) {
+		source = []byte(q.Path)
+	}
+	if !utf8.ValidString(q.Target) {
+		target = []byte(q.Target)
+	}
+	return json.Marshal(struct {
+		executionRequestJSON
+		PathBytes   []byte `json:"pathBytes,omitempty"`
+		TargetBytes []byte `json:"targetBytes,omitempty"`
+	}{executionRequestJSON(q), source, target})
+}
+func (q *executionRequest) UnmarshalJSON(b []byte) error {
+	var stored struct {
+		executionRequestJSON
+		PathBytes   []byte `json:"pathBytes"`
+		TargetBytes []byte `json:"targetBytes"`
+	}
+	if err := json.Unmarshal(b, &stored); err != nil {
+		return err
+	}
+	*q = executionRequest(stored.executionRequestJSON)
+	if stored.PathBytes != nil {
+		q.Path = string(stored.PathBytes)
+	}
+	if stored.TargetBytes != nil {
+		q.Target = string(stored.TargetBytes)
+	}
+	return nil
+}
+
 type executionReply struct {
 	Error string     `json:"error,omitempty"`
 	Errno int        `json:"errno,omitempty"`
