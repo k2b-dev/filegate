@@ -72,6 +72,42 @@ func rawPut(t *testing.T, r *domain.Root, p, content string) domain.Node {
 	}
 	return n
 }
+func rawPinHistory(t *testing.T, r *domain.Root, n domain.Node, id string) {
+	t.Helper()
+	if err := os.WriteFile(r.Config.Path+"/.filegate/versions/"+id, []byte("history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	v := domain.Version{ID: id, FileID: n.ID, Size: 7, Created: time.Unix(1000, 0).UTC(), Pinned: true}
+	if err := r.State.Put("v/"+n.ID+"/"+id, v); err != nil {
+		t.Fatal(err)
+	}
+}
+func rawAssertHistoryRemoved(t *testing.T, r *domain.Root, n domain.Node, id string) {
+	t.Helper()
+	for _, key := range []string{"identity/" + n.ID, "current/" + n.ID, "v/" + n.ID + "/" + id} {
+		var value any
+		if err := r.State.Get(key, &value); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("deleted state remains %q: %v", key, err)
+		}
+	}
+	if _, err := r.Files.Stat(".filegate/versions/" + id); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("deleted history blob remains %q: %v", id, err)
+	}
+}
+func rawLegacyClaim(t *testing.T, r *domain.Root, id string) {
+	t.Helper()
+	var c struct {
+		Device uint64
+		Inode  uint64
+		Path   string
+	}
+	if err := r.State.Get("identity/"+id, &c); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.State.Put("identity/"+id, c); err != nil {
+		t.Fatal(err)
+	}
+}
 func rawIndexPaths(t *testing.T, r *domain.Root) map[string]string {
 	t.Helper()
 	var gen string
@@ -372,15 +408,23 @@ func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Put("v/"+moved.ID+"/history", domain.Version{ID: "history", FileID: moved.ID, Created: time.Unix(1000, 0).UTC()}); err != nil {
-				t.Fatal(err)
-			}
+			rawPinHistory(t, r, moved, "history")
+			rawLegacyClaim(t, r, moved.ID)
 			deleted := rawPut(t, r, "a/deleted-\xfe", "deleted")
-			if err := s.Put("v/"+deleted.ID+"/deleted-history", domain.Version{ID: "deleted-history", FileID: deleted.ID, Created: time.Unix(1000, 0).UTC()}); err != nil {
-				t.Fatal(err)
-			}
+			rawPinHistory(t, r, deleted, "deleted-history")
+			rawLegacyClaim(t, r, deleted.ID)
 			if collision {
 				rawPut(t, r, "a/raw-\xff", "replacement")
+				// An externally copied xattr must not make this inode own moved history.
+				f, err := r.Files.Open("a/raw-\xff", os.O_RDONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				setErr := r.Files.SetID(f, moved.ID)
+				closeErr := f.Close()
+				if setErr != nil || closeErr != nil {
+					t.Fatal(setErr, closeErr)
+				}
 			}
 			var gen string
 			if err := s.Get("index/generation", &gen); err != nil {
@@ -421,21 +465,30 @@ func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
 			if n, err := restarted.Resolve(moved.ID); err != nil || n.Path != "b/raw-\xff" || n.Revision != moved.Revision {
 				t.Errorf("moved identity/revision lost: %+v %v", n, err)
 			}
+			rawAssertHistoryRemoved(t, restarted, deleted, "deleted-history")
+			blob, err := restarted.OpenVersion("b/raw-\xff", "history")
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, readErr := io.ReadAll(blob)
+			closeErr := blob.Close()
+			if readErr != nil || closeErr != nil || string(content) != "history" {
+				t.Errorf("moved history blob lost: %q %v %v", content, readErr, closeErr)
+			}
 			var value any
-			for _, key := range []string{"identity/" + deleted.ID, "v/" + deleted.ID + "/deleted-history", "mutation/legacy"} {
-				if err := s.Get(key, &value); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("deleted state remains %q: %v", key, err)
-				}
+			if err := s.Get("mutation/legacy", &value); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("deleted mutation remains: %v", err)
 			}
 		})
 	}
 }
 
-func TestDeleteRecoveryAllowsUnprovableDescendants(t *testing.T) {
+func TestDeleteCleansChangedDescendantHistory(t *testing.T) {
 	for _, kind := range []string{"symlink", "file"} {
 		t.Run(kind, func(t *testing.T) {
 			r, s := rawPathRoot(t, "files")
-			rawPut(t, r, "a/d/f", "data")
+			n := rawPut(t, r, "a/d/f", "data")
+			rawPinHistory(t, r, n, "history")
 			outside := t.TempDir() + "/sentinel"
 			if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
 				t.Fatal(err)
@@ -453,8 +506,9 @@ func TestDeleteRecoveryAllowsUnprovableDescendants(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := r.Remove("a", true); err != nil {
-				t.Errorf("delete blocked by unprovable row: %v", err)
+				t.Errorf("delete blocked by changed descendant: %v", err)
 			}
+			rawAssertHistoryRemoved(t, r, n, "history")
 			if _, err := r.Stat("."); err != nil {
 				t.Errorf("root stuck after delete: %v", err)
 			}
@@ -467,5 +521,78 @@ func TestDeleteRecoveryAllowsUnprovableDescendants(t *testing.T) {
 				t.Fatalf("followed symlink outside root: %q %v", content, err)
 			}
 		})
+	}
+}
+
+func TestDeleteDescendantClaimPaths(t *testing.T) {
+	for _, kind := range []string{"current", "missing", "legacy-descendant", "legacy-base"} {
+		t.Run(kind, func(t *testing.T) {
+			r, s := rawPathRoot(t, "files")
+			base := "a"
+			if kind == "legacy-base" {
+				base += "-\xff"
+			}
+			n := rawPut(t, r, base+"/x\xff", "data")
+			rawPinHistory(t, r, n, "history")
+			switch kind {
+			case "missing":
+				if err := s.Delete("identity/" + n.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "legacy-descendant", "legacy-base":
+				rawLegacyClaim(t, r, n.ID)
+			}
+			if err := r.Remove(base, true); err != nil {
+				t.Fatal(err)
+			}
+			if kind != "legacy-base" {
+				rawAssertHistoryRemoved(t, r, n, "history")
+				return
+			}
+			// A sanitized legacy base cannot prove byte-wise subtree membership.
+			for _, key := range []string{"identity/" + n.ID, "v/" + n.ID + "/history"} {
+				var value any
+				if err := s.Get(key, &value); err != nil {
+					t.Errorf("unproven legacy state removed %q: %v", key, err)
+				}
+			}
+			if _, err := r.Files.Stat(".filegate/versions/history"); err != nil {
+				t.Errorf("unproven legacy blob removed: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeleteUnreadableDescendantHistory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged daemon to exercise directory read denial")
+	}
+	r, _ := rawPathRoot(t, "files")
+	// An indexed, unmanaged root still owns identity claims and pinned history.
+	r.Config.Managed = false
+	n := rawPut(t, r, "a/d/f", "data")
+	rawPinHistory(t, r, n, "history")
+	dir := r.Config.Path + "/a/d"
+	// Keep a descriptor so even a failed delete can restore traversal for cleanup.
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Chmod(0700); f.Close() })
+	if err := f.Chmod(0300); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Files.Stat("a/d/f"); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("fixture must deny descendant Stat: %v", err)
+	}
+	if err := r.Remove("a", true); err != nil {
+		t.Fatal(err)
+	}
+	rawAssertHistoryRemoved(t, r, n, "history")
+	if _, err := os.Stat(r.Config.Path + "/a"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("deleted subtree remains: %v", err)
+	}
+	if rows := rawIndexPaths(t, r); len(rows) != 1 || rows["."] == "" {
+		t.Errorf("deleted index rows remain: %q", rows)
 	}
 }

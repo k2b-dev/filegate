@@ -278,27 +278,20 @@ func (r *Root) finishMutation(key string, m mutation) error {
 					}
 				}
 			} else if n.ID != "" {
-				// Legacy indexes can retain source rows after a move. Membership alone
-				// must never authorize deleting history or identity: prove that this
-				// identity's inode is actually in the quarantined subtree.
+				// Legacy indexes can retain source rows after a move. Claims follow
+				// moves, so a claim outside this subtree protects the moved history.
+				// Compare raw path bytes; cleanup must not require descendant reads.
 				var c claim
 				err := r.State.Get("identity/"+n.ID, &c)
 				if err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
-				if err == nil {
-					st, err := service.Files.Stat(m.To + strings.TrimPrefix(n.Path, m.From))
-					// Lookup failure leaves ownership unproven. Drift or traversal
-					// permissions must not block an already-applied namespace deletion.
-					if err == nil {
-						dev, ino, _, _, _ := service.Files.Identity(st)
-						if dev == c.Device && ino == c.Inode {
-							if err := service.deleteHistory(n.ID); err != nil {
-								return err
-							}
-							changes = append(changes, Change{Key: "identity/" + n.ID, Delete: true})
-						}
+				// Without a claim, preserve the ordinary index-based cleanup behavior.
+				if errors.Is(err, os.ErrNotExist) || c.Path == m.From || strings.HasPrefix(c.Path, m.From+"/") {
+					if err := service.deleteHistory(n.ID); err != nil {
+						return err
 					}
+					changes = append(changes, Change{Key: "identity/" + n.ID, Delete: true})
 				}
 			}
 			if len(changes) >= 256 {
