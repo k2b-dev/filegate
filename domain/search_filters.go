@@ -69,18 +69,8 @@ func (o ListingOptions) matchesSearchFilters(n Node) bool {
 		if n.Directory {
 			return false
 		}
-		if len(o.Ext) > 0 {
-			name := path.Base(n.Path)
-			dot := strings.LastIndexByte(name, '.')
-			// A sole leading dot marks a dotfile, not an extension.
-			if dot <= 0 || dot == len(name)-1 {
-				return false
-			}
-			ext := normalizeSearchExtension(name[dot+1:])
-			i := sort.SearchStrings(o.Ext, ext)
-			if i == len(o.Ext) || o.Ext[i] != ext {
-				return false
-			}
+		if !o.matchesSearchExtension(n.Path) {
+			return false
 		}
 		if o.MinSize != nil && n.Size < *o.MinSize || o.MaxSize != nil && n.Size > *o.MaxSize {
 			return false
@@ -88,4 +78,26 @@ func (o ListingOptions) matchesSearchFilters(n Node) bool {
 	}
 	return (o.ModifiedAfter == nil || !n.Modified.Before(*o.ModifiedAfter)) &&
 		(o.ModifiedBefore == nil || n.Modified.Before(*o.ModifiedBefore))
+}
+
+// Extension text is in the key, but a matching directory still needs rejecting
+// using metadata. A dotted directory is never a file extension match.
+func (o ListingOptions) matchesSearchExtension(p string) bool {
+	if len(o.Ext) == 0 {
+		return true
+	}
+	name := path.Base(p)
+	dot := strings.LastIndexByte(name, '.')
+	if dot <= 0 || dot == len(name)-1 {
+		return false
+	}
+	ext := normalizeSearchExtension(name[dot+1:])
+	i := sort.SearchStrings(o.Ext, ext)
+	return i < len(o.Ext) && o.Ext[i] == ext
+}
+func (o ListingOptions) needsSearchMetadata() bool {
+	return o.Type != "all" || len(o.Ext) > 0 || o.MinSize != nil || o.MaxSize != nil || o.ModifiedAfter != nil || o.ModifiedBefore != nil
+}
+func (o ListingOptions) matchesNode(n Node) bool {
+	return !(o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory) && (!o.search || o.matchesSearchFilters(n))
 }

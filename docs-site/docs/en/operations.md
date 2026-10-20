@@ -97,6 +97,14 @@ dashboard needs a new measurement. Inspect `complete`, `freshness`, `source`
 and the `started`/`completed` interval. Unknown or partial values are not exact
 quotas. See [directory observations](/docs/en/browsing#read-recursive-totals).
 
+## Search performance
+
+Measure representative queries when sizing large indexed roots. Fuzzy and
+relevance searches examine the complete selected subtree before returning the
+first page. `search.topK` bounds retained relevance results; lowering it does not
+reduce the number of entries examined. Narrow `path` to a subtree when possible.
+Every search scan has a 10-second budget; see [search limits](/docs/en/browsing#handle-changing-directories).
+
 ## Upload storage and receipt retention
 
 Sessions accept uploads for 24 hours. Assembly temporarily stores the received

@@ -398,12 +398,14 @@ bounds and *time.Time dates; nil omits a bound, a pointer to zero includes it.
 Extensions are case-folded, sorted and deduplicated; timestamps normalize to UTC.
 Normalized filters bind the cursor, so keep them on every page.
 
-Indexed exact scans can seek forward; an empty page can still have next.
+Indexed exact searches seek forward until the page is full or the scan ends.
+Directory listings keep their visit budget and may return an empty page with next.
 Filesystem, fuzzy and relevance scans use a bounded observation: 60-second
-lifetime, 16 snapshots / 32 MiB per root. Live scans and indexed non-relevance
-scans visit at most maxEntries (100000 maximum). Indexed relevance scans visit
-the complete subtree, retaining at most K; maxEntries caps retained hits instead
-of scanned keys on this path. A tighter request budget fails with 413 rather
+lifetime, 16 snapshots / 32 MiB per root. Live scans visit at most maxEntries
+(100000 maximum). Indexed searches cap retained hits, not scanned keys. Exact
+seek pages return at most min(limit,maxEntries) matches. Collected selections
+scan the complete subtree and fail with 413 if too many hits must be retained.
+Relevance retains at most K; a tighter maxEntries budget fails with 413 rather
 than reducing K. Every recursive search scan has a server-owned 10-second time
 budget, for all sorts and match modes on indexed and live paths. Directory
 listings are unaffected. Client cancellation and deadlines remain cancellation

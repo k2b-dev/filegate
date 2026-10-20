@@ -78,20 +78,21 @@ func (h searchHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h *searchHeap) Push(x any)        { *h = append(*h, x.(searchHit)) }
 func (h *searchHeap) Pop() any          { a := *h; x := a[len(a)-1]; *h = a[:len(a)-1]; return x }
 func hitBytes(h searchHit) int64        { return int64(len(h.path) + 104 + len(h.ranges)*16) }
-func collectRelevance(ctx context.Context, o ListingOptions, query string, matches func(Node) nameMatch, scan func(func(Node) error) error, matcher *nameQuery) (*listingSnapshot, error) {
+func collectRelevance(ctx context.Context, o ListingOptions, query string, scan func(func(listingCandidate) error) error, matcher *nameQuery) (*listingSnapshot, error) {
 	s := &listingSnapshot{query: query, hits: []searchHit{}}
 	h := searchHeap{}
-	err := scan(func(n Node) error {
+	err := scan(func(candidate listingCandidate) error {
+		n := candidate.node
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		m := matches(n)
+		m := candidate.match
 		if m.tier == 0 {
 			return nil
 		}
 		s.total++
-		candidate := searchHit{path: n.Path, directory: n.Directory, score: scoreName(n.Path, m)}
-		if len(h) == o.topK && compareSearchHit(candidate, h[0]) >= 0 {
+		hit := searchHit{path: n.Path, directory: n.Directory, score: scoreName(n.Path, m)}
+		if len(h) == o.topK && compareSearchHit(hit, h[0]) >= 0 {
 			return nil
 		}
 		// Indexed relevance scans bound retained hits rather than scanned keys.
@@ -99,15 +100,14 @@ func collectRelevance(ctx context.Context, o ListingOptions, query string, match
 		if len(h) < o.topK && len(h) >= o.MaxEntries {
 			return ErrLimit
 		}
-		candidate.ranges = matcher.highlights(matcher.subject(n.Path))
 		if len(h) == o.topK {
 			s.bytes -= hitBytes(h[0])
-			h[0] = candidate
+			h[0] = hit
 			heap.Fix(&h, 0)
 		} else {
-			heap.Push(&h, candidate)
+			heap.Push(&h, hit)
 		}
-		s.bytes += hitBytes(candidate)
+		s.bytes += hitBytes(hit)
 		if s.bytes > listingMemoryLimit {
 			return ErrLimit
 		}
@@ -117,6 +117,19 @@ func collectRelevance(ctx context.Context, o ListingOptions, query string, match
 		return nil, err
 	}
 	slices.SortFunc(h, compareSearchHit)
+	// Recover highlights only for the final K, after heap replacements finish.
+	// Highlight normalization is more expensive than scoring and discarded hits
+	// never contribute ranges to a response or continuation.
+	for i := range h {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		h[i].ranges = matcher.highlights(matcher.subject(h[i].path))
+		s.bytes += int64(len(h[i].ranges) * 16)
+		if s.bytes > listingMemoryLimit {
+			return nil, ErrLimit
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

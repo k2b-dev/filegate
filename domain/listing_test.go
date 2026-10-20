@@ -239,7 +239,7 @@ func TestIndexedSubtreeSearchSortsOnce(t *testing.T) {
 	}
 }
 
-func TestIndexedSubtreeSearchRespectsScanBudget(t *testing.T) {
+func TestIndexedSubtreeSearchRespectsRetainedBudget(t *testing.T) {
 	r := indexedListingRoot(t, []Node{
 		{Path: "fresh/a", Directory: true},
 		{Path: "fresh/needle"},
@@ -247,13 +247,11 @@ func TestIndexedSubtreeSearchRespectsScanBudget(t *testing.T) {
 	})
 	opts := ListingOptions{Sort: "name", Type: "files", Limit: 1, MaxEntries: 2}
 	page, err := r.Search(context.Background(), "needle", "fresh", opts)
-	if !errors.Is(err, ErrLimit) || len(page.Items) != 0 || page.Next != "" || len(r.listings) != 0 {
-		t.Fatalf("partial sorted result returned: %+v %v", page, err)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "fresh/needle" {
+		t.Fatalf("nonmatching rows consumed retained budget: %+v %v", page, err)
 	}
-	opts.MaxEntries = 3
-	page, err = r.Search(context.Background(), "needle", "fresh", opts)
-	if err != nil || len(page.Items) != 1 || page.Items[0].Path != "fresh/needle" || page.Next != "" {
-		t.Fatalf("exact scan budget rejected: %+v %v", page, err)
+	if _, err := r.Search(context.Background(), "", "fresh", ListingOptions{Sort: "name", MaxEntries: 1}); !errors.Is(err, ErrLimit) {
+		t.Fatalf("retained budget not enforced: %v", err)
 	}
 	page, err = r.Search(context.Background(), "missing", "fresh", opts)
 	if err != nil || len(page.Items) != 0 || page.Next != "" {
@@ -517,5 +515,67 @@ func TestLiveSnapshotBudgetAndExecutionBinding(t *testing.T) {
 	other := &Root{Config: r.Config, Files: r.Files, rootShared: r.rootShared, execution: &ExecutionIdentity{UID: 1002, GID: 100}}
 	if _, err := other.List(context.Background(), ".", ListingOptions{Limit: 1, After: page.Next}); !errors.Is(err, ErrCursorInvalid) {
 		t.Fatalf("cross-identity cursor accepted: %v", err)
+	}
+}
+
+func TestIndexedSearchMatchesKeysBeforeLoadingNodes(t *testing.T) {
+	for _, sortBy := range []string{"path", "name", "size", "modified", "relevance"} {
+		for _, match := range []string{"exact", "fuzzy"} {
+			t.Run(sortBy+"/"+match, func(t *testing.T) {
+				r := indexedListingRoot(t, []Node{{Path: "a-unrelated.txt"}, {Path: "b-needle.pdf"}, {Path: "c-needle.pdf", Directory: true}})
+				state := r.State.(*listingState)
+				// The unrelated value must not be decoded or fetched. Extension and name
+				// matching both come from keys, including keys in every ordered family.
+				state.rows["i/"+r.generation+"/a-unrelated.txt"] = []byte("invalid JSON")
+				state.onGet = func(k string) error {
+					if strings.HasSuffix(k, "a-unrelated.txt") {
+						t.Fatal("loaded noncandidate")
+					}
+					return nil
+				}
+				page, err := r.Search(context.Background(), "needle", ".", ListingOptions{Sort: sortBy, Match: match, Ext: []string{"pdf"}, Limit: 1})
+				if err != nil || len(page.Items) != 1 || page.Items[0].Path != "b-needle.pdf" {
+					t.Fatalf("page=%+v err=%v", page, err)
+				}
+			})
+		}
+	}
+}
+
+func TestIndexedCachedPageDoesNotOpenSnapshot(t *testing.T) {
+	for _, sortBy := range []string{"name", "relevance"} {
+		t.Run(sortBy, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "needle-a"}, {Path: "needle-b"}})
+			opts := ListingOptions{Sort: sortBy, Match: "fuzzy", Limit: 1}
+			first, err := r.Search(context.Background(), "needle", ".", opts)
+			if err != nil || first.Next == "" {
+				t.Fatalf("first=%+v err=%v", first, err)
+			}
+			state := r.State.(*listingState)
+			closed := state.closed
+			opts.After = first.Next
+			page, err := r.Search(context.Background(), "needle", ".", opts)
+			if err != nil || len(page.Items) != 1 || state.closed != closed {
+				t.Fatalf("cached=%+v err=%v snapshots=%d", page, err, state.closed-closed)
+			}
+		})
+	}
+}
+
+func TestIndexedStreamingSearchRetainedBudget(t *testing.T) {
+	for _, sortBy := range []string{"path", "name", "size", "modified"} {
+		t.Run(sortBy, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "a-miss", Size: 1}, {Path: "b-needle", Size: 2}, {Path: "c-needle", Size: 3}})
+			opts := ListingOptions{Sort: sortBy, MaxEntries: 1, Limit: 100}
+			page, err := r.Search(context.Background(), "needle", ".", opts)
+			if err != nil || len(page.Items) != 1 || page.Items[0].Path != "b-needle" || page.Next == "" {
+				t.Fatalf("page=%+v err=%v", page, err)
+			}
+			opts.After = page.Next
+			page, err = r.Search(context.Background(), "needle", ".", opts)
+			if err != nil || len(page.Items) != 1 || page.Items[0].Path != "c-needle" || page.Next != "" {
+				t.Fatalf("continuation=%+v err=%v", page, err)
+			}
+		})
 	}
 }

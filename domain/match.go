@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"fmt"
+	"math/bits"
 	"path"
 	"strings"
 	"unicode"
@@ -30,6 +31,7 @@ const (
 )
 
 type nameToken struct {
+	masks                                                [4]uint64
 	minFuzzyRunes                                        int
 	text, compact, folded, foldedCompact                 []byte
 	runes, compactRunes, foldedRunes, foldedCompactRunes []rune
@@ -87,7 +89,10 @@ func compileSearchQuery(query string, pathSearch bool) (*nameQuery, error) {
 		token.foldedRunes = []rune(string(token.folded))
 		token.foldedCompactRunes = []rune(string(token.foldedCompact))
 		token.minFuzzyRunes = len(token.runes)
-		for _, form := range [][]rune{token.runes, token.compactRunes, token.foldedRunes, token.foldedCompactRunes} {
+		for i, form := range [][]rune{token.runes, token.compactRunes, token.foldedRunes, token.foldedCompactRunes} {
+			for _, r := range form {
+				token.masks[i] |= 1 << (uint32(r) % 64)
+			}
 			token.minFuzzyRunes = min(token.minFuzzyRunes, len(form)-nameTypoBudget(len(form)))
 		}
 		q.tokens = append(q.tokens, token)
@@ -286,17 +291,17 @@ func (q *nameQuery) exactToken(token nameToken) nameTokenMatch {
 func (q *nameQuery) matchToken(token nameToken) nameTokenMatch {
 	best := q.exactToken(token)
 	if best.tier == 0 && q.fuzzy {
-		best = q.fuzzyToken(q.plain, token.runes, nil)
+		best = q.fuzzyToken(q.plain, token.runes, token.masks[0], nil)
 		// Exact matching failed for every form. A distance-one typo
 		// without accent folding cannot be improved by another form.
 		if (best.tier != nameTypo || best.distance > 1) && (len(q.compact) != len(q.plain) || !bytes.Equal(token.compact, token.text)) {
-			best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, q.compactStarts))
+			best = betterNameMatch(best, q.fuzzyToken(q.compact, token.compactRunes, token.masks[1], q.compactStarts))
 		}
 		accent := !bytes.Equal(q.plain, q.folded) || !bytes.Equal(token.text, token.folded)
 		if accent && (best.tier != nameTypo || best.distance > 1) {
-			folded := q.fuzzyToken(q.folded, token.foldedRunes, nil)
+			folded := q.fuzzyToken(q.folded, token.foldedRunes, token.masks[2], nil)
 			if (folded.tier != nameTypo || folded.distance > 1) && (len(q.foldedCompact) != len(q.folded) || !bytes.Equal(token.foldedCompact, token.folded)) {
-				folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, q.foldedCompactStarts))
+				folded = betterNameMatch(folded, q.fuzzyToken(q.foldedCompact, token.foldedCompactRunes, token.masks[3], q.foldedCompactStarts))
 			}
 			folded.accentFolded = true
 			best = betterNameMatch(best, folded)
@@ -408,7 +413,7 @@ func nameTypoBudget(length int) int {
 	return 1
 }
 
-func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTokenMatch {
+func (q *nameQuery) fuzzyToken(name []byte, token []rune, mask uint64, starts []bool) nameTokenMatch {
 	q.runes = q.runes[:0]
 	var present uint64
 	for len(name) > 0 {
@@ -423,13 +428,19 @@ func (q *nameQuery) fuzzyToken(name []byte, token []rune, starts []bool) nameTok
 	}
 	// Missing-rune count is a safe lower bound on edits. Hash collisions only
 	// admit extra work; they never reject a possible match.
+	missingMask := mask &^ present
+	if bits.OnesCount64(missingMask) > budget {
+		return nameTokenMatch{}
+	}
 	missing := 0
-	for _, r := range token {
-		if present&(1<<(uint32(r)%64)) == 0 {
-			missing++
-		}
-		if missing > budget {
-			return nameTokenMatch{}
+	if missingMask != 0 {
+		for _, r := range token {
+			if present&(1<<(uint32(r)%64)) == 0 {
+				missing++
+			}
+			if missing > budget {
+				return nameTokenMatch{}
+			}
 		}
 	}
 	if budget > 0 {

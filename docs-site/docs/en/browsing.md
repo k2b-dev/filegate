@@ -215,12 +215,13 @@ queries seek to the next position instead of rescanning earlier pages.
 
 Filesystem queries, sorted indexed subtree searches, fuzzy and relevance searches
 use a bounded temporary observation. The observation lasts 60 seconds. Each root
-retains at most 16 observations and 32 MiB of listing data. Live filesystem scans
-and indexed scans with other sorts accept at most `maxEntries` visited entries
-(default and maximum: 100000). Indexed relevance scans visit the complete subtree
-and retain at most K hits; `maxEntries` caps retained hits on this path instead
-of visited entries. Setting it below K can return 413 if too many hits need to
-be retained. Every recursive search scan has a server-owned 10-second time
+retains at most 16 observations and 32 MiB of listing data. `maxEntries` defaults
+to 100000, also its maximum. Live filesystem scans cap visited entries. Indexed
+searches cap retained hits instead of scanned keys. Exact pages that seek forward
+return at most `min(limit, maxEntries)` matches. Collected selections scan the
+complete subtree and fail with 413 if too many hits must be retained. Relevance
+retains at most K; setting `maxEntries` below K can return 413 rather than reducing K.
+Every recursive search scan has a server-owned 10-second time
 budget, for all sorts and match modes on indexed and live paths. Directory
 listings are unaffected. Client cancellation and deadlines still stop the scan
 and remain cancellation or deadline errors. Exceeding a visit, memory or scan-time
