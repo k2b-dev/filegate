@@ -398,7 +398,8 @@ bounds and *time.Time dates; nil omits a bound, a pointer to zero includes it.
 Extensions are case-folded, sorted and deduplicated; timestamps normalize to UTC.
 Normalized filters bind the cursor, so keep them on every page.
 
-Indexed exact scans can seek forward; an empty page can still have next.
+Indexed exact searches seek forward until the page is full or the scan ends.
+Directory listings keep their visit budget and may return an empty page with next.
 Filesystem, fuzzy and relevance scans use a bounded observation: 60-second
 lifetime, 16 snapshots / 32 MiB per root. Live scans visit at most maxEntries
 (100000 maximum). Indexed searches cap retained hits, not scanned keys. Exact
