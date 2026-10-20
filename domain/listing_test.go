@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -78,7 +79,7 @@ func (s *listingState) ScanAfter(prefix, after string, fn func(string, []byte) e
 	s.scans++
 	start := sort.SearchStrings(s.keys, prefix)
 	if after != "" {
-		start = sort.Search(len(s.keys), func(i int) bool { return s.keys[i] > after })
+		start = max(start, sort.Search(len(s.keys), func(i int) bool { return s.keys[i] > after }))
 	}
 	for i := start; i < len(s.keys) && strings.HasPrefix(s.keys[i], prefix); i++ {
 		s.visits++
@@ -89,10 +90,16 @@ func (s *listingState) ScanAfter(prefix, after string, fn func(string, []byte) e
 	return nil
 }
 func (s *listingState) ScanBefore(prefix, before string, fn func(string, []byte) error) error {
+	if s.onScan != nil {
+		s.onScan()
+	}
 	s.scans++
-	end := sort.SearchStrings(s.keys, prefix+"\xff") - 1
+	// Find the end of the whole prefix range, including arbitrary 0xff bytes.
+	end := sort.Search(len(s.keys), func(i int) bool {
+		return s.keys[i] >= prefix && !strings.HasPrefix(s.keys[i], prefix)
+	}) - 1
 	if before != "" {
-		end = sort.SearchStrings(s.keys, before) - 1
+		end = min(end, sort.SearchStrings(s.keys, before)-1)
 	}
 	for i := end; i >= 0 && strings.HasPrefix(s.keys[i], prefix); i-- {
 		s.visits++
@@ -102,6 +109,43 @@ func (s *listingState) ScanBefore(prefix, before string, fn func(string, []byte)
 	}
 	return nil
 }
+
+func TestListingStateScansArePrefixBounded(t *testing.T) {
+	s := &listingState{keys: []string{"a/0", "p/b", "p/\xffa", "q/0", "\xffa"}}
+	for _, tc := range []struct {
+		prefix, cursor string
+		reverse        bool
+		want           []string
+	}{
+		{"p/", "", false, []string{"p/b", "p/\xffa"}},
+		{"p/", "a", false, []string{"p/b", "p/\xffa"}},
+		{"p/", "p/b", false, []string{"p/\xffa"}},
+		{"p/", "q/0", false, nil},
+		{"p/", "", true, []string{"p/\xffa", "p/b"}},
+		{"p/", "\xffa", true, []string{"p/\xffa", "p/b"}},
+		{"p/", "p/\xffa", true, []string{"p/b"}},
+		{"p/", "a/0", true, nil},
+		{"\xff", "", false, []string{"\xffa"}},
+		{"\xff", "", true, []string{"\xffa"}},
+		{"", "", true, []string{"\xffa", "q/0", "p/\xffa", "p/b", "a/0"}},
+	} {
+		scan := s.ScanAfter
+		if tc.reverse {
+			scan = s.ScanBefore
+		}
+		var got []string
+		if err := scan(tc.prefix, tc.cursor, func(k string, _ []byte) error {
+			got = append(got, k)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("prefix=%q cursor=%q reverse=%v: got %q, want %q", tc.prefix, tc.cursor, tc.reverse, got, tc.want)
+		}
+	}
+}
+
 func indexedListingRoot(t *testing.T, nodes []Node) *Root {
 	t.Helper()
 	state := &listingState{}

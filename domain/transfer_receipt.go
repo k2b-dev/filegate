@@ -130,10 +130,12 @@ func transferRequestHash(srcStore, dstStore, p, to string, o WriteOptions, sourc
 		DestinationStore     string
 		Path                 string
 		Target               string
+		PathBytes            []byte `json:",omitempty"`
+		TargetBytes          []byte `json:",omitempty"`
 		Options              WriteOptions
 		Execution            *ExecutionIdentity
 		DestinationExecution *transferDestination `json:",omitempty"`
-	}{srcStore, dstStore, p, to, o, source, transferDestinationFor(source, destination)})
+	}{srcStore, dstStore, p, to, pathBytes(p), pathBytes(to), o, source, transferDestinationFor(source, destination)})
 	if err != nil {
 		return "", err
 	}

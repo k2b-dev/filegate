@@ -27,7 +27,9 @@ journalctl -u filegate -f
 pauses Filegate mutations in that root. Other roots stay available. External
 writers are outside this lock; coordinate them separately. Do not delete the
 state directory to rebuild an index: it also contains authoritative version
-metadata, identity claims and upload records.
+metadata, identity claims and upload records. Upgrading from index format 2
+rebuilds each indexed root once at startup to remove rows with damaged filename
+bytes; identities, managed revisions, versions and sessions are retained.
 
 ## Enable Unix execution
 

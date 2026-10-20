@@ -108,7 +108,11 @@ func (h *Handler) issueDownload(w http.ResponseWriter, c capability, seconds int
 		return err
 	}
 	c.Expires, c.Nonce, c.Operations = expires.Unix(), uuid.NewString(), []string{"read"}
-	send(w, http.StatusCreated, api.DirectURL{URL: h.url(c), Method: "GET", Expires: expires})
+	target, err := h.url(c)
+	if err != nil {
+		return err
+	}
+	send(w, http.StatusCreated, api.DirectURL{URL: target, Method: "GET", Expires: expires})
 	return nil
 }
 

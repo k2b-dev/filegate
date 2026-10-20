@@ -239,11 +239,14 @@ func (r *Root) finishMutation(key string, m mutation) error {
 			changes = nil
 			return err
 		}
-		apply := func(_ string, b []byte) error {
+		prefix := "i/" + r.generation + "/"
+		apply := func(k string, b []byte) error {
 			var n Node
 			if err := json.Unmarshal(b, &n); err != nil {
 				return err
 			}
+			// The primary key preserves Linux name bytes; Node JSON does not.
+			n.Path = strings.TrimPrefix(k, prefix)
 			changes = append(changes, r.removeIndexChanges(n)...)
 			if m.Kind == "move" {
 				n.Path = m.To + strings.TrimPrefix(n.Path, m.From)
@@ -274,11 +277,29 @@ func (r *Root) finishMutation(key string, m mutation) error {
 						return err
 					}
 				}
-			} else {
-				if err := service.deleteHistory(n.ID); err != nil {
+			} else if n.ID != "" {
+				// Legacy indexes can retain source rows after a move. Claims follow
+				// moves, so a claim outside this subtree protects the moved history.
+				// Compare raw path bytes; cleanup must not require descendant reads.
+				var c struct {
+					Path      string
+					PathBytes []byte
+				}
+				err := r.State.Get("identity/"+n.ID, &c)
+				if err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
-				if n.ID != "" {
+				if c.PathBytes != nil {
+					c.Path = string(c.PathBytes)
+				}
+				// Before the upgrade rebuild, U+FFFD may be a sanitized byte in
+				// any path component. Such a claim cannot prove membership.
+				ambiguous := r.legacyClaimPaths && c.PathBytes == nil && strings.ContainsRune(c.Path, '\uFFFD')
+				// Without a claim, preserve the ordinary index-based cleanup behavior.
+				if !ambiguous && (errors.Is(err, os.ErrNotExist) || c.Path == m.From || strings.HasPrefix(c.Path, m.From+"/")) {
+					if err := service.deleteHistory(n.ID); err != nil {
+						return err
+					}
 					changes = append(changes, Change{Key: "identity/" + n.ID, Delete: true})
 				}
 			}
@@ -287,7 +308,6 @@ func (r *Root) finishMutation(key string, m mutation) error {
 			}
 			return nil
 		}
-		prefix := "i/" + r.generation + "/"
 		var top Node
 		if err := r.State.Get(prefix+m.From, &top); err == nil {
 			b, _ := json.Marshal(top)

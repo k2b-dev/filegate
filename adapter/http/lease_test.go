@@ -1,7 +1,12 @@
 package httpadapter
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -139,5 +144,95 @@ func TestDerivedDownloadLeaseExpiry(t *testing.T) {
 				t.Fatalf("%s %s: %d %s", purpose, method, w.Code, w.Body.String())
 			}
 		}
+	}
+}
+
+func TestRawPathCapabilityRoundTrip(t *testing.T) {
+	h := New(nil, Options{Token: "secret"})
+	for _, p := range []string{"\xff.pdf", "mid-\xfe.pdf", "�.pdf", "mid-�.pdf"} {
+		// Fixed far-future expiry: the fixture never depends on today's date.
+		original := capability{Root: "files", Path: p, Purpose: "download", Operations: []string{"read"}, Expires: 253402300799}
+		got, err := h.verify(h.sign(original))
+		if err != nil || got.Path != p {
+			t.Errorf("capability lost %q: %q %v", p, got.Path, err)
+		}
+	}
+}
+
+func TestRawPathCapabilityOmitsSanitizedPath(t *testing.T) {
+	h := New(nil, Options{Token: "secret"})
+	// Fourteen legal Linux components: 3500 raw bytes plus 13 separators.
+	c := capability{Root: "files", Path: strings.Repeat(strings.Repeat("\xff", 250)+"/", 13) + strings.Repeat("\xff", 250), Purpose: "download", Operations: []string{"read"}, Expires: 253402300799}
+	token := h.sign(c)
+	if got, err := h.verify(token); err != nil || got.Path != c.Path {
+		t.Fatalf("issued unusable token (%d bytes): %v", len(token), err)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.Split(token, ".")[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["path"]; ok {
+		t.Fatal("raw path duplicated as sanitized path")
+	}
+}
+
+func TestCapabilityIssuanceBoundaryAndLegacyToken(t *testing.T) {
+	h := New(nil, Options{Token: "secret"})
+	c := capability{Root: "files", Path: "legacy/�", Purpose: "download", Operations: []string{"read"}, Expires: 253402300799}
+	// Pre-upgrade tokens had only path. Sign those exact bytes without the
+	// current issuer so backward compatibility is checked independently.
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(b)
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write([]byte(payload))
+	legacy := payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if got, err := h.verify(legacy); err != nil || got.Path != c.Path {
+		t.Fatalf("legacy token: %+v %v", got, err)
+	}
+	for _, value := range []string{"x", "\xff"} {
+		// Locate the last issuable path length, with a fixed capability fixture.
+		low, high := 0, 20000
+		for low < high {
+			mid := (low + high + 1) / 2
+			c.Path = strings.Repeat(value, mid)
+			if len(h.sign(c)) <= capabilityTokenLimit {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		c.Path = strings.Repeat(value, low)
+		target, err := h.url(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token := strings.TrimPrefix(target, "/v1/direct/")
+		if len(token) > capabilityTokenLimit || len(token) < capabilityTokenLimit-3 {
+			t.Fatalf("not at token boundary: %d", len(token))
+		}
+		if got, err := h.verify(token); err != nil || got.Path != c.Path {
+			t.Fatalf("boundary token: %v", err)
+		}
+		c.Path += value
+		if _, err := h.url(c); !errors.Is(err, domain.ErrLimit) {
+			t.Fatalf("issued token beyond verifier bound: %v", err)
+		}
+	}
+	// Exercise the HTTP envelope too; an upload target need not exist yet.
+	root := &domain.Root{Config: domain.RootConfig{Name: "files"}, MaxBytes: 1 << 20}
+	h = New([]*domain.Root{root}, Options{Token: "secret"})
+	req := httptest.NewRequest("POST", "/v1/roots/files/uploads/direct", strings.NewReader(`{"path":"`+strings.Repeat("x", 20000)+`","size":1}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), `"error":"limit_exceeded"`) {
+		t.Fatalf("issuance overflow: %d %s", w.Code, w.Body.String())
 	}
 }

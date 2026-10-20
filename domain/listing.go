@@ -17,7 +17,12 @@ import (
 	"time"
 )
 
-const currentIndexFormat = 2
+const currentIndexFormat = 3
+
+// Component-wise traversal supports paths beyond PATH_MAX. Bound encoded
+// cursors to 32 KiB to bound encoding and decoding work. The HTTP adapter
+// supplies a tighter budget for the whole continuation request.
+const listingCursorLimit = 32 << 10
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
 const searchAdmissionWait = 200 * time.Millisecond
@@ -31,14 +36,18 @@ var errListingStop = errors.New("listing complete")
 
 // ListingOptions applies ordering and filtering to the complete selection before
 // pagination. After is an opaque cursor bound to every normalized query option.
+// Cursors are limited to 32 KiB; a page requiring a larger cursor fails with ErrLimit.
 type ListingOptions struct {
-	After      string `json:"after,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	MaxEntries int    `json:"maxEntries,omitempty"`
-	Sort       string `json:"sort,omitempty"`
-	Order      string `json:"order,omitempty"`
-	Type       string `json:"type,omitempty"`
-	Match      string `json:"match,omitempty"`
+	// CursorBudget bounds emitted cursor bytes before admitting an observation.
+	// Zero uses the 32 KiB default. Transport budgets do not bind the query.
+	CursorBudget int    `json:"-"`
+	After        string `json:"after,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	MaxEntries   int    `json:"maxEntries,omitempty"`
+	Sort         string `json:"sort,omitempty"`
+	Order        string `json:"order,omitempty"`
+	Type         string `json:"type,omitempty"`
+	Match        string `json:"match,omitempty"`
 	// In selects search basenames (name, default) or scope-relative paths (path).
 	In     string `json:"in,omitempty"`
 	topK   int
@@ -54,14 +63,21 @@ type ListingOptions struct {
 // listingCandidate carries one computed match through collection; indexed scans
 // can omit node metadata until a retained page needs it.
 type listingCandidate struct {
-	node  Node
-	match nameMatch
+	node    Node
+	rawPath string
+	match   nameMatch
+}
+
+type listingEntry struct {
+	node Node
+	// Indexed JSON nodes sanitize invalid UTF-8. Keep the raw path for highlights.
+	rawPath string
 }
 
 type listingSnapshot struct {
 	query   string
 	created time.Time
-	entries []Node
+	entries []listingEntry
 	bytes   int64
 	hits    []searchHit
 	total   int
@@ -71,12 +87,15 @@ type listingCursor struct {
 	Instance   string `json:"i"`
 	Epoch      uint64 `json:"e"`
 	Generation string `json:"g,omitempty"`
-	Last       string `json:"k,omitempty"`
+	Last       []byte `json:"k,omitempty"` // Prefix-relative key; JSON base64 preserves arbitrary bytes.
 	Snapshot   string `json:"s,omitempty"`
 	Offset     int    `json:"o,omitempty"`
 }
 
 func normalizeListing(o ListingOptions) (ListingOptions, error) {
+	if o.CursorBudget == 0 || o.CursorBudget > listingCursorLimit {
+		o.CursorBudget = listingCursorLimit
+	}
 	if o.Limit == 0 {
 		o.Limit = 100
 	}
@@ -104,7 +123,7 @@ func normalizeListing(o ListingOptions) (ListingOptions, error) {
 	if o.Type == "" {
 		o.Type = "all"
 	}
-	if o.Limit < 1 || o.Limit > 1000 || o.MaxEntries < 1 || o.MaxEntries > 100000 || len(o.After) > 16384 {
+	if o.Limit < 1 || o.Limit > 1000 || o.MaxEntries < 1 || o.MaxEntries > 100000 || len(o.After) > listingCursorLimit {
 		return o, ErrInvalid
 	}
 	if o.Sort != "path" && o.Sort != "name" && o.Sort != "size" && o.Sort != "modified" && o.Sort != "relevance" {
@@ -135,18 +154,22 @@ func queryFingerprint(p, query string, recursive bool, o ListingOptions, actor *
 		topK = o.topK
 	}
 	b, _ := json.Marshal(struct {
-		Path, Query string
-		Recursive   bool
-		Options     ListingOptions
-		Execution   *ExecutionIdentity
-		TopK        int
-	}{p, query, recursive, o, actor, topK})
+		Path      []byte
+		Query     string
+		Recursive bool
+		Options   ListingOptions
+		Execution *ExecutionIdentity
+		TopK      int
+	}{[]byte(p), query, recursive, o, actor, topK})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-func encodeListingCursor(c listingCursor) string {
+func encodeListingCursor(c listingCursor, budget int) (string, error) {
 	b, _ := json.Marshal(c)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if base64.RawURLEncoding.EncodedLen(len(b)) > budget {
+		return "", fmt.Errorf("%w: listing continuation exceeds %d bytes", ErrLimit, budget)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // List selects only the immediate children of p. Actor views use a live
@@ -312,21 +335,16 @@ func (r *Root) queryListing(ctx context.Context, p, query string, recursive bool
 	if err != nil {
 		return Page{}, err
 	}
-	if recursive && len(matcher.tokens) > 0 && out.Matches == nil {
-		if err := listingHighlights(ctx, &out, matcher); err != nil {
-			return Page{}, err
-		}
-	}
 	return out, nil
 }
 
-func listingHighlights(ctx context.Context, out *Page, matcher *nameQuery) error {
+func listingHighlights(ctx context.Context, out *Page, matcher *nameQuery, rawPaths []string) error {
 	ranges := make([][]MatchRange, 0, len(out.Items))
-	for _, n := range out.Items {
+	for _, p := range rawPaths {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ranges = append(ranges, matcher.highlights(matcher.subject(n.Path)))
+		ranges = append(ranges, matcher.highlights(matcher.subject(p)))
 	}
 	out.Matches = &ranges
 	return nil
@@ -386,7 +404,8 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				candidate := listingCandidate{node: Node{Path: k[len(primaryPrefix):]}}
+				rawPath := k[len(primaryPrefix):]
+				candidate := listingCandidate{node: Node{Path: rawPath}, rawPath: rawPath}
 				candidate.match = matches(candidate.node.Path)
 				if candidate.match.tier == 0 {
 					return nil
@@ -397,7 +416,9 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 					if err := json.Unmarshal(b, &candidate.node); err != nil {
 						return err
 					}
-					if !o.matchesNode(candidate.node) {
+					filterNode := candidate.node
+					filterNode.Path = rawPath
+					if !o.matchesNode(filterNode) {
 						return nil
 					}
 					if o.Sort == "relevance" {
@@ -419,12 +440,17 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 	} else if p != "." {
 		prefix += p + "/"
 	}
-	if c.Snapshot != "" || c.Offset != 0 || c.Last != "" && !strings.HasPrefix(c.Last, prefix) {
+	if c.Snapshot != "" || c.Offset != 0 {
 		return Page{}, ErrCursorInvalid
 	}
 	out = Page{Items: []Node{}}
 	scanned := 0
-	last := c.Last
+	last := string(c.Last)
+	seek := ""
+	if len(c.Last) != 0 {
+		seek = prefix + last
+	}
+	var rawPaths []string
 	visit := func(k string, b []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -433,8 +459,8 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 			return errListingStop
 		}
 		scanned++
-		last = k
-		candidatePath := k[len(prefix):]
+		last = k[len(prefix):]
+		candidatePath := last
 		switch {
 		case o.Sort == "name" && recursive:
 			candidatePath = candidatePath[strings.IndexByte(candidatePath, 0)+1:]
@@ -457,27 +483,34 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		} else if err := state.Get("i/"+c.Generation+"/"+candidatePath, &n); err != nil {
 			return err
 		}
-		if o.matchesNode(n) {
+		filterNode := n
+		filterNode.Path = candidatePath
+		if o.matchesNode(filterNode) {
 			out.Items = append(out.Items, n)
+			rawPaths = append(rawPaths, candidatePath)
 		}
 		return nil
 	}
 	err = r.scanListing(ctx, c, o.After != "", func() error {
 		var err error
 		if o.Order == "desc" {
-			err = state.ScanBefore(prefix, c.Last, visit)
+			err = state.ScanBefore(prefix, seek, visit)
 		} else {
-			err = state.ScanAfter(prefix, c.Last, visit)
+			err = state.ScanAfter(prefix, seek, visit)
 		}
 		if errors.Is(err, errListingStop) {
-			c.Last = last
-			out.Next = encodeListingCursor(c)
-			return nil
+			c.Last = []byte(last)
+			out.Next, err = encodeListingCursor(c, o.CursorBudget)
 		}
 		return err
 	})
 	if err != nil {
 		return Page{}, err
+	}
+	if recursive && len(matcher.tokens) > 0 {
+		if err := listingHighlights(ctx, &out, matcher, rawPaths); err != nil {
+			return Page{}, err
+		}
 	}
 	return out, nil
 }
@@ -485,7 +518,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 func (r *Root) liveListing(ctx context.Context, p string, recursive bool, o ListingOptions, c listingCursor, matches func(Node) nameMatch, matcher *nameQuery) (Page, error) {
 	return r.snapshotListing(ctx, p, o, c, func(visit func(listingCandidate) error) error {
 		return r.scanDirectory(ctx, p, recursive, o.MaxEntries, func(n Node) error {
-			return visit(listingCandidate{node: n, match: matches(n)})
+			return visit(listingCandidate{node: n, rawPath: n.Path, match: matches(n)})
 		})
 	}, matcher, nil)
 }
@@ -500,11 +533,11 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 	var snapshot *listingSnapshot
 	if c.Snapshot != "" {
 		snapshot = r.listings[c.Snapshot]
-		if snapshot == nil || snapshot.query != c.Query || c.Last != "" || c.Offset < 0 || c.Offset > snapshot.len() {
+		if snapshot == nil || snapshot.query != c.Query || len(c.Last) != 0 || c.Offset < 0 || c.Offset > snapshot.len() {
 			return Page{}, ErrCursorInvalid
 		}
 	} else {
-		if c.Last != "" || c.Offset != 0 || o.After != "" {
+		if len(c.Last) != 0 || c.Offset != 0 || o.After != "" {
 			return Page{}, ErrCursorInvalid
 		}
 		collect := func() (err error) {
@@ -547,6 +580,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 	}
 	end := min(c.Offset+o.Limit, snapshot.len())
 	out := Page{Items: []Node{}}
+	var rawPaths []string
 	if o.Sort == "relevance" {
 		ranges := make([][]MatchRange, 0, end-c.Offset)
 		for _, h := range snapshot.hits[c.Offset:end] {
@@ -569,7 +603,9 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			if err != nil {
 				return Page{}, err
 			}
-			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory || !o.matchesSearchFilters(n) {
+			filterNode := n
+			filterNode.Path = h.path
+			if n.Directory != h.directory || o.Type == "files" && n.Directory || o.Type == "directories" && !n.Directory || !o.matchesSearchFilters(filterNode) {
 				return Page{}, ErrCursorInvalid
 			}
 			out.Items = append(out.Items, n)
@@ -577,7 +613,10 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		out.Matches = &ranges
 	} else {
-		out.Items = append(out.Items, snapshot.entries[c.Offset:end]...)
+		for _, entry := range snapshot.entries[c.Offset:end] {
+			out.Items = append(out.Items, entry.node)
+			rawPaths = append(rawPaths, entry.rawPath)
+		}
 	}
 	// Directories retain their existing envelope; only search observations have totals.
 	if o.search {
@@ -595,17 +634,27 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 	}
 	if o.search && len(matcher.tokens) > 0 && out.Matches == nil {
-		if err := listingHighlights(ctx, &out, matcher); err != nil {
+		if err := listingHighlights(ctx, &out, matcher, rawPaths); err != nil {
 			return Page{}, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
+	if end < snapshot.len() {
+		if c.Snapshot == "" {
+			c.Snapshot = newID()
+		}
+		c.Offset = end
+		var err error
+		out.Next, err = encodeListingCursor(c, o.CursorBudget)
+		if err != nil {
+			return Page{}, err
+		}
+	}
 	// Admit only a successful first page, using the final retained size after
 	// collection and only if the captured observation is still current.
-	if c.Snapshot == "" && snapshot.len() > o.Limit {
-		c.Snapshot = newID()
+	if o.After == "" && snapshot.len() > o.Limit {
 		if r.listingCurrent(c) {
 			if r.listings == nil {
 				r.listings = make(map[string]*listingSnapshot)
@@ -617,10 +666,6 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 			r.listingBytes += snapshot.bytes
 		}
 	}
-	if end < snapshot.len() {
-		c.Offset = end
-		out.Next = encodeListingCursor(c)
-	}
 	return out, nil
 }
 
@@ -629,7 +674,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 // Admission bounds indexed listing data per root to the 32 MiB cache plus two
 // in-flight collections of at most 32 MiB each, including provisional loose hits.
 func collectListing(ctx context.Context, o ListingOptions, query string, scan func(func(listingCandidate) error) error) (*listingSnapshot, error) {
-	snapshot := &listingSnapshot{query: query, entries: []Node{}}
+	snapshot := &listingSnapshot{query: query, entries: []listingEntry{}}
 	strong := false
 	looseOverflow := false
 	err := scan(func(candidate listingCandidate) error {
@@ -652,7 +697,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, scan fu
 		if e != nil {
 			return e
 		}
-		snapshot.bytes += int64(len(encoded) + 128)
+		snapshot.bytes += int64(len(encoded) + len(candidate.rawPath) + 144)
 		if snapshot.bytes > listingMemoryLimit || len(snapshot.entries) >= o.MaxEntries {
 			if strong {
 				return ErrLimit
@@ -664,7 +709,7 @@ func collectListing(ctx context.Context, o ListingOptions, query string, scan fu
 			snapshot.bytes = 0
 			return nil
 		}
-		snapshot.entries = append(snapshot.entries, n)
+		snapshot.entries = append(snapshot.entries, listingEntry{node: n, rawPath: candidate.rawPath})
 		return nil
 	})
 	if err != nil {
@@ -674,7 +719,8 @@ func collectListing(ctx context.Context, o ListingOptions, query string, scan fu
 		return nil, ErrLimit
 	}
 	sort.Slice(snapshot.entries, func(i, j int) bool {
-		a, b := snapshot.entries[i], snapshot.entries[j]
+		a, b := snapshot.entries[i].node, snapshot.entries[j].node
+		a.Path, b.Path = snapshot.entries[i].rawPath, snapshot.entries[j].rawPath
 		comparison := compareListing(a, b, o.Sort)
 		if o.Order == "desc" {
 			return comparison > 0
@@ -740,7 +786,11 @@ func nodeIndexKeys(generation string, n Node) []string {
 func indexChangesFor(generation string, n Node, previous *Node) ([]Change, error) {
 	cs := []Change{}
 	if previous != nil {
-		for _, key := range nodeIndexKeys(generation, *previous) {
+		// Callers load the previous row at n.Path. Restore its key path before
+		// deleting secondary rows; the JSON value may contain replacement runes.
+		old := *previous
+		old.Path = n.Path
+		for _, key := range nodeIndexKeys(generation, old) {
 			cs = append(cs, Change{Key: key, Delete: true})
 		}
 	}

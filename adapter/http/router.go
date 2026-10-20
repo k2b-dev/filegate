@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Options struct {
@@ -44,7 +45,8 @@ type capability struct {
 	FileName     string                    `json:"fileName,omitempty"`
 	FileID       string                    `json:"fileId,omitempty"`
 	Root         string                    `json:"root"`
-	Path         string                    `json:"path"`
+	Path         string                    `json:"path,omitempty"`
+	PathBytes    []byte                    `json:"pathBytes,omitempty"`
 	Purpose      string                    `json:"purpose"`
 	Session      string                    `json:"session,omitempty"`
 	Size         int64                     `json:"size"`
@@ -629,15 +631,22 @@ func matchPublicationHeaders(r *http.Request, condition *domain.Precondition) er
 }
 
 func (h *Handler) sign(c capability) string {
+	if !utf8.ValidString(c.Path) {
+		c.PathBytes = []byte(c.Path)
+		c.Path = ""
+	}
 	b, _ := json.Marshal(c)
 	payload := base64.RawURLEncoding.EncodeToString(b)
 	mac := hmac.New(sha256.New, []byte(h.opts.Token))
 	mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
+
+const capabilityTokenLimit = 20000
+
 func (h *Handler) verify(token string) (capability, error) {
 	var c capability
-	if len(token) > 20000 {
+	if len(token) > capabilityTokenLimit {
 		return c, domain.ErrInvalid
 	}
 	parts := strings.Split(token, ".")
@@ -656,6 +665,9 @@ func (h *Handler) verify(token string) (capability, error) {
 	}
 	if e = json.Unmarshal(b, &c); e != nil {
 		return c, domain.ErrInvalid
+	}
+	if c.PathBytes != nil {
+		c.Path = string(c.PathBytes)
 	}
 	if c.Expires <= time.Now().Unix() {
 		return c, errHTTP{401, "expired_capability"}
@@ -750,8 +762,12 @@ func allowedMethod(c capability, method string) bool {
 	return false
 }
 
-func (h *Handler) url(c capability) string {
-	return strings.TrimRight(h.opts.PublicURL, "/") + "/v1/direct/" + h.sign(c)
+func (h *Handler) url(c capability) (string, error) {
+	token := h.sign(c)
+	if len(token) > capabilityTokenLimit {
+		return "", domain.ErrLimit
+	}
+	return strings.TrimRight(h.opts.PublicURL, "/") + "/v1/direct/" + token, nil
 }
 func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	var q api.DirectRequest
@@ -776,7 +792,11 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 		return e
 	}
 	c := capability{Execution: root.Execution(), Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: expires.Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions, Operations: []string{"write"}}
-	send(w, 201, api.DirectURL{URL: h.url(c), Method: "PUT", Expires: time.Unix(c.Expires, 0)})
+	target, e := h.url(c)
+	if e != nil {
+		return e
+	}
+	send(w, 201, api.DirectURL{URL: target, Method: "PUT", Expires: time.Unix(c.Expires, 0)})
 	return nil
 }
 func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
@@ -860,7 +880,11 @@ func (h *Handler) sessionLease(s domain.Session, seconds int, allowAbort bool) (
 		operations = append(operations, "abort")
 	}
 	c := capability{Execution: s.Execution, Root: s.Root, Session: s.ID, Purpose: "session", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: operations}
-	return api.SessionLease{URL: h.url(c), Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
+	target, e := h.url(c)
+	if e != nil {
+		return api.SessionLease{}, e
+	}
+	return api.SessionLease{URL: target, Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
 }
 
 func (h *Handler) sessionStatus(w http.ResponseWriter, r *http.Request, root *domain.Root) error {

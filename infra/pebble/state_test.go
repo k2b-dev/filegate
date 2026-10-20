@@ -4,11 +4,83 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/k2b-dev/filegate/v7/domain"
 )
+
+func TestScansIncludeAllPrefixBytes(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	keys := []string{"a/0", "p/", "p/b", "p/\xff", "p/\xffa", "p/\xff\xff", "p0", "q/0", "\xff", "\xff\xff", "\xff\xffa"}
+	for _, key := range keys {
+		if err := s.Put(key, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := s.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	for _, prefix := range []string{"p/", "p/\xff", "p/\xff\xff", "\xff", "\xff\xff", "", "missing/"} {
+		t.Run(fmt.Sprintf("%x", prefix), func(t *testing.T) {
+			var want []string
+			for _, key := range keys {
+				if strings.HasPrefix(key, prefix) {
+					want = append(want, key)
+				}
+			}
+			var got []string
+			if err := s.Scan(prefix, func(k string, _ []byte) error { got = append(got, k); return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("Scan: got %q, want %q", got, want)
+			}
+			for _, reader := range []domain.StateSnapshot{s, snapshot} {
+				for _, reverse := range []bool{false, true} {
+					scan := reader.ScanAfter
+					expected := slices.Clone(want)
+					if reverse {
+						scan = reader.ScanBefore
+						slices.Reverse(expected)
+					}
+					// Page one key at a time, including exclusive seeks after/before
+					// raw 0xff bytes, on both the live DB and an immutable snapshot.
+					got = nil
+					cursor := ""
+					stop := errors.New("page complete")
+					for page := 0; ; page++ {
+						if page > len(want) {
+							t.Fatal("pagination did not terminate")
+						}
+						err := scan(prefix, cursor, func(k string, _ []byte) error {
+							got = append(got, k)
+							cursor = k
+							return stop
+						})
+						if err == nil {
+							break
+						}
+						if !errors.Is(err, stop) {
+							t.Fatal(err)
+						}
+					}
+					if !slices.Equal(got, expected) {
+						t.Errorf("%T reverse=%v: got %q, want %q", reader, reverse, got, expected)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestSeekScansAreExclusiveAndPrefixBounded(t *testing.T) {
 	s, err := Open(t.TempDir())
@@ -30,11 +102,13 @@ func TestSeekScansAreExclusiveAndPrefixBounded(t *testing.T) {
 		{false, "p/1", []string{"p/2"}},
 		{false, "p/15", []string{"p/2"}},
 		{false, "a/0", []string{"p/0", "p/1", "p/2"}},
+		{false, "a", []string{"p/0", "p/1", "p/2"}},
 		{false, "q/0", nil},
 		{true, "", []string{"p/2", "p/1", "p/0"}},
 		{true, "p/1", []string{"p/0"}},
 		{true, "p/15", []string{"p/1", "p/0"}},
 		{true, "q/0", []string{"p/2", "p/1", "p/0"}},
+		{true, "z", []string{"p/2", "p/1", "p/0"}},
 		{true, "a/0", nil},
 	} {
 		var got []string
