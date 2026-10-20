@@ -400,6 +400,11 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 					if !o.matchesNode(candidate.node) {
 						return nil
 					}
+					if o.Sort == "relevance" {
+						// JSON replaces invalid UTF-8; retained hits must keep the
+						// raw key path so final materialization can find the row.
+						candidate.node.Path = k[len(primaryPrefix):]
+					}
 				}
 				return visit(candidate)
 			})

@@ -28,6 +28,7 @@ func TestIndexedSearchDecodeFirstDifferential(t *testing.T) {
 		{"gaps", "quartalsbericht", ".", ListingOptions{}},
 		{"path-tokens", "muller resume", ".", ListingOptions{Match: "fuzzy", In: "path"}},
 		{"scoped-path", "resume", "docs/Müller", ListingOptions{In: "path"}},
+		{"scoped-sibling", "resume", "docs", ListingOptions{In: "path"}},
 		{"base-excluded", "docs", "docs", ListingOptions{In: "path"}},
 		{"extensions", "", ".", ListingOptions{Ext: []string{"PDF", "gz", "SS"}}},
 		{"metadata", "resume", ".", ListingOptions{Match: "fuzzy", Type: "files", Ext: []string{"pdf", "gz"}, MinSize: filterSize(128), MaxSize: filterSize(2048), ModifiedAfter: &at, ModifiedBefore: filterTime(at.Add(4 * time.Hour))}},
@@ -96,7 +97,7 @@ func TestIndexedSearchDecodeFirstDifferential(t *testing.T) {
 }
 
 func searchDifferentialNodes(at time.Time) []Node {
-	parents := []string{"docs", "docs/Müller", "docs/Straße", "archive", "archive/2026", "Résumé.pdf", "tiers"}
+	parents := []string{"docs", "docs/Müller", "docs/Straße", "archive", "archive/2026", "Résumé.pdf", "tiers", "docs.txt"}
 	var nodes []Node
 	for i, parent := range parents {
 		nodes = append(nodes, Node{Root: "test", Path: parent, Directory: true, Modified: at.Add(time.Duration(i) * time.Hour), Mode: "drwxr-x---"})
@@ -110,7 +111,45 @@ func searchDifferentialNodes(at time.Time) []Node {
 	for _, name := range []string{"a-tata.txt", "b-taxa.txt", "c-t1a2t3a.pdf", "d-testtest.pdf", "e-tst.txt"} {
 		nodes = append(nodes, Node{Root: "test", Path: "tiers/" + name, Size: 128, Modified: at})
 	}
+	nodes = append(nodes, Node{Root: "test", Path: "docs.txt/resume-sibling.pdf", Modified: at})
 	return nodes
+}
+
+func TestIndexedSearchNonUTF8Key(t *testing.T) {
+	const rawPath = "docs/needle-\xff.pdf"
+	for _, match := range []string{"exact", "fuzzy"} {
+		for _, metadata := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/metadata=%t", match, metadata), func(t *testing.T) {
+				r := indexedListingRoot(t, []Node{{Path: rawPath, Size: 128}})
+				state := r.State.(*listingState)
+				gets := 0
+				state.onGet = func(key string) error {
+					gets++
+					if key != "i/"+r.generation+"/"+rawPath {
+						t.Fatalf("materialization used %q instead of the raw primary key", key)
+					}
+					return nil
+				}
+				opts := ListingOptions{Sort: "relevance", Match: match}
+				if metadata {
+					opts.MinSize = filterSize(128)
+				}
+				page, err := r.Search(context.Background(), "needle", "docs", opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// JSON metadata replaces invalid UTF-8. Selection and final lookup
+				// must still use the original key; the returned Node keeps JSON's form.
+				if gets == 0 || len(page.Items) != 1 || page.Items[0].Path != "docs/needle-\ufffd.pdf" || page.Total == nil || *page.Total != 1 {
+					t.Fatalf("gets=%d page=%+v", gets, page)
+				}
+				want := [][]MatchRange{{{0, 6}}}
+				if page.Matches == nil || !reflect.DeepEqual(*page.Matches, want) {
+					t.Fatalf("matches=%v, want %v", page.Matches, want)
+				}
+			})
+		}
+	}
 }
 
 // This intentionally decodes every primary row, including out-of-scope rows,
