@@ -245,7 +245,8 @@ before retrying. See [permissions](/docs/en/permissions) for an example.
 `expiresIn` is an integer number of seconds, default 60, maximum 300. Zero also
 selects the default. Expiry limits the start of new requests; accepted downloads
 can continue. Leases are reusable and have no per-lease revocation. Upload write
-options are bound at creation and cannot be changed through a lease.
+options are bound at creation and cannot be changed through a lease. Issuance
+returns 413 (`limit_exceeded`) if the signed token would exceed 20000 bytes.
 
 Session creation returns separate `session` and `lease` objects. The session has
 `id`, `root`, `path`, `size`, `chunkSize`, `expires`, `state`, `options`, `uploadedSegments`

@@ -233,8 +233,8 @@ budget, for all sorts and match modes on indexed and live paths. Directory
 listings are unaffected. Client cancellation and deadlines still stop the scan
 and remain cancellation or deadline errors. Exceeding a visit, memory or scan-time
 budget returns 413 (`limit_exceeded`) instead of a partially sorted result;
-failed first pages leave no cached observation. Narrow the search path or query
-before retrying.
+failed first pages leave no cached observation and do not evict existing ones.
+Narrow the search path or query before retrying.
 
 Filegate mutations, an index rebuild, restart, changed query options, observation
 expiry or capacity eviction can invalidate a cursor. On `409 cursor_invalid`,

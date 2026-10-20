@@ -330,8 +330,8 @@ descendants, excluding its base.
 Opaque cursors are limited to 32 KiB. The complete continuation request
 (URL-encoded path, query and current headers) must fit within 60 KiB, reserving
 4 KiB below the server’s 64 KiB limit for client-added headers. Exceeding either
-bound returns 413 (limit_exceeded) with no partial page. Increase limit to reduce
-continuations; for searches, narrowing the search path can also help.
+bound returns 413 (limit_exceeded) with no partial page or cache eviction.
+Increase limit to reduce continuations; for searches, narrowing the search path can also help.
 
 Search always normalizes Unicode (NFC), full case (`ß` = `ss`) and accents
 (`muller` finds `Müller.docx`). `_ - .` and whitespace are word gaps; tokens also
@@ -416,7 +416,8 @@ budget, for all sorts and match modes on indexed and live paths. Directory
 listings are unaffected. Client cancellation and deadlines remain cancellation
 or deadline errors. Exceeded visit/memory/scan-time budgets
 return 413 (limit_exceeded), not a globally sorted partial result. Failed first
-pages leave no cached observation. Narrow the search path or query before retrying.
+pages leave no cached observation and do not evict existing ones. Narrow the search
+path or query before retrying.
 Scoped Unix listing and search use live filesystem observations even on indexed
 roots. Live relevance pages load current metadata for retained paths per page;
 membership/order stay fixed. A new query sees external NFS changes without an
@@ -496,6 +497,7 @@ returns 503 execution_capacity with Retry-After: 1.
 ## Downloads and previews
 
 Leases default 60 seconds, maximum 300; expiry controls admission, not completion.
+Issuance returns 413 (limit_exceeded) if the signed token would exceed 20000 bytes.
 They are reusable and have no individual revoke list or callbacks. Token rotation
 plus restart invalidates all. Historical leases bind path/file identity/version;
 thumbnail leases bind path/dimensions. Query parameters cannot broaden scope.

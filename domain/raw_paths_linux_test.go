@@ -357,3 +357,115 @@ func TestRawPathIndexFormatUpgrade(t *testing.T) {
 		t.Errorf("upgrade lost identity: %+v %v", got, err)
 	}
 }
+
+// A v7.0.0 move could leave a raw source key whose JSON path was sanitized.
+// Recovery must not use that stale membership to delete the moved identity.
+func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
+	for _, collision := range []bool{false, true} {
+		t.Run(fmt.Sprintf("quarantine-collision=%v", collision), func(t *testing.T) {
+			r, s := rawPathRoot(t, "files")
+			rawPut(t, r, "a/raw-\xff", "moved")
+			if _, err := r.Move("a", "b"); err != nil {
+				t.Fatal(err)
+			}
+			moved, err := r.Stat("b/raw-\xff")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Put("v/"+moved.ID+"/history", domain.Version{ID: "history", FileID: moved.ID, Created: time.Unix(1000, 0).UTC()}); err != nil {
+				t.Fatal(err)
+			}
+			deleted := rawPut(t, r, "a/deleted-\xfe", "deleted")
+			if err := s.Put("v/"+deleted.ID+"/deleted-history", domain.Version{ID: "deleted-history", FileID: deleted.ID, Created: time.Unix(1000, 0).UTC()}); err != nil {
+				t.Fatal(err)
+			}
+			if collision {
+				rawPut(t, r, "a/raw-\xff", "replacement")
+			}
+			var gen string
+			if err := s.Get("index/generation", &gen); err != nil {
+				t.Fatal(err)
+			}
+			stale := moved
+			stale.Path = "a/raw-\xff"
+			if err := s.Put("i/"+gen+"/"+stale.Path, stale); err != nil {
+				t.Fatal(err)
+			}
+			top, err := r.Stat("a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := r.Files.Stat("a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dev, ino, _, _, _ := r.Files.Identity(st)
+			const quarantine = ".filegate/staging/legacy-delete"
+			if err := r.Files.Rename("a", quarantine, false); err != nil {
+				t.Fatal(err)
+			}
+			// Use the legacy wire shape, with no raw-path companion fields.
+			if err := s.Put("mutation/legacy", map[string]any{"Kind": "delete", "From": "a", "To": quarantine, "ID": top.ID, "Device": dev, "Inode": ino, "Applied": true}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Put("index/format", 2); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := rawRestart(t, r, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if versions, err := restarted.Versions("b/raw-\xff"); err != nil || len(versions) != 1 {
+				t.Errorf("moved history lost: %v %v", versions, err)
+			}
+			if n, err := restarted.Resolve(moved.ID); err != nil || n.Path != "b/raw-\xff" || n.Revision != moved.Revision {
+				t.Errorf("moved identity/revision lost: %+v %v", n, err)
+			}
+			var value any
+			for _, key := range []string{"identity/" + deleted.ID, "v/" + deleted.ID + "/deleted-history", "mutation/legacy"} {
+				if err := s.Get(key, &value); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("deleted state remains %q: %v", key, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteRecoveryAllowsUnprovableDescendants(t *testing.T) {
+	for _, kind := range []string{"symlink", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			r, s := rawPathRoot(t, "files")
+			rawPut(t, r, "a/d/f", "data")
+			outside := t.TempDir() + "/sentinel"
+			if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate an external writer changing a subtree without updating its rows.
+			if err := r.Files.Remove("a/d", true); err != nil {
+				t.Fatal(err)
+			}
+			target := r.Config.Path + "/a/d"
+			if kind == "symlink" {
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(target, []byte("replacement"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Remove("a", true); err != nil {
+				t.Errorf("delete blocked by unprovable row: %v", err)
+			}
+			if _, err := r.Stat("."); err != nil {
+				t.Errorf("root stuck after delete: %v", err)
+			}
+			restarted, err := rawRestart(t, r, s)
+			if err != nil {
+				t.Fatalf("root cannot restart: %v", err)
+			}
+			rawPut(t, restarted, "next", "works")
+			if content, err := os.ReadFile(outside); err != nil || string(content) != "keep" {
+				t.Fatalf("followed symlink outside root: %q %v", content, err)
+			}
+		})
+	}
+}

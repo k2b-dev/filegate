@@ -1,7 +1,6 @@
 package httpadapter
 
 import (
-	"fmt"
 	"github.com/k2b-dev/filegate/v7/domain"
 	"net/http"
 	"net/url"
@@ -16,39 +15,46 @@ import (
 const MaxHeaderBytes = 64 << 10
 const continuationHeaderMargin = 4 << 10
 
-// A cursor can fit its own bound while its URL-escaped base makes page two
-// too large for net/http. Check the complete canonical continuation request
-// before sending any page, including all query parameters and current headers.
-func checkListingContinuation(r *http.Request, next string) error {
-	if next == "" {
-		return nil
-	}
-	query := r.URL.Query()
-	query.Set("after", next)
-	// Preserve the incoming wire encoding too: clients may escape spaces as
-	// %20 or tildes as %7E, which Query.Encode would shorten. Remove the old
-	// cursor so each page is charged for exactly one continuation.
-	rawQuerySize := 0
-	for _, parameter := range strings.Split(r.URL.RawQuery, "&") {
-		name, _, _ := strings.Cut(parameter, "=")
-		decoded, _ := url.QueryUnescape(name)
-		if parameter != "" && decoded != "after" {
-			rawQuerySize += len(parameter) + 1
-		}
-	}
-	rawQuerySize += len("after=") + len(url.QueryEscape(next))
-	querySize := max(len(query.Encode()), rawQuerySize)
-	size := len(r.Method) + 1 + len(r.URL.EscapedPath()) + 1 + querySize + len(" HTTP/1.1\r\n")
+// Charge the request target exactly as received, including empty query fields.
+// Cursors use base64url, so their byte length is also their escaped URL length.
+func listingCursorBudget(r *http.Request) int {
+	size := len(r.Method) + 1 + len(r.RequestURI) + 1 + len(r.Proto) + len("\r\n")
 	size += len("Host: ") + len(r.Host) + len("\r\n") + len("\r\n")
 	for name, values := range r.Header {
 		for _, value := range values {
 			size += len(name) + len(": ") + len(value) + len("\r\n")
 		}
 	}
-	if size > MaxHeaderBytes-continuationHeaderMargin {
-		return fmt.Errorf("%w: listing continuation request exceeds %d bytes including headers", domain.ErrLimit, MaxHeaderBytes-continuationHeaderMargin)
+	budget := MaxHeaderBytes - continuationHeaderMargin - size
+	// Replace only the first accepted after value. Any duplicate fields remain
+	// charged, conservatively, rather than giving extra continuation capacity.
+	for _, parameter := range strings.Split(r.URL.RawQuery, "&") {
+		// Match URL.Query: invalid escapes and unescaped semicolons skip a field.
+		if strings.Contains(parameter, ";") {
+			continue
+		}
+		name, value, _ := strings.Cut(parameter, "=")
+		decoded, err := url.QueryUnescape(name)
+		if err == nil && decoded == "after" {
+			if _, err := url.QueryUnescape(value); err != nil {
+				continue
+			}
+			// A bare after field also needs its '=' when the cursor is appended.
+			if !strings.Contains(parameter, "=") {
+				budget--
+			}
+			return nonzeroCursorBudget(budget + len(value))
+		}
 	}
-	return nil
+	return nonzeroCursorBudget(budget - len("&after="))
+}
+
+// Zero selects the domain default; an exhausted HTTP budget must stay exhausted.
+func nonzeroCursorBudget(budget int) int {
+	if budget == 0 {
+		return -1
+	}
+	return budget
 }
 
 // time.Parse also accepts malformed RFC 3339 hours, offsets and fractions.
@@ -57,7 +63,7 @@ var searchTimestampSyntax = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01
 
 func listingOptions(r *http.Request) domain.ListingOptions {
 	q := r.URL.Query()
-	return domain.ListingOptions{After: q.Get("after"), Limit: paramInt(r, "limit", 100), MaxEntries: paramInt(r, "maxEntries", 100000), Sort: q.Get("sort"), Order: q.Get("order"), Type: q.Get("type"), Match: q.Get("match"), In: q.Get("in")}
+	return domain.ListingOptions{CursorBudget: listingCursorBudget(r), After: q.Get("after"), Limit: paramInt(r, "limit", 100), MaxEntries: paramInt(r, "maxEntries", 100000), Sort: q.Get("sort"), Order: q.Get("order"), Type: q.Get("type"), Match: q.Get("match"), In: q.Get("in")}
 }
 
 // Search filters are intentionally not parsed for directory listings.

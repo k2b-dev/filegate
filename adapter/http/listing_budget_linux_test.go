@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -146,21 +145,84 @@ func TestListingContinuationRequestBudget(t *testing.T) {
 func TestListingContinuationWireEncodingAndHeaders(t *testing.T) {
 	for _, encoded := range []string{"%7E", "%20", "%2A"} {
 		req := httptest.NewRequest("GET", "/v1/roots/files/entries?padding="+strings.Repeat(encoded, 20000), nil)
-		if err := checkListingContinuation(req, strings.Repeat("c", 10000)); !errors.Is(err, domain.ErrLimit) {
-			t.Errorf("ignored wire encoding %s: %v", encoded, err)
+		if budget := listingCursorBudget(req); budget >= 10000 {
+			t.Errorf("ignored wire encoding %s: budget=%d", encoded, budget)
 		}
 		// Replacing the old cursor must not charge it a second time.
 		req = httptest.NewRequest("GET", "/v1/roots/files/entries?padding="+strings.Repeat(encoded, 16000)+"&%61fter="+strings.Repeat("c", 10000), nil)
-		if err := checkListingContinuation(req, strings.Repeat("c", 10000)); err != nil {
-			t.Errorf("counted old cursor twice for %s: %v", encoded, err)
+		if budget := listingCursorBudget(req); budget < 10000 {
+			t.Errorf("counted old cursor twice for %s: budget=%d", encoded, budget)
 		}
 	}
 	req := httptest.NewRequest("GET", "/v1/roots/files/entries", nil)
 	req.Header.Set("Authorization", strings.Repeat("t", 60000))
-	if err := checkListingContinuation(req, strings.Repeat("c", 2000)); !errors.Is(err, domain.ErrLimit) {
-		t.Errorf("ignored headers: %v", err)
+	if budget := listingCursorBudget(req); budget >= 2000 {
+		t.Errorf("ignored headers: budget=%d", budget)
 	}
-	if err := checkListingContinuation(req, ""); err != nil {
-		t.Errorf("terminal page requires no continuation: %v", err)
+}
+
+func TestListingContinuationEmptyQueryFields(t *testing.T) {
+	req := httptest.NewRequest("GET", "/v1/roots/files/entries?padding=p"+strings.Repeat("&", 40000), nil)
+	if budget := listingCursorBudget(req); budget >= 30000 {
+		t.Fatalf("empty fields bypassed budget: budget=%d", budget)
+	}
+}
+
+func TestRejectedListingPagesPreserveCachedObservation(t *testing.T) {
+	data := t.TempDir()
+	files, err := filesystem.Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { files.Close() })
+	state, err := pebble.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { state.Close() })
+	root, err := domain.NewRoot(domain.RootConfig{Name: "files", Path: data, Index: true}, files, state, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"needle-a", "needle-b"} {
+		if _, err := root.Put(context.Background(), p, strings.NewReader("data"), domain.WriteOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New([]*domain.Root{root}, Options{Token: "secret"})
+	const target = "/v1/roots/files/search?q=needle&match=fuzzy&sort=relevance&limit=1"
+	request := func(target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", target, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	first := request(target)
+	var page domain.Page
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil || first.Code != 200 || page.Next == "" {
+		t.Fatalf("first page: %d %s %v", first.Code, first.Body.String(), err)
+	}
+	for range 16 {
+		rejected := request(target + "&padding=" + strings.Repeat("p", 61200))
+		if rejected.Code != 413 {
+			t.Fatalf("rejected page: %d %s", rejected.Code, rejected.Body.String())
+		}
+	}
+	next := request(target + "&after=" + url.QueryEscape(page.Next))
+	if next.Code != 200 {
+		t.Fatalf("rejected pages evicted valid observation: %d %s", next.Code, next.Body.String())
+	}
+}
+
+func TestListingContinuationSkipsMalformedOldAfter(t *testing.T) {
+	for _, invalidSuffix := range []string{"%zz", ";invalid"} {
+		req := httptest.NewRequest("GET", "/v1/roots/files/entries?after="+strings.Repeat("p", 40000)+invalidSuffix+"&after="+strings.Repeat("c", 10000), nil)
+		if len(req.URL.Query().Get("after")) != 10000 {
+			t.Fatal("fixture did not skip malformed field")
+		}
+		if budget := listingCursorBudget(req); budget >= 30000 {
+			t.Fatalf("credited skipped after field: budget=%d", budget)
+		}
 	}
 }

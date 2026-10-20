@@ -45,7 +45,7 @@ type capability struct {
 	FileName     string                    `json:"fileName,omitempty"`
 	FileID       string                    `json:"fileId,omitempty"`
 	Root         string                    `json:"root"`
-	Path         string                    `json:"path"`
+	Path         string                    `json:"path,omitempty"`
 	PathBytes    []byte                    `json:"pathBytes,omitempty"`
 	Purpose      string                    `json:"purpose"`
 	Session      string                    `json:"session,omitempty"`
@@ -354,9 +354,6 @@ func (h *Handler) routes() {
 	h.route("GET /v1/roots/{root}/entries", func(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 		v, e := root.List(r.Context(), r.URL.Query().Get("path"), listingOptions(r))
 		if e == nil {
-			e = checkListingContinuation(r, v.Next)
-		}
-		if e == nil {
 			h.sendRoot(w, root, 200, v)
 		}
 		return e
@@ -367,9 +364,6 @@ func (h *Handler) routes() {
 			return e
 		}
 		v, e := root.Search(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("path"), o)
-		if e == nil {
-			e = checkListingContinuation(r, v.Next)
-		}
 		if e == nil {
 			h.sendRoot(w, root, 200, v)
 		}
@@ -639,6 +633,7 @@ func matchPublicationHeaders(r *http.Request, condition *domain.Precondition) er
 func (h *Handler) sign(c capability) string {
 	if !utf8.ValidString(c.Path) {
 		c.PathBytes = []byte(c.Path)
+		c.Path = ""
 	}
 	b, _ := json.Marshal(c)
 	payload := base64.RawURLEncoding.EncodeToString(b)
@@ -646,9 +641,12 @@ func (h *Handler) sign(c capability) string {
 	mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
+
+const capabilityTokenLimit = 20000
+
 func (h *Handler) verify(token string) (capability, error) {
 	var c capability
-	if len(token) > 20000 {
+	if len(token) > capabilityTokenLimit {
 		return c, domain.ErrInvalid
 	}
 	parts := strings.Split(token, ".")
@@ -764,8 +762,12 @@ func allowedMethod(c capability, method string) bool {
 	return false
 }
 
-func (h *Handler) url(c capability) string {
-	return strings.TrimRight(h.opts.PublicURL, "/") + "/v1/direct/" + h.sign(c)
+func (h *Handler) url(c capability) (string, error) {
+	token := h.sign(c)
+	if len(token) > capabilityTokenLimit {
+		return "", domain.ErrLimit
+	}
+	return strings.TrimRight(h.opts.PublicURL, "/") + "/v1/direct/" + token, nil
 }
 func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
 	var q api.DirectRequest
@@ -790,7 +792,11 @@ func (h *Handler) mintUpload(w http.ResponseWriter, r *http.Request, root *domai
 		return e
 	}
 	c := capability{Execution: root.Execution(), Root: root.Config.Name, Path: p, Purpose: "upload", Size: q.Size, Expires: expires.Unix(), Nonce: uuid.NewString(), Options: q.WriteOptions, Operations: []string{"write"}}
-	send(w, 201, api.DirectURL{URL: h.url(c), Method: "PUT", Expires: time.Unix(c.Expires, 0)})
+	target, e := h.url(c)
+	if e != nil {
+		return e
+	}
+	send(w, 201, api.DirectURL{URL: target, Method: "PUT", Expires: time.Unix(c.Expires, 0)})
 	return nil
 }
 func (h *Handler) mintDownload(w http.ResponseWriter, r *http.Request, root *domain.Root) error {
@@ -874,7 +880,11 @@ func (h *Handler) sessionLease(s domain.Session, seconds int, allowAbort bool) (
 		operations = append(operations, "abort")
 	}
 	c := capability{Execution: s.Execution, Root: s.Root, Session: s.ID, Purpose: "session", Expires: expires.Unix(), Nonce: uuid.NewString(), Operations: operations}
-	return api.SessionLease{URL: h.url(c), Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
+	target, e := h.url(c)
+	if e != nil {
+		return api.SessionLease{}, e
+	}
+	return api.SessionLease{URL: target, Expires: time.Unix(c.Expires, 0), Operations: operations}, nil
 }
 
 func (h *Handler) sessionStatus(w http.ResponseWriter, r *http.Request, root *domain.Root) error {

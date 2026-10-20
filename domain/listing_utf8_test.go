@@ -138,7 +138,7 @@ func TestListingCursorArbitraryKeyBytes(t *testing.T) {
 		t.Run(fmt.Sprintf("%02x", value), func(t *testing.T) {
 			key := "i/generation/a-" + string([]byte{byte(value)}) + ".pdf"
 			cursor := listingCursor{Last: []byte(key)}
-			encoded, err := encodeListingCursor(cursor)
+			encoded, err := encodeListingCursor(cursor, listingCursorLimit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -341,5 +341,53 @@ func TestRawPathSnapshotSort(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestListingCursorBudgetBeforeCacheAdmission(t *testing.T) {
+	for _, mode := range []string{"directory", "exact", "snapshot", "relevance"} {
+		t.Run(mode, func(t *testing.T) {
+			r := indexedListingRoot(t, []Node{{Path: "needle-a"}, {Path: "needle-b"}, {Path: "needle-c"}})
+			r.Files = &listingFiles{base: t.TempDir()}
+			at := time.Unix(1000, 0).UTC()
+			r.now = func() time.Time { return at }
+			opts := ListingOptions{Limit: 1}
+			if mode == "snapshot" {
+				opts.Sort = "name"
+				opts.Match = "fuzzy"
+			}
+			if mode == "relevance" {
+				opts.Sort = "relevance"
+			}
+			query := func(o ListingOptions) (Page, error) {
+				if mode == "directory" {
+					return r.List(context.Background(), ".", o)
+				}
+				return r.Search(context.Background(), "needle", ".", o)
+			}
+			first, err := query(opts)
+			if err != nil || first.Next == "" {
+				t.Fatal(first, err)
+			}
+			count, bytes := len(r.listings), r.listingBytes
+			opts.CursorBudget = 1
+			if _, err := query(opts); !errors.Is(err, ErrLimit) {
+				t.Fatalf("ignored cursor budget: %v", err)
+			}
+			if len(r.listings) != count || r.listingBytes != bytes {
+				t.Fatal("rejected page entered cache")
+			}
+			opts.After = first.Next
+			opts.CursorBudget = listingCursorLimit + 1
+			if _, err := query(opts); err != nil {
+				t.Fatalf("budget changed cursor fingerprint: %v", err)
+			}
+			opts.After = ""
+			opts.Limit = 3
+			opts.CursorBudget = -1
+			if page, err := query(opts); err != nil || page.Next != "" {
+				t.Fatalf("terminal page needs no budget: %+v %v", page, err)
+			}
+		})
 	}
 }

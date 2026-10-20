@@ -182,7 +182,11 @@ func (h *Handler) mintArchive(w http.ResponseWriter, r *http.Request) error {
 	}
 	hash := sha256.Sum256(manifest)
 	c := capability{Execution: execution, Purpose: "archive", ManifestHash: hex.EncodeToString(hash[:]), Operations: []string{"read"}, Expires: expires.Unix(), Nonce: uuid.NewString()}
-	send(w, http.StatusCreated, api.ArchiveLease{URL: h.url(c), Method: http.MethodPost, Expires: time.Unix(c.Expires, 0), Manifest: string(manifest)})
+	target, e := h.url(c)
+	if e != nil {
+		return e
+	}
+	send(w, http.StatusCreated, api.ArchiveLease{URL: target, Method: http.MethodPost, Expires: time.Unix(c.Expires, 0), Manifest: string(manifest)})
 	return nil
 }
 

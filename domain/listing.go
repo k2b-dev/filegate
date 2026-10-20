@@ -21,7 +21,7 @@ const currentIndexFormat = 3
 
 // Component-wise traversal supports paths beyond PATH_MAX. Bound encoded
 // cursors to 32 KiB to bound encoding and decoding work. The HTTP adapter
-// separately bounds the whole continuation request.
+// supplies a tighter budget for the whole continuation request.
 const listingCursorLimit = 32 << 10
 const listingLifetime = time.Minute
 const listingSnapshotLimit = 16
@@ -38,13 +38,16 @@ var errListingStop = errors.New("listing complete")
 // pagination. After is an opaque cursor bound to every normalized query option.
 // Cursors are limited to 32 KiB; a page requiring a larger cursor fails with ErrLimit.
 type ListingOptions struct {
-	After      string `json:"after,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	MaxEntries int    `json:"maxEntries,omitempty"`
-	Sort       string `json:"sort,omitempty"`
-	Order      string `json:"order,omitempty"`
-	Type       string `json:"type,omitempty"`
-	Match      string `json:"match,omitempty"`
+	// CursorBudget bounds emitted cursor bytes before admitting an observation.
+	// Zero uses the 32 KiB default. Transport budgets do not bind the query.
+	CursorBudget int    `json:"-"`
+	After        string `json:"after,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	MaxEntries   int    `json:"maxEntries,omitempty"`
+	Sort         string `json:"sort,omitempty"`
+	Order        string `json:"order,omitempty"`
+	Type         string `json:"type,omitempty"`
+	Match        string `json:"match,omitempty"`
 	// In selects search basenames (name, default) or scope-relative paths (path).
 	In     string `json:"in,omitempty"`
 	topK   int
@@ -90,6 +93,9 @@ type listingCursor struct {
 }
 
 func normalizeListing(o ListingOptions) (ListingOptions, error) {
+	if o.CursorBudget == 0 || o.CursorBudget > listingCursorLimit {
+		o.CursorBudget = listingCursorLimit
+	}
 	if o.Limit == 0 {
 		o.Limit = 100
 	}
@@ -158,10 +164,10 @@ func queryFingerprint(p, query string, recursive bool, o ListingOptions, actor *
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-func encodeListingCursor(c listingCursor) (string, error) {
+func encodeListingCursor(c listingCursor, budget int) (string, error) {
 	b, _ := json.Marshal(c)
-	if base64.RawURLEncoding.EncodedLen(len(b)) > listingCursorLimit {
-		return "", fmt.Errorf("%w: listing continuation exceeds %d bytes", ErrLimit, listingCursorLimit)
+	if base64.RawURLEncoding.EncodedLen(len(b)) > budget {
+		return "", fmt.Errorf("%w: listing continuation exceeds %d bytes", ErrLimit, budget)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
@@ -494,7 +500,7 @@ func (r *Root) indexedListing(ctx context.Context, p string, recursive bool, o L
 		}
 		if errors.Is(err, errListingStop) {
 			c.Last = []byte(last)
-			out.Next, err = encodeListingCursor(c)
+			out.Next, err = encodeListingCursor(c, o.CursorBudget)
 		}
 		return err
 	})
@@ -641,7 +647,7 @@ func (r *Root) snapshotListing(ctx context.Context, p string, o ListingOptions, 
 		}
 		c.Offset = end
 		var err error
-		out.Next, err = encodeListingCursor(c)
+		out.Next, err = encodeListingCursor(c, o.CursorBudget)
 		if err != nil {
 			return Page{}, err
 		}
