@@ -103,7 +103,8 @@ func TestSearchMatchRootSnapshotAndBudget(t *testing.T) {
 
 func TestSearchMatchEvictsOnlyForFinalSnapshot(t *testing.T) {
 	previousLimit := listingMemoryLimit
-	listingMemoryLimit = 1024
+	// Four retained nodes, including their raw highlight paths, fit; five do not.
+	listingMemoryLimit = 1152
 	t.Cleanup(func() { listingMemoryLimit = previousLimit })
 	for _, tc := range []struct {
 		label  string
@@ -326,7 +327,7 @@ func TestSearchMatchListKeepsImmediateChildPaging(t *testing.T) {
 	if err := json.Unmarshal(raw, &cursor); err != nil {
 		t.Fatal(err)
 	}
-	if cursor.Snapshot != "" || cursor.Last == "" {
+	if cursor.Snapshot != "" || len(cursor.Last) == 0 {
 		t.Fatalf("list lost indexed continuation: %+v", cursor)
 	}
 }
