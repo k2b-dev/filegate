@@ -23,32 +23,23 @@ import (
 // fixture per size; no million-file filesystem tree or in-memory index is needed.
 // entries/s divides root size by request duration (early-stop queries need not
 // scan every row). The phase=search CPU label excludes fixture construction.
-// The broad fuzzy-name case can exceed retained-hit budgets at 1M; its dated
-// variant measures a full first page within those same production budgets.
+// The broad fuzzy-name case at 1M is explicitly a 413 diagnostic; its size-
+// bounded variant measures a full first page within production retention budgets.
 // Run the large fixture explicitly with -benchtime=1x -count=1.
 func BenchmarkIndexedSearch(b *testing.B) {
 	for _, size := range []int{10000, 100000, 1000000} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
 			r := indexedSearchFixture(b, size)
-			for _, tc := range []struct {
-				name, query string
-				opts        domain.ListingOptions
-			}{
-				{"exact-name", "quartalsbericht", domain.ListingOptions{Sort: "name"}},
-				{"fuzzy-name", "quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "name"}},
-				{"fuzzy-name-selective", "quatralsberihct 2026", domain.ListingOptions{Match: "fuzzy", Sort: "name"}},
-				{"fuzzy-relevance", "quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "relevance"}},
-				{"path-relevance", "archive quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "relevance", In: "path"}},
-				{"filter-pdf", "", domain.ListingOptions{Ext: []string{"pdf"}}},
-			} {
+			for _, tc := range indexedSearchBenchmarkCases(size) {
 				b.Run(tc.name, func(b *testing.B) {
 					b.ReportAllocs()
 					pprof.Do(context.Background(), pprof.Labels("phase", "search"), func(ctx context.Context) {
 						for i := 0; i < b.N; i++ {
 							page, err := r.Search(ctx, tc.query, ".", tc.opts)
-							if size == 1000000 && tc.name == "fuzzy-name" && errors.Is(err, domain.ErrLimit) {
-								// The broad diagnostic exceeds the retention budget;
-								// fuzzy-name-selective measures the successful first page.
+							if tc.wantLimit {
+								if !errors.Is(err, domain.ErrLimit) {
+									b.Fatalf("413 diagnostic: got %v, want limit_exceeded", err)
+								}
 								b.ReportMetric(1, "limited/op")
 								continue
 							}
@@ -67,7 +58,58 @@ func BenchmarkIndexedSearch(b *testing.B) {
 	}
 }
 
-func indexedSearchFixture(b *testing.B, count int) *domain.Root {
+// Size grows monotonically with the fixture index at every measured scale.
+// Keeping its first eighth bounds selective hits even though the fuzzy year
+// token itself matches every generated year from 2020 through 2026.
+func indexedSearchBenchmarkCases(size int) []struct {
+	name, query string
+	opts        domain.ListingOptions
+	wantLimit   bool
+} {
+	maxSize := int64(1024 + size/8 - 1)
+	broadName := "fuzzy-name"
+	if size == 1000000 {
+		broadName += "-413-diagnostic"
+	}
+	return []struct {
+		name, query string
+		opts        domain.ListingOptions
+		wantLimit   bool
+	}{
+		{"exact-name", "quartalsbericht", domain.ListingOptions{Sort: "name"}, false},
+		{broadName, "quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "name"}, size == 1000000},
+		{"fuzzy-name-selective", "quatralsberihct 2026", domain.ListingOptions{Match: "fuzzy", Sort: "name", MaxSize: &maxSize}, false},
+		{"fuzzy-relevance", "quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "relevance"}, false},
+		{"path-relevance", "archive quatralsberihct", domain.ListingOptions{Match: "fuzzy", Sort: "relevance", In: "path"}, false},
+		{"filter-pdf", "", domain.ListingOptions{Ext: []string{"pdf"}}, false},
+	}
+}
+
+func TestIndexedSearchBenchmarkSelectivity(t *testing.T) {
+	const size = 10000
+	r := indexedSearchFixture(t, size)
+	for _, tc := range indexedSearchBenchmarkCases(size) {
+		if tc.name != "fuzzy-name-selective" {
+			continue
+		}
+		// At 1M this density projects to at most half of the 100k hit budget.
+		// Exercise the actual workload and matcher, including the fuzzy year.
+		tc.opts.MaxEntries = 500
+		tc.opts.Limit = 1000
+		page, err := r.Search(context.Background(), tc.query, ".", tc.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) < 100 || len(page.Items) > 500 || page.Next != "" || page.Total == nil || *page.Total != len(page.Items) {
+			t.Fatalf("selective fixture must have 100–500 hits in one page: %+v", page)
+		}
+		t.Logf("selective hits: %d at 10k (projected %d at 1M)", len(page.Items), len(page.Items)*100)
+		return
+	}
+	t.Fatal("selective benchmark case missing")
+}
+
+func indexedSearchFixture(b testing.TB, count int) *domain.Root {
 	b.Helper()
 	dir := b.TempDir()
 	files, err := filesystem.Open(dir)
