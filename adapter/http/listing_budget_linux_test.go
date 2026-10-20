@@ -40,13 +40,12 @@ func TestListingContinuationRequestBudget(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				components := 48
-				if oversized {
-					components = 60
-				}
+				// Keep names and the full filesystem path comfortably below Linux
+				// limits, including AppArmor's full-path buffer in Docker. Query
+				// padding below exercises the HTTP budget without a huge real path.
 				base := ""
-				for range components {
-					base = path.Join(base, strings.Repeat("€", 85))
+				for range 32 {
+					base = path.Join(base, strings.Repeat("€", 31))
 					if err := files.Mkdir(base, 0700); err != nil {
 						t.Fatal(err)
 					}
@@ -88,21 +87,29 @@ func TestListingContinuationRequestBudget(t *testing.T) {
 				nextQ.Set("after", probe.Next)
 				requestLine := len("GET ") + len(endpointPath) + 1 + len(nextQ.Encode()) + len(" HTTP/1.1\r\n")
 				const budget = 60 << 10
+				target := budget - 128
 				if oversized {
+					target = (64 << 10) + 128
+				}
+				padding := target - requestLine - len("&padding=")
+				if padding < 0 {
+					t.Fatalf("fixture too long: %d", requestLine)
+				}
+				q.Set("padding", strings.Repeat("p", padding))
+				if oversized {
+					nextQ.Set("padding", q.Get("padding"))
+					requestLine = len("GET ") + len(endpointPath) + 1 + len(nextQ.Encode()) + len(" HTTP/1.1\r\n")
 					if requestLine <= 64<<10 {
 						t.Fatalf("fixture does not reproduce overflow: %d", requestLine)
 					}
-				} else {
-					padding := budget - requestLine - 128 - len("&padding=")
-					if padding < 0 {
-						t.Fatalf("fixture too long: %d", requestLine)
-					}
-					q.Set("padding", strings.Repeat("p", padding))
 				}
 				handler := New([]*domain.Root{root}, Options{Token: "secret"})
 				for pageIndex := 0; pageIndex < 3; pageIndex++ {
 					req := httptest.NewRequest("GET", endpointPath+"?"+q.Encode(), nil)
 					req.Header.Set("Authorization", "Bearer secret")
+					if pageIndex == 0 && listingCursorBudget(req) <= 0 {
+						t.Fatal("initial request already exhausts the continuation budget")
+					}
 					w := httptest.NewRecorder()
 					handler.ServeHTTP(w, req)
 					if oversized {
