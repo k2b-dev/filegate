@@ -281,13 +281,22 @@ func (r *Root) finishMutation(key string, m mutation) error {
 				// Legacy indexes can retain source rows after a move. Claims follow
 				// moves, so a claim outside this subtree protects the moved history.
 				// Compare raw path bytes; cleanup must not require descendant reads.
-				var c claim
+				var c struct {
+					Path      string
+					PathBytes []byte
+				}
 				err := r.State.Get("identity/"+n.ID, &c)
 				if err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
+				if c.PathBytes != nil {
+					c.Path = string(c.PathBytes)
+				}
+				// Before the upgrade rebuild, U+FFFD may be a sanitized byte in
+				// any path component. Such a claim cannot prove membership.
+				ambiguous := r.legacyClaimPaths && c.PathBytes == nil && strings.ContainsRune(c.Path, '\uFFFD')
 				// Without a claim, preserve the ordinary index-based cleanup behavior.
-				if errors.Is(err, os.ErrNotExist) || c.Path == m.From || strings.HasPrefix(c.Path, m.From+"/") {
+				if !ambiguous && (errors.Is(err, os.ErrNotExist) || c.Path == m.From || strings.HasPrefix(c.Path, m.From+"/")) {
 					if err := service.deleteHistory(n.ID); err != nil {
 						return err
 					}

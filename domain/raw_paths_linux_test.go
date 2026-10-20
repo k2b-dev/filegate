@@ -397,26 +397,34 @@ func TestRawPathIndexFormatUpgrade(t *testing.T) {
 // A v7.0.0 move could leave a raw source key whose JSON path was sanitized.
 // Recovery must not use that stale membership to delete the moved identity.
 func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
-	for _, collision := range []bool{false, true} {
-		t.Run(fmt.Sprintf("quarantine-collision=%v", collision), func(t *testing.T) {
+	for _, paths := range []struct {
+		from, to  string
+		collision bool
+	}{
+		{"a", "b", false},
+		{"a", "b", true},
+		{"alias-�", "alias-\xfe", false},
+		{"alias-�", "alias-\xfe", true},
+	} {
+		t.Run(fmt.Sprintf("from=%s/quarantine-collision=%v", paths.from, paths.collision), func(t *testing.T) {
 			r, s := rawPathRoot(t, "files")
-			rawPut(t, r, "a/raw-\xff", "moved")
-			if _, err := r.Move("a", "b"); err != nil {
+			rawPut(t, r, paths.from+"/raw-\xff", "moved")
+			if _, err := r.Move(paths.from, paths.to); err != nil {
 				t.Fatal(err)
 			}
-			moved, err := r.Stat("b/raw-\xff")
+			moved, err := r.Stat(paths.to + "/raw-\xff")
 			if err != nil {
 				t.Fatal(err)
 			}
 			rawPinHistory(t, r, moved, "history")
 			rawLegacyClaim(t, r, moved.ID)
-			deleted := rawPut(t, r, "a/deleted-\xfe", "deleted")
+			// A lossless claim still proves membership, even under a literal � base.
+			deleted := rawPut(t, r, paths.from+"/deleted-\xfe", "deleted")
 			rawPinHistory(t, r, deleted, "deleted-history")
-			rawLegacyClaim(t, r, deleted.ID)
-			if collision {
-				rawPut(t, r, "a/raw-\xff", "replacement")
+			if paths.collision {
+				rawPut(t, r, paths.from+"/raw-\xff", "replacement")
 				// An externally copied xattr must not make this inode own moved history.
-				f, err := r.Files.Open("a/raw-\xff", os.O_RDONLY, 0)
+				f, err := r.Files.Open(paths.from+"/raw-\xff", os.O_RDONLY, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -431,25 +439,25 @@ func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			stale := moved
-			stale.Path = "a/raw-\xff"
+			stale.Path = paths.from + "/raw-\xff"
 			if err := s.Put("i/"+gen+"/"+stale.Path, stale); err != nil {
 				t.Fatal(err)
 			}
-			top, err := r.Stat("a")
+			top, err := r.Stat(paths.from)
 			if err != nil {
 				t.Fatal(err)
 			}
-			st, err := r.Files.Stat("a")
+			st, err := r.Files.Stat(paths.from)
 			if err != nil {
 				t.Fatal(err)
 			}
 			dev, ino, _, _, _ := r.Files.Identity(st)
 			const quarantine = ".filegate/staging/legacy-delete"
-			if err := r.Files.Rename("a", quarantine, false); err != nil {
+			if err := r.Files.Rename(paths.from, quarantine, false); err != nil {
 				t.Fatal(err)
 			}
 			// Use the legacy wire shape, with no raw-path companion fields.
-			if err := s.Put("mutation/legacy", map[string]any{"Kind": "delete", "From": "a", "To": quarantine, "ID": top.ID, "Device": dev, "Inode": ino, "Applied": true}); err != nil {
+			if err := s.Put("mutation/legacy", map[string]any{"Kind": "delete", "From": paths.from, "To": quarantine, "ID": top.ID, "Device": dev, "Inode": ino, "Applied": true}); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Put("index/format", 2); err != nil {
@@ -459,14 +467,14 @@ func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if versions, err := restarted.Versions("b/raw-\xff"); err != nil || len(versions) != 1 {
+			if versions, err := restarted.Versions(paths.to + "/raw-\xff"); err != nil || len(versions) != 1 {
 				t.Errorf("moved history lost: %v %v", versions, err)
 			}
-			if n, err := restarted.Resolve(moved.ID); err != nil || n.Path != "b/raw-\xff" || n.Revision != moved.Revision {
+			if n, err := restarted.Resolve(moved.ID); err != nil || n.Path != paths.to+"/raw-\xff" || n.Revision != moved.Revision {
 				t.Errorf("moved identity/revision lost: %+v %v", n, err)
 			}
 			rawAssertHistoryRemoved(t, restarted, deleted, "deleted-history")
-			blob, err := restarted.OpenVersion("b/raw-\xff", "history")
+			blob, err := restarted.OpenVersion(paths.to+"/raw-\xff", "history")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -481,6 +489,28 @@ func TestLegacyIndexPendingDeletePreservesMovedHistory(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeleteReplacementCharacterAfterIndexUpgrade(t *testing.T) {
+	r, s := rawPathRoot(t, "files")
+	n := rawPut(t, r, "literal-�", "data")
+	rawPinHistory(t, r, n, "history")
+	rawLegacyClaim(t, r, n.ID)
+	if err := s.Put("index/format", 2); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := rawRestart(t, r, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var format int
+	if err := s.Get("index/format", &format); err != nil || format != 3 {
+		t.Fatalf("format=%d: %v", format, err)
+	}
+	if err := restarted.Remove(n.Path, false); err != nil {
+		t.Fatal(err)
+	}
+	rawAssertHistoryRemoved(t, restarted, n, "history")
 }
 
 func TestDeleteCleansChangedDescendantHistory(t *testing.T) {
@@ -525,7 +555,7 @@ func TestDeleteCleansChangedDescendantHistory(t *testing.T) {
 }
 
 func TestDeleteDescendantClaimPaths(t *testing.T) {
-	for _, kind := range []string{"current", "missing", "legacy-descendant", "legacy-base"} {
+	for _, kind := range []string{"current", "file", "missing", "legacy-descendant", "legacy-base"} {
 		t.Run(kind, func(t *testing.T) {
 			r, s := rawPathRoot(t, "files")
 			base := "a"
@@ -542,7 +572,11 @@ func TestDeleteDescendantClaimPaths(t *testing.T) {
 			case "legacy-descendant", "legacy-base":
 				rawLegacyClaim(t, r, n.ID)
 			}
-			if err := r.Remove(base, true); err != nil {
+			removePath, recursive := base, true
+			if kind == "file" {
+				removePath, recursive = n.Path, false
+			}
+			if err := r.Remove(removePath, recursive); err != nil {
 				t.Fatal(err)
 			}
 			if kind != "legacy-base" {

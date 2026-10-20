@@ -44,6 +44,9 @@ type rootShared struct {
 	generation      string
 	now             func() time.Time
 
+	// Startup recovery until the lossless index rebuild completes.
+	legacyClaimPaths bool
+
 	searchScanTimeout time.Duration // Zero uses the server-owned searchScanBudget.
 }
 type claim struct {
@@ -116,6 +119,11 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 	if e != nil && !errors.Is(e, os.ErrNotExist) {
 		return nil, e
 	}
+	var indexFormat int
+	if err := s.Get("index/format", &indexFormat); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	r.legacyClaimPaths = cfg.Index && indexFormat < currentIndexFormat
 	if e := r.recover(); e != nil {
 		return nil, e
 	}
@@ -139,15 +147,12 @@ func NewRoot(cfg RootConfig, f Files, s State, maxBytes int64) (*Root, error) {
 	if e := s.Get("index/built", &built); e == nil {
 		r.status.LastBuilt = &built
 	}
-	var indexFormat int
-	if err := s.Get("index/format", &indexFormat); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
 	if cfg.Index && (r.generation == "" || indexFormat != currentIndexFormat) {
 		if e := r.Rebuild(context.Background()); e != nil {
 			return nil, e
 		}
 	}
+	r.legacyClaimPaths = false
 	return r, nil
 }
 func newID() string { return uuid.Must(uuid.NewV7()).String() }
